@@ -4,7 +4,7 @@ Lotus BRAIN is a pnpm workspace managed with Turborepo.
 
 ## Requirements
 
-- Node.js 20.9.0 or later
+- Node.js 20.11.1 or later
 - pnpm 11.15.1
 
 ## Getting started
@@ -21,7 +21,7 @@ Start all development tasks:
 pnpm dev
 ```
 
-The web application is available at [http://localhost:3000](http://localhost:3000).
+The web application is available at [http://localhost:3000](http://localhost:3000), and the API health check is available at [http://localhost:3001/health](http://localhost:3001/health).
 
 ## Workspace commands
 
@@ -33,7 +33,7 @@ Run these commands from the repository root. Turborepo executes the matching tas
 | `pnpm build` | Build all workspace packages. Next.js build output is cached, excluding its internal cache. |
 | `pnpm lint` | Run linting across workspace packages. |
 
-The current workspace contains the web application at `apps/web`. Add future shared packages under `packages/*`; they are automatically included by the pnpm workspace and Turborepo task graph.
+The workspace contains the web application at `apps/web` and the NestJS API at `apps/api`. Add future shared packages under `packages/*`; they are automatically included by the pnpm workspace and Turborepo task graph.
 
 ## Remote caching
 
