@@ -4,8 +4,11 @@
   "private": true,
   "packageManager": "pnpm@11.15.1",
   "scripts": {
-    "dev": "pnpm --filter @lotus-brain/web dev",
-    "build": "pnpm --filter @lotus-brain/web build",
-    "lint": "pnpm --filter @lotus-brain/web lint"
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.10.8"
   }
 }
