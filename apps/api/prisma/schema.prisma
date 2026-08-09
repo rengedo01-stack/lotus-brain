@@ -231,20 +231,23 @@ model Purchase {
 }
 
 model PurchaseItem {
-  id         String   @id @default(cuid())
-  purchaseId String
-  productId  String
+  id             String    @id @default(cuid())
+  purchaseId     String
+  productId      String
   // Stored with productId as a composite FK to Product.inventoryUnitId. This
   // keeps purchase and inventory quantities in the same unit in v1.
-  unitId     String
-  lineNumber Int
-  quantity   Decimal  @db.Decimal(24, 9)
-  unitPrice  Decimal  @db.Decimal(20, 6)
-  lineAmount Decimal  @db.Decimal(20, 6)
+  unitId         String
+  lineNumber     Int
+  quantity       Decimal   @db.Decimal(24, 9)
+  unitPrice      Decimal   @db.Decimal(20, 6)
+  lineAmount     Decimal   @db.Decimal(20, 6)
   // A fraction from 0 through 1 (for example, 0.10 means 10%).
-  taxRate    Decimal  @default(0) @db.Decimal(5, 4)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  taxRate        Decimal   @default(0) @db.Decimal(5, 4)
+  // Database triggers set this permanently when a price or inventory history
+  // first references the item, preventing later parent-purchase reassignment.
+  sourceLockedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
   product  Product  @relation("PurchaseItemProductInventoryUnit", fields: [productId, unitId], references: [id, inventoryUnitId], onDelete: Restrict)
