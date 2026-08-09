@@ -6,6 +6,7 @@ import {
   type EnvironmentVariables,
   validateEnvironment,
 } from "./config/environment";
+import { PrismaModule } from "./prisma/prisma.module";
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import {
         },
       }),
     }),
+    PrismaModule,
   ],
   controllers: [AppController],
 })

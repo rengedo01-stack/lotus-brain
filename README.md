@@ -4,7 +4,7 @@ Lotus BRAIN is a pnpm workspace managed with Turborepo.
 
 ## Requirements
 
-- Node.js 20.11.1 or later
+- Node.js 20.19.0 or later
 - pnpm 11.15.1
 
 ## Getting started
@@ -25,7 +25,7 @@ The web application is available at [http://localhost:3000](http://localhost:300
 
 ### API configuration
 
-The API reads its runtime configuration through `@nestjs/config`. Defaults support local development; to override them, copy `apps/api/.env.example` to `apps/api/.env` and set the required values.
+The API reads its runtime configuration through `@nestjs/config`. Copy `apps/api/.env.example` to `apps/api/.env` before starting the API, then replace the example PostgreSQL password with a local value. The `.env` file is ignored and must not be committed.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -33,6 +33,35 @@ The API reads its runtime configuration through `@nestjs/config`. Defaults suppo
 | `PORT` | `3001` | API listening port. |
 | `CORS_ORIGIN` | `http://localhost:3000` | Comma-separated allowed CORS origins. |
 | `LOG_LEVEL` | `debug` (development), `info` (production) | Pino log level. |
+| `POSTGRES_DB` | `lotus_brain` | Development PostgreSQL database name. |
+| `POSTGRES_USER` | `lotus_brain` | Development PostgreSQL role name. |
+| `POSTGRES_PASSWORD` | — | Development PostgreSQL password; set a local non-example value. |
+| `DATABASE_URL` | — | Required PostgreSQL connection URL. Keep its credentials aligned with the PostgreSQL variables above. |
+
+### Database foundation
+
+The development PostgreSQL service is defined in `compose.yaml`. Start it with the API environment file:
+
+```bash
+cp apps/api/.env.example apps/api/.env
+docker compose --env-file apps/api/.env up -d postgres
+docker compose --env-file apps/api/.env ps
+```
+
+The `postgres_data` named volume persists local database data. The service healthcheck uses `pg_isready`; wait for the status to become `healthy` before starting the API. Stop the local service while retaining its volume with:
+
+```bash
+docker compose --env-file apps/api/.env down
+```
+
+Prisma's schema source of truth is `apps/api/prisma/schema.prisma`. This foundation intentionally contains no business models or migrations. Future migrations are forward-only and must not rewrite an applied migration.
+
+Validate the schema and generate the API client from the repository root:
+
+```bash
+pnpm --filter @lotus-brain/api prisma:validate
+pnpm --filter @lotus-brain/api prisma:generate
+```
 
 ## Workspace commands
 
