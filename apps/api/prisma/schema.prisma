@@ -26,6 +26,19 @@ enum InventoryTransactionType {
   MANUAL_ADJUSTMENT
 }
 
+enum PurchaseStatus {
+  DRAFT
+  CONFIRMED
+  POSTED
+  CANCELLED
+}
+
+enum PurchaseLogEventType {
+  CREATED
+  STATUS_CHANGED
+  IMPORTED
+}
+
 model Unit {
   id        String        @id @default(cuid())
   code      String        @unique
@@ -41,6 +54,7 @@ model Unit {
   productConversions    ProductUnitConversion[]
   priceHistories        PriceHistory[]          @relation("PriceHistoryInventoryUnit")
   inventoryHistories    InventoryHistory[]      @relation("InventoryHistoryInventoryUnit")
+  purchaseItems         PurchaseItem[]          @relation("PurchaseItemInventoryUnit")
 
   @@index([dimension, status])
 }
@@ -65,7 +79,11 @@ model Product {
   unitConversions ProductUnitConversion[]
   priceMasters    PriceMaster[]
   inventory       Inventory?
+  purchaseItems   PurchaseItem[]          @relation("PurchaseItemProductInventoryUnit")
 
+  // Supports PurchaseItem's composite foreign key, which guarantees that every
+  // recorded purchase quantity uses this product's inventory unit.
+  @@unique([id, inventoryUnitId])
   @@index([status, deletedAt])
   @@index([baseUnitId])
   @@index([inventoryUnitId])
@@ -98,6 +116,7 @@ model Supplier {
   deletedAt DateTime?
 
   priceMasters PriceMaster[]
+  purchases    Purchase[]
 
   @@index([status, deletedAt])
 }
@@ -125,18 +144,22 @@ model PriceMaster {
 }
 
 model PriceHistory {
-  id              String   @id @default(cuid())
-  priceMasterId   String
+  id                   String   @id @default(cuid())
+  priceMasterId        String
+  // When present, one historical price snapshot is attributable to exactly one
+  // purchase line. Manual price changes can leave this unset.
+  sourcePurchaseItemId String?  @unique
   // Snapshot the inventory unit so price history remains interpretable after master changes.
-  inventoryUnitId String
-  unitPrice       Decimal  @db.Decimal(20, 6)
-  currency        String   @db.Char(3)
-  effectiveAt     DateTime
-  note            String?
-  createdAt       DateTime @default(now())
+  inventoryUnitId      String
+  unitPrice            Decimal  @db.Decimal(20, 6)
+  currency             String   @db.Char(3)
+  effectiveAt          DateTime
+  note                 String?
+  createdAt            DateTime @default(now())
 
-  priceMaster   PriceMaster @relation(fields: [priceMasterId], references: [id], onDelete: Restrict)
-  inventoryUnit Unit        @relation("PriceHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+  priceMaster        PriceMaster   @relation(fields: [priceMasterId], references: [id], onDelete: Restrict)
+  sourcePurchaseItem PurchaseItem? @relation("PriceHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
+  inventoryUnit      Unit          @relation("PriceHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
   @@index([priceMasterId, effectiveAt])
   @@index([inventoryUnitId])
@@ -155,21 +178,101 @@ model Inventory {
 }
 
 model InventoryHistory {
-  id              String                   @id @default(cuid())
-  inventoryId     String
+  id                   String                   @id @default(cuid())
+  inventoryId          String
+  // A purchase item can create at most one receipt history, making a retry or
+  // duplicate POSTED transition unable to create a second stock movement.
+  sourcePurchaseItemId String?                  @unique
   // Snapshot the inventory unit to preserve the meaning of past quantities.
-  inventoryUnitId String
-  type            InventoryTransactionType
-  quantityDelta   Decimal                  @db.Decimal(24, 9)
-  quantityAfter   Decimal                  @db.Decimal(24, 9)
-  occurredAt      DateTime                 @default(now())
-  note            String?
-  createdAt       DateTime                 @default(now())
+  inventoryUnitId      String
+  type                 InventoryTransactionType
+  quantityDelta        Decimal                  @db.Decimal(24, 9)
+  quantityAfter        Decimal                  @db.Decimal(24, 9)
+  occurredAt           DateTime                 @default(now())
+  note                 String?
+  createdAt            DateTime                 @default(now())
 
-  inventory     Inventory @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
-  inventoryUnit Unit      @relation("InventoryHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+  inventory          Inventory     @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
+  sourcePurchaseItem PurchaseItem? @relation("InventoryHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
+  inventoryUnit      Unit          @relation("InventoryHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
   @@index([inventoryId, occurredAt])
   @@index([inventoryUnitId, occurredAt])
   @@index([type, occurredAt])
+}
+
+model Purchase {
+  id             String         @id @default(cuid())
+  supplierId     String
+  purchaseDate   DateTime
+  documentNumber String?        @db.VarChar(100)
+  status         PurchaseStatus @default(DRAFT)
+  // Totals are monetary snapshots in Purchase.currency and are non-negative.
+  currency       String         @default("JPY") @db.Char(3)
+  subtotal       Decimal        @default(0) @db.Decimal(20, 6)
+  tax            Decimal        @default(0) @db.Decimal(20, 6)
+  total          Decimal        @default(0) @db.Decimal(20, 6)
+  note           String?
+  postedAt       DateTime?
+  cancelledAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  supplier Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  items    PurchaseItem[]
+  logs     PurchaseLog[]
+
+  // A supplier's document number is idempotent when it is available; PostgreSQL
+  // permits multiple nulls for purchases that do not yet have a document number.
+  @@unique([supplierId, documentNumber])
+  @@index([supplierId, purchaseDate])
+  @@index([status, purchaseDate])
+}
+
+model PurchaseItem {
+  id         String   @id @default(cuid())
+  purchaseId String
+  productId  String
+  // Stored with productId as a composite FK to Product.inventoryUnitId. This
+  // keeps purchase and inventory quantities in the same unit in v1.
+  unitId     String
+  lineNumber Int
+  quantity   Decimal  @db.Decimal(24, 9)
+  unitPrice  Decimal  @db.Decimal(20, 6)
+  lineAmount Decimal  @db.Decimal(20, 6)
+  // A fraction from 0 through 1 (for example, 0.10 means 10%).
+  taxRate    Decimal  @default(0) @db.Decimal(5, 4)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  product  Product  @relation("PurchaseItemProductInventoryUnit", fields: [productId, unitId], references: [id, inventoryUnitId], onDelete: Restrict)
+  unit     Unit     @relation("PurchaseItemInventoryUnit", fields: [unitId], references: [id], onDelete: Restrict)
+
+  // These source links allow a POSTED purchase to write all effects atomically
+  // while unique constraints prevent duplicate price or stock effects per line.
+  priceHistory     PriceHistory?     @relation("PriceHistorySourcePurchaseItem")
+  inventoryHistory InventoryHistory? @relation("InventoryHistorySourcePurchaseItem")
+
+  @@unique([purchaseId, lineNumber])
+  @@index([productId])
+  @@index([unitId])
+}
+
+model PurchaseLog {
+  id         String               @id @default(cuid())
+  purchaseId String
+  eventType  PurchaseLogEventType
+  fromStatus PurchaseStatus?
+  toStatus   PurchaseStatus?
+  note       String?
+  occurredAt DateTime             @default(now())
+  createdAt  DateTime             @default(now())
+
+  // Purchase workflow history is intentionally separate from InventoryHistory,
+  // which exclusively records real stock movements.
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+
+  @@index([purchaseId, occurredAt])
+  @@index([toStatus, occurredAt])
 }
