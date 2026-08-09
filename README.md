@@ -58,7 +58,7 @@ Prisma's schema source of truth is `apps/api/prisma/schema.prisma`, with forward
 
 ### Purchase posting
 
-`POST /api/v1/purchases/:id/post` posts an existing `DRAFT` or `CONFIRMED` purchase. The application use case owns an interactive Prisma transaction: it locks the purchase row, validates every item against the Product inventory unit, writes price and inventory effects, appends the processing log, and commits all changes together. To satisfy the database receipt trigger, it sets the Purchase to `POSTED` before creating receipt histories; a later failure rolls that state transition and every prior effect back. Reposting a `POSTED` or `CANCELLED` purchase returns `409 Conflict`.
+`POST /api/v1/purchases/:id/post` posts an existing `DRAFT` or `CONFIRMED` purchase. The application use case owns an interactive Prisma transaction: it locks `PurchaseItem` rows by stable ID order and then the parent Purchase, matching the source-history trigger lock order. It validates every item against the Product inventory unit, writes price and inventory effects in stable Product order, appends the processing log, and commits all changes together. To satisfy the database receipt trigger, it sets the Purchase to `POSTED` before creating receipt histories; a later failure rolls that state transition and every prior effect back. Reposting a `POSTED` or `CANCELLED` purchase returns `409 Conflict`.
 
 Validate the schema and generate the API client from the repository root:
 

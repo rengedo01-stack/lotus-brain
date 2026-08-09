@@ -38,7 +38,12 @@ export class PostPurchaseUseCase {
         throw new InvalidPurchaseItemError("A purchase must have at least one item.");
       }
 
-      for (const item of purchase.items) {
+      const items = [...purchase.items].sort(
+        (left, right) =>
+          left.productId.localeCompare(right.productId) || left.id.localeCompare(right.id),
+      );
+
+      for (const item of items) {
         this.assertItemIsPostable(item);
         await transaction.writePriceEffect(purchase, item);
       }
@@ -50,7 +55,7 @@ export class PostPurchaseUseCase {
       // this state change back if a later inventory or log write fails.
       await transaction.markPurchasePosted(purchase.id, postedAt);
 
-      for (const item of purchase.items) {
+      for (const item of items) {
         await transaction.writeInventoryEffect(purchase, item);
       }
 

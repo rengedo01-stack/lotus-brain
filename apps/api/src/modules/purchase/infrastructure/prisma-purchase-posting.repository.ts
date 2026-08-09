@@ -35,6 +35,17 @@ class PrismaPurchasePostingTransaction implements PurchasePostingTransaction {
   constructor(private readonly prisma: TransactionClient) {}
 
   async lockPurchase(purchaseId: string): Promise<PurchaseForPosting | null> {
+    // Keep the same row-lock order as the source-history triggers. Locking all
+    // items first in a stable order prevents a cycle with a concurrent history
+    // write that has already locked one PurchaseItem and is waiting on Purchase.
+    await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT "id"
+      FROM "PurchaseItem"
+      WHERE "purchaseId" = ${purchaseId}
+      ORDER BY "id"
+      FOR NO KEY UPDATE
+    `);
+
     const rows = await this.prisma.$queryRaw<LockedPurchaseRow[]>(Prisma.sql`
       SELECT "id", "supplierId", "purchaseDate", "currency", "status"
       FROM "Purchase"
