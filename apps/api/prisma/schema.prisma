@@ -181,7 +181,8 @@ model InventoryHistory {
   id                   String                   @id @default(cuid())
   inventoryId          String
   // A purchase item can create at most one receipt history, making a retry or
-  // duplicate POSTED transition unable to create a second stock movement.
+  // duplicate POSTED transition unable to create a second stock movement. A
+  // PostgreSQL trigger also permits this source only while its Purchase is POSTED.
   sourcePurchaseItemId String?                  @unique
   // Snapshot the inventory unit to preserve the meaning of past quantities.
   inventoryUnitId      String
