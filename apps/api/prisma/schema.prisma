@@ -243,8 +243,8 @@ model PurchaseItem {
   lineAmount     Decimal   @db.Decimal(20, 6)
   // A fraction from 0 through 1 (for example, 0.10 means 10%).
   taxRate        Decimal   @default(0) @db.Decimal(5, 4)
-  // Database triggers set this permanently when a price or inventory history
-  // first references the item, preventing later parent-purchase reassignment.
+  // A database-managed immutable audit marker. Triggers set it when price or
+  // inventory history first references the item, preventing parent reassignment.
   sourceLockedAt DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
