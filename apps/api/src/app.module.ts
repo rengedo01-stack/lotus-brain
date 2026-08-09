@@ -7,6 +7,7 @@ import {
   validateEnvironment,
 } from "./config/environment";
 import { PrismaModule } from "./prisma/prisma.module";
+import { PurchaseModule } from "./modules/purchase/purchase.module";
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { PrismaModule } from "./prisma/prisma.module";
       }),
     }),
     PrismaModule,
+    PurchaseModule,
   ],
   controllers: [AppController],
 })
