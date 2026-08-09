@@ -70,6 +70,7 @@ model Unit {
   purchaseItems             PurchaseItem[]          @relation("PurchaseItemInventoryUnit")
   recipeYields              Recipe[]                @relation("RecipeYieldUnit")
   recipeItems               RecipeItem[]            @relation("RecipeItemUnit")
+  productionOutputSnapshots Production[]            @relation("ProductionOutputUnitSnapshot")
   consumptionRecipeUnits    ProductionConsumption[] @relation("ProductionConsumptionRecipeUnit")
   consumptionInventoryUnits ProductionConsumption[] @relation("ProductionConsumptionInventoryUnit")
 
@@ -93,13 +94,14 @@ model Product {
   // Purchase and inventory quantities use this common unit in v1.
   inventoryUnit Unit @relation("ProductInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
-  unitConversions ProductUnitConversion[]
-  priceMasters    PriceMaster[]
-  inventory       Inventory?
-  purchaseItems   PurchaseItem[]          @relation("PurchaseItemProductInventoryUnit")
-  outputRecipes   Recipe[]                @relation("RecipeOutputProduct")
-  recipeItems     RecipeItem[]            @relation("RecipeItemProduct")
-  consumptions    ProductionConsumption[] @relation("ProductionConsumptionProductInventoryUnit")
+  unitConversions           ProductUnitConversion[]
+  priceMasters              PriceMaster[]
+  inventory                 Inventory?
+  purchaseItems             PurchaseItem[]          @relation("PurchaseItemProductInventoryUnit")
+  outputRecipes             Recipe[]                @relation("RecipeOutputProduct")
+  productionOutputSnapshots Production[]            @relation("ProductionOutputProductSnapshot")
+  recipeItems               RecipeItem[]            @relation("RecipeItemProduct")
+  consumptions              ProductionConsumption[] @relation("ProductionConsumptionProductInventoryUnit")
 
   // Supports PurchaseItem's composite foreign key, which guarantees that every
   // recorded purchase quantity uses this product's inventory unit.
@@ -314,6 +316,8 @@ model Recipe {
   yieldQuantity   Decimal      @db.Decimal(24, 9)
   yieldUnitId     String
   status          RecipeStatus @default(DRAFT)
+  // A revision is a new Recipe row. Once a Production references this row, the
+  // database locks its structural definition and its RecipeItem composition.
   revision        Int          @default(1)
   note            String?
   createdAt       DateTime     @default(now())
@@ -351,22 +355,31 @@ model RecipeItem {
 }
 
 model Production {
-  id              String           @id @default(cuid())
-  recipeId        String
-  productionDate  DateTime
-  plannedQuantity Decimal          @db.Decimal(24, 9)
-  actualQuantity  Decimal?         @db.Decimal(24, 9)
-  status          ProductionStatus @default(DRAFT)
-  note            String?
-  postedAt        DateTime?
-  cancelledAt     DateTime?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  id                      String           @id @default(cuid())
+  recipeId                String
+  productionDate          DateTime
+  plannedQuantity         Decimal          @db.Decimal(24, 9)
+  actualQuantity          Decimal?         @db.Decimal(24, 9)
+  // The database copies the output definition from Recipe when this Production
+  // is created. These snapshots never follow later Recipe changes.
+  outputProductIdSnapshot String
+  yieldQuantitySnapshot   Decimal          @db.Decimal(24, 9)
+  outputUnitIdSnapshot    String
+  status                  ProductionStatus @default(DRAFT)
+  note                    String?
+  postedAt                DateTime?
+  cancelledAt             DateTime?
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
 
-  recipe       Recipe                  @relation(fields: [recipeId], references: [id], onDelete: Restrict)
-  consumptions ProductionConsumption[]
+  recipe                Recipe                  @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  outputProductSnapshot Product                 @relation("ProductionOutputProductSnapshot", fields: [outputProductIdSnapshot], references: [id], onDelete: Restrict)
+  outputUnitSnapshot    Unit                    @relation("ProductionOutputUnitSnapshot", fields: [outputUnitIdSnapshot], references: [id], onDelete: Restrict)
+  consumptions          ProductionConsumption[]
 
   @@index([recipeId, productionDate])
+  @@index([outputProductIdSnapshot])
+  @@index([outputUnitIdSnapshot])
   @@index([status, productionDate])
 }
 
