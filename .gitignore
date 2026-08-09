@@ -24,6 +24,7 @@ out/
 # production
 build/
 dist/
+apps/api/src/generated/
 
 # misc
 .DS_Store

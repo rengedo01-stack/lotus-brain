@@ -6,6 +6,7 @@ type LogLevel = (typeof logLevels)[number];
 
 export type EnvironmentVariables = {
   CORS_ORIGIN: string;
+  DATABASE_URL: string;
   LOG_LEVEL: LogLevel;
   NODE_ENV: NodeEnvironment;
   PORT: number;
@@ -21,6 +22,7 @@ export function validateEnvironment(
     "CORS_ORIGIN",
     "http://localhost:3000",
   );
+  const databaseUrl = readNonEmptyString(environment.DATABASE_URL, "DATABASE_URL");
 
   if (corsOrigin.split(",").some((origin) => origin.trim().length === 0)) {
     throw new Error("CORS_ORIGIN must be a comma-separated list of non-empty origins.");
@@ -30,6 +32,7 @@ export function validateEnvironment(
 
   return {
     CORS_ORIGIN: corsOrigin,
+    DATABASE_URL: databaseUrl,
     LOG_LEVEL: logLevel,
     NODE_ENV: nodeEnvironment,
     PORT: port,
@@ -70,9 +73,9 @@ function readLogLevel(value: unknown, nodeEnvironment: NodeEnvironment): LogLeve
 function readNonEmptyString(
   value: unknown,
   variableName: string,
-  defaultValue: string,
+  defaultValue?: string,
 ): string {
-  if (value === undefined) {
+  if (value === undefined && defaultValue !== undefined) {
     return defaultValue;
   }
 
