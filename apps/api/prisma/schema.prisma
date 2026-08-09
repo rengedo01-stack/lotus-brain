@@ -7,3 +7,169 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum MasterStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum UnitDimension {
+  COUNT
+  MASS
+  VOLUME
+}
+
+enum InventoryTransactionType {
+  RECEIPT
+  CONSUMPTION
+  STOCKTAKE_ADJUSTMENT
+  MANUAL_ADJUSTMENT
+}
+
+model Unit {
+  id        String        @id @default(cuid())
+  code      String        @unique
+  name      String
+  symbol    String
+  dimension UnitDimension
+  status    MasterStatus  @default(ACTIVE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  baseUnitProducts      Product[]               @relation("ProductBaseUnit")
+  inventoryUnitProducts Product[]               @relation("ProductInventoryUnit")
+  productConversions    ProductUnitConversion[]
+  priceHistories        PriceHistory[]          @relation("PriceHistoryInventoryUnit")
+  inventoryHistories    InventoryHistory[]      @relation("InventoryHistoryInventoryUnit")
+
+  @@index([dimension, status])
+}
+
+model Product {
+  id              String       @id @default(cuid())
+  code            String       @unique
+  name            String
+  description     String?
+  baseUnitId      String
+  inventoryUnitId String
+  status          MasterStatus @default(ACTIVE)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  deletedAt       DateTime?
+
+  // All product conversions normalize to this unit for unambiguous calculations.
+  baseUnit      Unit @relation("ProductBaseUnit", fields: [baseUnitId], references: [id], onDelete: Restrict)
+  // Purchase and inventory quantities use this common unit in v1.
+  inventoryUnit Unit @relation("ProductInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+
+  unitConversions ProductUnitConversion[]
+  priceMasters    PriceMaster[]
+  inventory       Inventory?
+
+  @@index([status, deletedAt])
+  @@index([baseUnitId])
+  @@index([inventoryUnitId])
+}
+
+model ProductUnitConversion {
+  id               String       @id @default(cuid())
+  productId        String
+  unitId           String
+  // One unit expressed in the product's base unit. A DB constraint requires a positive value.
+  factorToBaseUnit Decimal      @db.Decimal(24, 9)
+  status           MasterStatus @default(ACTIVE)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  unit    Unit    @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@unique([productId, unitId])
+  @@index([unitId, status])
+}
+
+model Supplier {
+  id        String       @id @default(cuid())
+  code      String       @unique
+  name      String
+  status    MasterStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  deletedAt DateTime?
+
+  priceMasters PriceMaster[]
+
+  @@index([status, deletedAt])
+}
+
+model PriceMaster {
+  id                      String       @id @default(cuid())
+  productId               String
+  supplierId              String
+  // The current price is always expressed per Product.inventoryUnit in v1 and cannot be negative.
+  currentUnitPrice        Decimal      @db.Decimal(20, 6)
+  currency                String       @default("JPY") @db.Char(3)
+  currentPriceEffectiveAt DateTime     @default(now())
+  status                  MasterStatus @default(ACTIVE)
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+  deletedAt               DateTime?
+
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  supplier       Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  priceHistories PriceHistory[]
+
+  @@unique([productId, supplierId])
+  @@index([productId, status])
+  @@index([supplierId, status])
+}
+
+model PriceHistory {
+  id              String   @id @default(cuid())
+  priceMasterId   String
+  // Snapshot the inventory unit so price history remains interpretable after master changes.
+  inventoryUnitId String
+  unitPrice       Decimal  @db.Decimal(20, 6)
+  currency        String   @db.Char(3)
+  effectiveAt     DateTime
+  note            String?
+  createdAt       DateTime @default(now())
+
+  priceMaster   PriceMaster @relation(fields: [priceMasterId], references: [id], onDelete: Restrict)
+  inventoryUnit Unit        @relation("PriceHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+
+  @@index([priceMasterId, effectiveAt])
+  @@index([inventoryUnitId])
+}
+
+model Inventory {
+  id        String   @id @default(cuid())
+  productId String   @unique
+  // Current quantity is expressed in Product.inventoryUnit.
+  quantity  Decimal  @default(0) @db.Decimal(24, 9)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product   Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
+  histories InventoryHistory[]
+}
+
+model InventoryHistory {
+  id              String                   @id @default(cuid())
+  inventoryId     String
+  // Snapshot the inventory unit to preserve the meaning of past quantities.
+  inventoryUnitId String
+  type            InventoryTransactionType
+  quantityDelta   Decimal                  @db.Decimal(24, 9)
+  quantityAfter   Decimal                  @db.Decimal(24, 9)
+  occurredAt      DateTime                 @default(now())
+  note            String?
+  createdAt       DateTime                 @default(now())
+
+  inventory     Inventory @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
+  inventoryUnit Unit      @relation("InventoryHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+
+  @@index([inventoryId, occurredAt])
+  @@index([inventoryUnitId, occurredAt])
+  @@index([type, occurredAt])
+}
