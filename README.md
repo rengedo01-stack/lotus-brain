@@ -54,7 +54,7 @@ The `postgres_data` named volume persists local database data. The service healt
 docker compose --env-file apps/api/.env down
 ```
 
-Prisma's schema source of truth is `apps/api/prisma/schema.prisma`. This foundation intentionally contains no business models or migrations. Future migrations are forward-only and must not rewrite an applied migration.
+Prisma's schema source of truth is `apps/api/prisma/schema.prisma`, with forward-only migrations in `apps/api/prisma/migrations`. The current core data model contains `Product`, `Unit`, `ProductUnitConversion`, `Supplier`, `PriceMaster`, `PriceHistory`, `Inventory`, and `InventoryHistory`. Future domain code must access Prisma behind application/infrastructure boundaries rather than importing it directly.
 
 Validate the schema and generate the API client from the repository root:
 
