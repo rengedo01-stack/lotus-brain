@@ -21,7 +21,18 @@ Start all development tasks:
 pnpm dev
 ```
 
-The web application is available at [http://localhost:3000](http://localhost:3000), and the API health check is available at [http://localhost:3001/health](http://localhost:3001/health).
+The web application is available at [http://localhost:3000](http://localhost:3000). The API health check is available at [http://localhost:3001/api/v1/health](http://localhost:3001/api/v1/health), and Swagger UI is available at [http://localhost:3001/api/v1/docs](http://localhost:3001/api/v1/docs).
+
+### API configuration
+
+The API reads its runtime configuration through `@nestjs/config`. Defaults support local development; to override them, copy `apps/api/.env.example` to `apps/api/.env` and set the required values.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `NODE_ENV` | `development` | Runtime environment (`development`, `test`, or `production`). |
+| `PORT` | `3001` | API listening port. |
+| `CORS_ORIGIN` | `http://localhost:3000` | Comma-separated allowed CORS origins. |
+| `LOG_LEVEL` | `debug` (development), `info` (production) | Pino log level. |
 
 ## Workspace commands
 
