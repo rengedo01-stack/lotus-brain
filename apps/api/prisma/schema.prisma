@@ -39,6 +39,19 @@ enum PurchaseLogEventType {
   IMPORTED
 }
 
+enum RecipeStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProductionStatus {
+  DRAFT
+  CONFIRMED
+  POSTED
+  CANCELLED
+}
+
 model Unit {
   id        String        @id @default(cuid())
   code      String        @unique
@@ -49,12 +62,17 @@ model Unit {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  baseUnitProducts      Product[]               @relation("ProductBaseUnit")
-  inventoryUnitProducts Product[]               @relation("ProductInventoryUnit")
-  productConversions    ProductUnitConversion[]
-  priceHistories        PriceHistory[]          @relation("PriceHistoryInventoryUnit")
-  inventoryHistories    InventoryHistory[]      @relation("InventoryHistoryInventoryUnit")
-  purchaseItems         PurchaseItem[]          @relation("PurchaseItemInventoryUnit")
+  baseUnitProducts          Product[]               @relation("ProductBaseUnit")
+  inventoryUnitProducts     Product[]               @relation("ProductInventoryUnit")
+  productConversions        ProductUnitConversion[]
+  priceHistories            PriceHistory[]          @relation("PriceHistoryInventoryUnit")
+  inventoryHistories        InventoryHistory[]      @relation("InventoryHistoryInventoryUnit")
+  purchaseItems             PurchaseItem[]          @relation("PurchaseItemInventoryUnit")
+  recipeYields              Recipe[]                @relation("RecipeYieldUnit")
+  recipeItems               RecipeItem[]            @relation("RecipeItemUnit")
+  productionOutputSnapshots Production[]            @relation("ProductionOutputUnitSnapshot")
+  consumptionRecipeUnits    ProductionConsumption[] @relation("ProductionConsumptionRecipeUnit")
+  consumptionInventoryUnits ProductionConsumption[] @relation("ProductionConsumptionInventoryUnit")
 
   @@index([dimension, status])
 }
@@ -76,10 +94,14 @@ model Product {
   // Purchase and inventory quantities use this common unit in v1.
   inventoryUnit Unit @relation("ProductInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
-  unitConversions ProductUnitConversion[]
-  priceMasters    PriceMaster[]
-  inventory       Inventory?
-  purchaseItems   PurchaseItem[]          @relation("PurchaseItemProductInventoryUnit")
+  unitConversions           ProductUnitConversion[]
+  priceMasters              PriceMaster[]
+  inventory                 Inventory?
+  purchaseItems             PurchaseItem[]          @relation("PurchaseItemProductInventoryUnit")
+  outputRecipes             Recipe[]                @relation("RecipeOutputProduct")
+  productionOutputSnapshots Production[]            @relation("ProductionOutputProductSnapshot")
+  recipeItems               RecipeItem[]            @relation("RecipeItemProduct")
+  consumptions              ProductionConsumption[] @relation("ProductionConsumptionProductInventoryUnit")
 
   // Supports PurchaseItem's composite foreign key, which guarantees that every
   // recorded purchase quantity uses this product's inventory unit.
@@ -178,24 +200,28 @@ model Inventory {
 }
 
 model InventoryHistory {
-  id                   String                   @id @default(cuid())
-  inventoryId          String
+  id                            String                   @id @default(cuid())
+  inventoryId                   String
   // A purchase item can create at most one receipt history, making a retry or
   // duplicate POSTED transition unable to create a second stock movement. A
   // PostgreSQL trigger also permits this source only while its Purchase is POSTED.
-  sourcePurchaseItemId String?                  @unique
+  sourcePurchaseItemId          String?                  @unique
+  // A production consumption can create at most one stock-consumption history.
+  // A PostgreSQL trigger permits this source only while its Production is POSTED.
+  sourceProductionConsumptionId String?                  @unique
   // Snapshot the inventory unit to preserve the meaning of past quantities.
-  inventoryUnitId      String
-  type                 InventoryTransactionType
-  quantityDelta        Decimal                  @db.Decimal(24, 9)
-  quantityAfter        Decimal                  @db.Decimal(24, 9)
-  occurredAt           DateTime                 @default(now())
-  note                 String?
-  createdAt            DateTime                 @default(now())
+  inventoryUnitId               String
+  type                          InventoryTransactionType
+  quantityDelta                 Decimal                  @db.Decimal(24, 9)
+  quantityAfter                 Decimal                  @db.Decimal(24, 9)
+  occurredAt                    DateTime                 @default(now())
+  note                          String?
+  createdAt                     DateTime                 @default(now())
 
-  inventory          Inventory     @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
-  sourcePurchaseItem PurchaseItem? @relation("InventoryHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
-  inventoryUnit      Unit          @relation("InventoryHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+  inventory                   Inventory              @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
+  sourcePurchaseItem          PurchaseItem?          @relation("InventoryHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
+  sourceProductionConsumption ProductionConsumption? @relation("InventoryHistorySourceProductionConsumption", fields: [sourceProductionConsumptionId], references: [id], onDelete: Restrict)
+  inventoryUnit               Unit                   @relation("InventoryHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
   @@index([inventoryId, occurredAt])
   @@index([inventoryUnitId, occurredAt])
@@ -279,4 +305,112 @@ model PurchaseLog {
 
   @@index([purchaseId, occurredAt])
   @@index([toStatus, occurredAt])
+}
+
+model Recipe {
+  id              String       @id @default(cuid())
+  name            String
+  outputProductId String
+  // Yield is expressed in yieldUnitId. The database verifies that this unit is
+  // convertible for outputProductId through ProductUnitConversion.
+  yieldQuantity   Decimal      @db.Decimal(24, 9)
+  yieldUnitId     String
+  status          RecipeStatus @default(DRAFT)
+  // A revision is a new Recipe row. Once a Production references this row, the
+  // database locks its structural definition and its RecipeItem composition.
+  revision        Int          @default(1)
+  note            String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  outputProduct Product      @relation("RecipeOutputProduct", fields: [outputProductId], references: [id], onDelete: Restrict)
+  yieldUnit     Unit         @relation("RecipeYieldUnit", fields: [yieldUnitId], references: [id], onDelete: Restrict)
+  items         RecipeItem[]
+  productions   Production[]
+
+  @@unique([outputProductId, revision])
+  @@index([status, outputProductId])
+  @@index([yieldUnitId])
+}
+
+model RecipeItem {
+  id        String   @id @default(cuid())
+  recipeId  String
+  productId String
+  // The database verifies this unit has an active, Product-specific conversion
+  // to the product inventory unit (or is the implicit base unit).
+  unitId    String
+  quantity  Decimal  @db.Decimal(24, 9)
+  sortOrder Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recipe  Recipe  @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  product Product @relation("RecipeItemProduct", fields: [productId], references: [id], onDelete: Restrict)
+  unit    Unit    @relation("RecipeItemUnit", fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@unique([recipeId, sortOrder])
+  @@index([productId])
+  @@index([unitId])
+}
+
+model Production {
+  id                      String           @id @default(cuid())
+  recipeId                String
+  productionDate          DateTime
+  plannedQuantity         Decimal          @db.Decimal(24, 9)
+  actualQuantity          Decimal?         @db.Decimal(24, 9)
+  // The database copies the output definition from Recipe when this Production
+  // is created. These snapshots never follow later Recipe changes.
+  outputProductIdSnapshot String
+  yieldQuantitySnapshot   Decimal          @db.Decimal(24, 9)
+  outputUnitIdSnapshot    String
+  status                  ProductionStatus @default(DRAFT)
+  note                    String?
+  postedAt                DateTime?
+  cancelledAt             DateTime?
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+
+  recipe                Recipe                  @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  outputProductSnapshot Product                 @relation("ProductionOutputProductSnapshot", fields: [outputProductIdSnapshot], references: [id], onDelete: Restrict)
+  outputUnitSnapshot    Unit                    @relation("ProductionOutputUnitSnapshot", fields: [outputUnitIdSnapshot], references: [id], onDelete: Restrict)
+  consumptions          ProductionConsumption[]
+
+  @@index([recipeId, productionDate])
+  @@index([outputProductIdSnapshot])
+  @@index([outputUnitIdSnapshot])
+  @@index([status, productionDate])
+}
+
+model ProductionConsumption {
+  id                       String   @id @default(cuid())
+  productionId             String
+  productId                String
+  lineNumber               Int
+  // These are immutable production-time snapshots. They never follow later
+  // ProductUnitConversion or PriceMaster changes. The database requires the
+  // rounded quantity and amount formulas to match these snapshot fields.
+  recipeQuantitySnapshot   Decimal  @db.Decimal(24, 9)
+  recipeUnitId             String
+  inventoryQuantity        Decimal  @db.Decimal(24, 9)
+  inventoryUnitId          String
+  conversionFactorSnapshot Decimal  @db.Decimal(30, 12)
+  unitCostSnapshot         Decimal  @db.Decimal(20, 6)
+  amountSnapshot           Decimal  @db.Decimal(20, 6)
+  currency                 String   @default("JPY") @db.Char(3)
+  createdAt                DateTime @default(now())
+
+  production       Production        @relation(fields: [productionId], references: [id], onDelete: Restrict)
+  // This composite foreign key keeps the consumption snapshot in the product's
+  // inventory unit at the time the consumption is recorded.
+  product          Product           @relation("ProductionConsumptionProductInventoryUnit", fields: [productId, inventoryUnitId], references: [id, inventoryUnitId], onDelete: Restrict)
+  recipeUnit       Unit              @relation("ProductionConsumptionRecipeUnit", fields: [recipeUnitId], references: [id], onDelete: Restrict)
+  inventoryUnit    Unit              @relation("ProductionConsumptionInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+  inventoryHistory InventoryHistory? @relation("InventoryHistorySourceProductionConsumption")
+
+  @@unique([productionId, lineNumber])
+  @@index([productId])
+  @@index([recipeUnitId])
+  @@index([inventoryUnitId])
 }
