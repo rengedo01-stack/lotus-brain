@@ -7,7 +7,7 @@
     "build": "pnpm run prisma:generate && nest build",
     "start": "node dist/main",
     "lint": "eslint \"src/**/*.ts\" --max-warnings=0",
-    "test:unit": "node --test test/post-purchase.use-case.test.cjs",
+    "test:unit": "node --test test/*.test.cjs",
     "prisma:validate": "prisma validate --config ./prisma.config.ts",
     "prisma:generate": "prisma generate --config ./prisma.config.ts"
   },
