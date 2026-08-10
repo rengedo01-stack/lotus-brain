@@ -22,6 +22,7 @@ enum UnitDimension {
 enum InventoryTransactionType {
   RECEIPT
   CONSUMPTION
+  PRODUCTION_RECEIPT
   STOCKTAKE_ADJUSTMENT
   MANUAL_ADJUSTMENT
 }
@@ -212,6 +213,7 @@ model InventoryHistory {
   // A production consumption can create at most one stock-consumption history.
   // A PostgreSQL trigger permits this source only while its Production is POSTED.
   sourceProductionConsumptionId String?                  @unique
+  sourceProductionId            String?                  @unique
   // Snapshot the inventory unit to preserve the meaning of past quantities.
   inventoryUnitId               String
   type                          InventoryTransactionType
@@ -224,6 +226,7 @@ model InventoryHistory {
   inventory                   Inventory              @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
   sourcePurchaseItem          PurchaseItem?          @relation("InventoryHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
   sourceProductionConsumption ProductionConsumption? @relation("InventoryHistorySourceProductionConsumption", fields: [sourceProductionConsumptionId], references: [id], onDelete: Restrict)
+  sourceProduction            Production?            @relation("InventoryHistorySourceProduction", fields: [sourceProductionId], references: [id], onDelete: Restrict)
   inventoryUnit               Unit                   @relation("InventoryHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
   @@index([inventoryId, occurredAt])
@@ -362,6 +365,8 @@ model Production {
   recipeId                String
   productionDate          DateTime
   plannedQuantity         Decimal          @db.Decimal(24, 9)
+  // Actual finished output, expressed in outputUnitIdSnapshot. It is required
+  // only when the Production is POSTED.
   actualQuantity          Decimal?         @db.Decimal(24, 9)
   // The database copies the output definition from Recipe when this Production
   // is created. These snapshots never follow later Recipe changes.
@@ -375,10 +380,11 @@ model Production {
   createdAt               DateTime         @default(now())
   updatedAt               DateTime         @updatedAt
 
-  recipe                Recipe                  @relation(fields: [recipeId], references: [id], onDelete: Restrict)
-  outputProductSnapshot Product                 @relation("ProductionOutputProductSnapshot", fields: [outputProductIdSnapshot], references: [id], onDelete: Restrict)
-  outputUnitSnapshot    Unit                    @relation("ProductionOutputUnitSnapshot", fields: [outputUnitIdSnapshot], references: [id], onDelete: Restrict)
-  consumptions          ProductionConsumption[]
+  recipe                 Recipe                  @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  outputProductSnapshot  Product                 @relation("ProductionOutputProductSnapshot", fields: [outputProductIdSnapshot], references: [id], onDelete: Restrict)
+  outputUnitSnapshot     Unit                    @relation("ProductionOutputUnitSnapshot", fields: [outputUnitIdSnapshot], references: [id], onDelete: Restrict)
+  consumptions           ProductionConsumption[]
+  outputInventoryHistory InventoryHistory?       @relation("InventoryHistorySourceProduction")
 
   @@index([recipeId, productionDate])
   @@index([outputProductIdSnapshot])
