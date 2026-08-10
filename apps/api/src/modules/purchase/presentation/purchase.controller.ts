@@ -13,6 +13,7 @@ import {
 import { ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
 import {
   InvalidPurchaseItemError,
+  InventoryValuationUnavailableError,
   PurchaseNotFoundError,
   PurchasePostingConflictError,
 } from "../application/purchase-posting.errors";
@@ -88,7 +89,10 @@ export class PurchaseController {
         throw new ConflictException(error.message);
       }
 
-      if (error instanceof InvalidPurchaseItemError) {
+      if (
+        error instanceof InvalidPurchaseItemError ||
+        error instanceof InventoryValuationUnavailableError
+      ) {
         throw new UnprocessableEntityException(error.message);
       }
 

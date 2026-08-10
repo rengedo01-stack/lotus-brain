@@ -188,12 +188,15 @@ model PriceHistory {
 }
 
 model Inventory {
-  id        String   @id @default(cuid())
-  productId String   @unique
+  id              String   @id @default(cuid())
+  productId       String   @unique
   // Current quantity is expressed in Product.inventoryUnit.
-  quantity  Decimal  @default(0) @db.Decimal(24, 9)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  quantity        Decimal  @default(0) @db.Decimal(24, 9)
+  // Per inventory unit. NULL represents inventory that has never received a
+  // valued receipt; a zero quantity retains its last known average cost.
+  averageUnitCost Decimal? @db.Decimal(20, 6)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   product   Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
   histories InventoryHistory[]
