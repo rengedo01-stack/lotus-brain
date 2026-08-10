@@ -2,6 +2,8 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "../../../generated/prisma/client";
 import type { TransactionClient } from "../../../generated/prisma/internal/prismaNamespace";
 import { PrismaService } from "../../../prisma/prisma.service";
+import { InventoryValuationUnavailableError } from "../application/purchase-posting.errors";
+import { calculateNextAverageUnitCost } from "./inventory-valuation";
 import {
   type PurchaseForPosting,
   type PurchaseItemForPosting,
@@ -137,10 +139,47 @@ class PrismaPurchasePostingTransaction implements PurchasePostingTransaction {
     _purchase: PurchaseForPosting,
     item: PurchaseItemForPosting,
   ): Promise<void> {
-    const inventory = await this.prisma.inventory.upsert({
+    await this.prisma.inventory.upsert({
       where: { productId: item.productId },
-      create: { productId: item.productId, quantity: item.quantity },
-      update: { quantity: { increment: item.quantity } },
+      create: { productId: item.productId, quantity: "0" },
+      update: {},
+    });
+
+    // The unique Product inventory row serializes valued receipts for the same
+    // product. Lock it before reading its quantity/cost and updating both.
+    const lockedInventories = await this.prisma.$queryRaw<
+      { id: string; quantity: Prisma.Decimal; averageUnitCost: Prisma.Decimal | null }[]
+    >(Prisma.sql`
+      SELECT "id", "quantity", "averageUnitCost"
+      FROM "Inventory"
+      WHERE "productId" = ${item.productId}
+      FOR UPDATE
+    `);
+    const lockedInventory = lockedInventories[0];
+
+    if (lockedInventory === undefined) {
+      throw new Error(`Inventory for product ${item.productId} was not found.`);
+    }
+
+    const receivedQuantity = new Prisma.Decimal(item.quantity);
+    const receivedCost = new Prisma.Decimal(item.unitPrice);
+    const previousQuantity = lockedInventory.quantity;
+    if (!previousQuantity.isZero() && lockedInventory.averageUnitCost === null) {
+      // A non-zero legacy/manual balance without a valuation cannot be safely
+      // folded into a weighted average. Backfill or reconcile it explicitly.
+      throw new InventoryValuationUnavailableError(item.productId);
+    }
+    const nextQuantity = previousQuantity.add(receivedQuantity);
+    const nextAverageUnitCost = calculateNextAverageUnitCost(
+      previousQuantity,
+      lockedInventory.averageUnitCost,
+      receivedQuantity,
+      receivedCost,
+    );
+
+    const inventory = await this.prisma.inventory.update({
+      where: { id: lockedInventory.id },
+      data: { quantity: nextQuantity, averageUnitCost: nextAverageUnitCost },
       select: { id: true, quantity: true },
     });
 

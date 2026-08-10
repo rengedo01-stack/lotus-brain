@@ -60,6 +60,8 @@ Prisma's schema source of truth is `apps/api/prisma/schema.prisma`, with forward
 
 `POST /api/v1/purchases/:id/post` posts an existing `DRAFT` or `CONFIRMED` purchase. The application use case owns an interactive Prisma transaction: it locks `PurchaseItem` rows by stable ID order and then the parent Purchase, matching the source-history trigger lock order. It validates every item against the Product inventory unit, writes price and inventory effects in stable Product order, appends the processing log, and commits all changes together. To satisfy the database receipt trigger, it sets the Purchase to `POSTED` before creating receipt histories; a later failure rolls that state transition and every prior effect back. Reposting a `POSTED` or `CANCELLED` purchase returns `409 Conflict`.
 
+Inventory uses perpetual weighted-average valuation. `PriceMaster` remains a supplier-specific purchasing reference; each valued purchase receipt atomically updates `Inventory.quantity` and `Inventory.averageUnitCost` in the product inventory unit. For a non-zero balance, the new cost is `(old quantity × old average cost + received quantity × received unit price) / new quantity`, rounded to six decimal places. A zero quantity retains its latest average cost, while the next receipt from zero resets the average to that receipt's unit price. Normal inventory consumption does not change the average cost. `averageUnitCost = NULL` is reserved for a zero-quantity inventory that has never received a valued receipt; a non-zero balance with `NULL` cost is rejected during posting and must be reconciled before it can participate in valuation.
+
 Validate the schema and generate the API client from the repository root:
 
 ```bash
