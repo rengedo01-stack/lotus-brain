@@ -53,6 +53,10 @@ enum ProductionStatus {
   CANCELLED
 }
 
+enum ProductionLogEventType {
+  STATUS_CHANGED
+}
+
 model Unit {
   id        String        @id @default(cuid())
   code      String        @unique
@@ -385,11 +389,26 @@ model Production {
   outputUnitSnapshot     Unit                    @relation("ProductionOutputUnitSnapshot", fields: [outputUnitIdSnapshot], references: [id], onDelete: Restrict)
   consumptions           ProductionConsumption[]
   outputInventoryHistory InventoryHistory?       @relation("InventoryHistorySourceProduction")
+  logs                   ProductionLog[]
 
   @@index([recipeId, productionDate])
   @@index([outputProductIdSnapshot])
   @@index([outputUnitIdSnapshot])
   @@index([status, productionDate])
+}
+
+model ProductionLog {
+  id           String                 @id @default(cuid())
+  productionId String
+  eventType    ProductionLogEventType
+  fromStatus   ProductionStatus?
+  toStatus     ProductionStatus?
+  createdAt    DateTime               @default(now())
+
+  production Production @relation(fields: [productionId], references: [id], onDelete: Restrict)
+
+  @@index([productionId, createdAt])
+  @@index([toStatus, createdAt])
 }
 
 model ProductionConsumption {
