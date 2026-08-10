@@ -10,23 +10,42 @@ const production = {
 };
 
 class FakeRepository {
-  constructor(options = {}) { this.options = options; this.events = []; }
+  constructor(options = {}) { this.options = options; this.events = []; this.calls = []; }
   async withTransaction(operation) {
     const pending = [];
     const tx = {
       lockProduction: async () => this.options.production ?? production,
-      lockInventories: async () => [
+      lockInventories: async () => this.options.inventories ?? [
         { id: "finished-inventory", productId: "finished", quantity: "5", averageUnitCost: "1000", inventoryUnitId: "kg" },
         { id: "material-inventory", productId: "material", quantity: "10", averageUnitCost: "600", inventoryUnitId: "kg" },
       ],
       lockProductionStatus: async () => (this.options.status ?? "CONFIRMED"),
       factorToInventory: async () => "1",
-      updateConsumptionCost: async () => pending.push("snapshot"),
-      markProductionPosted: async () => pending.push("posted"),
-      updateInventory: async () => pending.push("inventory"),
-      createConsumptionHistory: async () => pending.push("consumption-history"),
-      createOutputHistory: async () => { if (this.options.failOutput) throw new Error("output failure"); pending.push("output-history"); },
-      appendPostedLog: async () => pending.push("log"),
+      updateConsumptionCost: async (id, recipeQuantity, inventoryQuantity, unitCost, amount) => {
+        pending.push("snapshot");
+        this.calls.push(["snapshot", id, recipeQuantity, inventoryQuantity, unitCost, amount]);
+      },
+      markProductionPosted: async (id, actualQuantity, postedAt) => {
+        pending.push("posted");
+        this.calls.push(["posted", id, actualQuantity, postedAt instanceof Date]);
+      },
+      updateInventory: async (id, quantity, averageUnitCost) => {
+        pending.push("inventory");
+        this.calls.push(["inventory", id, quantity, averageUnitCost]);
+      },
+      createConsumptionHistory: async (consumptionId, inventory, quantity, quantityAfter) => {
+        pending.push("consumption-history");
+        this.calls.push(["consumption-history", consumptionId, inventory.productId, quantity, quantityAfter]);
+      },
+      createOutputHistory: async (productionId, inventory, quantity, quantityAfter) => {
+        if (this.options.failOutput) throw new Error("output failure");
+        pending.push("output-history");
+        this.calls.push(["output-history", productionId, inventory.productId, quantity, quantityAfter]);
+      },
+      appendPostedLog: async (productionId) => {
+        pending.push("log");
+        this.calls.push(["log", productionId]);
+      },
     };
     const result = await operation(tx);
     this.events.push(...pending);
@@ -58,4 +77,36 @@ test("rejects a non-confirmed production", async () => {
   const repository = new FakeRepository({ status: "POSTED" });
   await assert.rejects(() => new PostProductionUseCase(repository).execute("production-1", "10"), ProductionPostingConflictError);
   assert.deepEqual(repository.events, []);
+});
+
+test("accumulates repeated product updates before the output receipt", async () => {
+  const repository = new FakeRepository({
+    production: {
+      id: "production-dup",
+      status: "CONFIRMED",
+      outputProductIdSnapshot: "material",
+      outputUnitIdSnapshot: "kg",
+      yieldQuantitySnapshot: "2",
+      consumptions: [
+        { id: "consumption-a", productId: "material", recipeQuantitySnapshot: "1", recipeUnitId: "kg", inventoryUnitId: "kg", conversionFactorSnapshot: "1" },
+        { id: "consumption-b", productId: "material", recipeQuantitySnapshot: "1", recipeUnitId: "kg", inventoryUnitId: "kg", conversionFactorSnapshot: "1" },
+      ],
+    },
+    inventories: [{ id: "material-inventory", productId: "material", quantity: "10", averageUnitCost: "600", inventoryUnitId: "kg" }],
+  });
+
+  const result = await new PostProductionUseCase(repository).execute("production-dup", "4");
+  assert.equal(result.status, "POSTED");
+  assert.deepEqual(
+    repository.calls.filter(([kind]) => kind === "inventory").map(([, , quantity]) => quantity),
+    ["8", "6", "10"],
+  );
+  assert.deepEqual(
+    repository.calls.filter(([kind]) => kind === "consumption-history").map(([, , , , quantityAfter]) => quantityAfter),
+    ["8", "6"],
+  );
+  assert.deepEqual(
+    repository.calls.filter(([kind]) => kind === "output-history").map(([, , , , quantityAfter]) => quantityAfter),
+    ["10"],
+  );
 });

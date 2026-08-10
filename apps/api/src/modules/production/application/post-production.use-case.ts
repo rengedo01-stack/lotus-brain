@@ -38,6 +38,18 @@ export class PostProductionUseCase {
       if (inventoryByProduct.size !== productIds.length) {
         throw new InvalidProductionPostingError("Every input and output Product must have an Inventory row.");
       }
+      const inventoryStateByProduct = new Map(
+        inventories.map((inventory) => [
+          inventory.productId,
+          {
+            id: inventory.id,
+            productId: inventory.productId,
+            quantity: new Prisma.Decimal(inventory.quantity),
+            averageUnitCost: inventory.averageUnitCost === null ? null : new Prisma.Decimal(inventory.averageUnitCost),
+            inventoryUnitId: inventory.inventoryUnitId,
+          },
+        ]),
+      );
       const lockedStatus = await transaction.lockProductionStatus(production.id);
       if (lockedStatus === null) throw new ProductionNotFoundError(productionId);
       if (lockedStatus !== "CONFIRMED") {
@@ -46,25 +58,26 @@ export class PostProductionUseCase {
 
       const scale = actualQuantity.div(new Prisma.Decimal(production.yieldQuantitySnapshot));
       let materialCost = new Prisma.Decimal(0);
-      const consumptionEffects: Array<{ id: string; inventory: LockedInventory; quantity: Prisma.Decimal }> = [];
+      const consumptionEffects: Array<{ id: string; inventory: LockedInventory; quantity: Prisma.Decimal; quantityAfter: Prisma.Decimal }> = [];
 
       for (const consumption of [...production.consumptions].sort((a, b) => a.id.localeCompare(b.id))) {
         const inventory = inventoryByProduct.get(consumption.productId)!;
+        const state = inventoryStateByProduct.get(consumption.productId)!;
         if (inventory.inventoryUnitId !== consumption.inventoryUnitId) {
           throw new InvalidProductionPostingError(`Consumption ${consumption.id} does not use its Product inventory unit.`);
         }
-        if (inventory.averageUnitCost === null && !new Prisma.Decimal(inventory.quantity).isZero()) {
+        if (state.averageUnitCost === null && !state.quantity.isZero()) {
           throw new InvalidProductionPostingError(`Inventory valuation is unavailable for Product ${consumption.productId}.`);
         }
         const recipeQuantity = new Prisma.Decimal(consumption.recipeQuantitySnapshot).mul(scale);
         const inventoryQuantity = recipeQuantity.mul(new Prisma.Decimal(consumption.conversionFactorSnapshot)).toDecimalPlaces(9);
-        const available = new Prisma.Decimal(inventory.quantity);
-        if (available.lt(inventoryQuantity)) throw new InsufficientProductionInventoryError(`Insufficient inventory for Product ${consumption.productId}.`);
-        const unitCost = new Prisma.Decimal(inventory.averageUnitCost ?? 0);
+        if (state.quantity.lt(inventoryQuantity)) throw new InsufficientProductionInventoryError(`Insufficient inventory for Product ${consumption.productId}.`);
+        const unitCost = new Prisma.Decimal(state.averageUnitCost ?? 0);
         const amount = inventoryQuantity.mul(unitCost).toDecimalPlaces(6);
         await transaction.updateConsumptionCost(consumption.id, recipeQuantity.toString(), inventoryQuantity.toString(), unitCost.toString(), amount.toString());
         materialCost = materialCost.add(amount);
-        consumptionEffects.push({ id: consumption.id, inventory, quantity: inventoryQuantity });
+        state.quantity = state.quantity.sub(inventoryQuantity);
+        consumptionEffects.push({ id: consumption.id, inventory, quantity: inventoryQuantity, quantityAfter: state.quantity });
       }
 
       const outputFactor = new Prisma.Decimal(await transaction.factorToInventory(production.outputProductIdSnapshot, production.outputUnitIdSnapshot));
@@ -78,20 +91,22 @@ export class PostProductionUseCase {
       await transaction.markProductionPosted(production.id, actualQuantity.toString(), postedAt);
 
       for (const effect of consumptionEffects) {
-        const previous = new Prisma.Decimal(effect.inventory.quantity);
-        const next = previous.sub(effect.quantity);
-        await transaction.updateInventory(effect.inventory.id, next.toString(), effect.inventory.averageUnitCost);
-        await transaction.createConsumptionHistory(effect.id, effect.inventory, effect.quantity.negated().toString(), next.toString());
+        const state = inventoryStateByProduct.get(effect.inventory.productId)!;
+        await transaction.updateInventory(effect.inventory.id, effect.quantityAfter.toString(), state.averageUnitCost === null ? null : state.averageUnitCost.toString());
+        await transaction.createConsumptionHistory(effect.id, effect.inventory, effect.quantity.negated().toString(), effect.quantityAfter.toString());
       }
 
       const outputInventory = inventoryByProduct.get(production.outputProductIdSnapshot)!;
-      const outputNextQuantity = new Prisma.Decimal(outputInventory.quantity).add(finishedQuantity);
+      const outputState = inventoryStateByProduct.get(production.outputProductIdSnapshot)!;
+      const outputNextQuantity = outputState.quantity.add(finishedQuantity);
       const nextAverage = calculateNextAverageUnitCost(
-        new Prisma.Decimal(outputInventory.quantity),
-        outputInventory.averageUnitCost === null ? null : new Prisma.Decimal(outputInventory.averageUnitCost),
+        outputState.quantity,
+        outputState.averageUnitCost,
         finishedQuantity,
         productionUnitCost,
       );
+      outputState.quantity = outputNextQuantity;
+      outputState.averageUnitCost = nextAverage;
       await transaction.updateInventory(outputInventory.id, outputNextQuantity.toString(), nextAverage.toString());
       await transaction.createOutputHistory(production.id, outputInventory, finishedQuantity.toString(), outputNextQuantity.toString());
       await transaction.appendPostedLog(production.id, postedAt);
