@@ -8,6 +8,7 @@ import {
 } from "./config/environment";
 import { PrismaModule } from "./prisma/prisma.module";
 import { PurchaseModule } from "./modules/purchase/purchase.module";
+import { ProductionModule } from "./modules/production/production.module";
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { PurchaseModule } from "./modules/purchase/purchase.module";
     }),
     PrismaModule,
     PurchaseModule,
+    ProductionModule,
   ],
   controllers: [AppController],
 })
