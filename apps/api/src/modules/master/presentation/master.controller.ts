@@ -8,18 +8,22 @@ import {
   Patch,
   Post,
   Query,
+  BadRequestException,
   UnprocessableEntityException,
 } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { MasterConflictError, MasterNotFoundError, MasterValidationError } from "../application/master.errors";
+import { MasterConflictError, MasterNotFoundError, MasterRequestError, MasterValidationError } from "../application/master.errors";
 import {
   CreateProductUseCase,
+  CreateProductUnitConversionUseCase,
   CreateSupplierUseCase,
   CreateUnitUseCase,
   GetProductUseCase,
+  GetProductUnitConversionUseCase,
   GetSupplierUseCase,
   GetUnitUseCase,
   ListProductsUseCase,
+  ListProductUnitConversionsUseCase,
   ListSuppliersUseCase,
   ListUnitsUseCase,
   UpdateProductUseCase,
@@ -27,6 +31,7 @@ import {
   UpdateUnitUseCase,
 } from "../application/master.use-cases";
 import { CreateProductDto, UpdateProductDto } from "./dto/product.dto";
+import { CreateProductUnitConversionDto } from "./dto/product-unit-conversion.dto";
 import { CreateSupplierDto, UpdateSupplierDto } from "./dto/supplier.dto";
 import { ListQueryDto } from "./dto/list-query.dto";
 import { CreateUnitDto, UpdateUnitDto } from "./dto/unit.dto";
@@ -39,6 +44,9 @@ export class MasterController {
     private readonly getProductUseCase: GetProductUseCase,
     private readonly listProductsUseCase: ListProductsUseCase,
     private readonly updateProductUseCase: UpdateProductUseCase,
+    private readonly createProductUnitConversionUseCase: CreateProductUnitConversionUseCase,
+    private readonly getProductUnitConversionUseCase: GetProductUnitConversionUseCase,
+    private readonly listProductUnitConversionsUseCase: ListProductUnitConversionsUseCase,
     private readonly createUnitUseCase: CreateUnitUseCase,
     private readonly getUnitUseCase: GetUnitUseCase,
     private readonly listUnitsUseCase: ListUnitsUseCase,
@@ -71,6 +79,24 @@ export class MasterController {
   @ApiOperation({ summary: "Update a product" })
   updateProduct(@Param("id") id: string, @Body() dto: UpdateProductDto) {
     return this.run(() => this.updateProductUseCase.execute(id, dto));
+  }
+
+  @Post("products/:productId/unit-conversions")
+  @ApiOperation({ summary: "Create a product unit conversion" })
+  createProductUnitConversion(@Param("productId") productId: string, @Body() dto: CreateProductUnitConversionDto) {
+    return this.run(() => this.createProductUnitConversionUseCase.execute(productId, dto));
+  }
+
+  @Get("products/:productId/unit-conversions")
+  @ApiOperation({ summary: "List product unit conversions" })
+  listProductUnitConversions(@Param("productId") productId: string) {
+    return this.run(() => this.listProductUnitConversionsUseCase.execute(productId));
+  }
+
+  @Get("products/:productId/unit-conversions/:id")
+  @ApiOperation({ summary: "Get a product unit conversion" })
+  getProductUnitConversion(@Param("productId") productId: string, @Param("id") id: string) {
+    return this.run(() => this.getProductUnitConversionUseCase.execute(productId, id));
   }
 
   @Post("units")
@@ -127,6 +153,7 @@ export class MasterController {
     } catch (error: unknown) {
       if (error instanceof MasterNotFoundError) throw new NotFoundException(error.message);
       if (error instanceof MasterConflictError) throw new ConflictException(error.message);
+      if (error instanceof MasterRequestError) throw new BadRequestException(error.message);
       if (error instanceof MasterValidationError) throw new UnprocessableEntityException(error.message);
       if (this.isPrismaKnownError(error)) {
         if (error.code === "P2002") throw new ConflictException("A unique constraint was violated.");

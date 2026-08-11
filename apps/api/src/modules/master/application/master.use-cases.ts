@@ -3,6 +3,7 @@ import {
   MASTER_REPOSITORY,
   type ListQuery,
   type MasterRepository,
+  type ProductUnitConversionInput,
   type ProductInput,
   type ProductUpdateInput,
   type SupplierInput,
@@ -117,5 +118,37 @@ export class UpdateSupplierUseCase {
     const supplier = await this.repository.updateSupplier(id, input);
     if (supplier === "NOT_FOUND") throw new MasterNotFoundError("Supplier", id);
     return supplier;
+  }
+}
+
+@Injectable()
+export class CreateProductUnitConversionUseCase {
+  constructor(@Inject(MASTER_REPOSITORY) private readonly repository: MasterRepository) {}
+  async execute(productId: string, input: ProductUnitConversionInput) {
+    const product = await this.repository.getProduct(productId);
+    if (product === null) throw new MasterNotFoundError("Product", productId);
+    return this.repository.createProductUnitConversion(productId, input);
+  }
+}
+
+@Injectable()
+export class GetProductUnitConversionUseCase {
+  constructor(@Inject(MASTER_REPOSITORY) private readonly repository: MasterRepository) {}
+  async execute(productId: string, id: string) {
+    const product = await this.repository.getProduct(productId);
+    if (product === null) throw new MasterNotFoundError("Product", productId);
+    const conversion = await this.repository.getProductUnitConversion(productId, id);
+    if (conversion === null) throw new MasterNotFoundError("ProductUnitConversion", id);
+    return conversion;
+  }
+}
+
+@Injectable()
+export class ListProductUnitConversionsUseCase {
+  constructor(@Inject(MASTER_REPOSITORY) private readonly repository: MasterRepository) {}
+  async execute(productId: string) {
+    const product = await this.repository.getProduct(productId);
+    if (product === null) throw new MasterNotFoundError("Product", productId);
+    return this.repository.listProductUnitConversions(productId);
   }
 }

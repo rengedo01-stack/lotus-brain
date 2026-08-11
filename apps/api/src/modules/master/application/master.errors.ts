@@ -18,3 +18,10 @@ export class MasterValidationError extends Error {
     this.name = "MasterValidationError";
   }
 }
+
+export class MasterRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MasterRequestError";
+  }
+}
