@@ -57,6 +57,27 @@ enum ProductionLogEventType {
   STATUS_CHANGED
 }
 
+enum StocktakeStatus {
+  DRAFT
+  CONFIRMED
+  POSTED
+  CANCELLED
+}
+
+enum InventoryAdjustmentStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+enum InventoryAdjustmentReason {
+  STOCKTAKE_DIFFERENCE
+  SHRINKAGE
+  DAMAGE
+  ROUNDING
+  OTHER
+}
+
 model Unit {
   id        String        @id @default(cuid())
   code      String        @unique
@@ -67,17 +88,19 @@ model Unit {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  baseUnitProducts          Product[]               @relation("ProductBaseUnit")
-  inventoryUnitProducts     Product[]               @relation("ProductInventoryUnit")
+  baseUnitProducts          Product[]                 @relation("ProductBaseUnit")
+  inventoryUnitProducts     Product[]                 @relation("ProductInventoryUnit")
   productConversions        ProductUnitConversion[]
-  priceHistories            PriceHistory[]          @relation("PriceHistoryInventoryUnit")
-  inventoryHistories        InventoryHistory[]      @relation("InventoryHistoryInventoryUnit")
-  purchaseItems             PurchaseItem[]          @relation("PurchaseItemInventoryUnit")
-  recipeYields              Recipe[]                @relation("RecipeYieldUnit")
-  recipeItems               RecipeItem[]            @relation("RecipeItemUnit")
-  productionOutputSnapshots Production[]            @relation("ProductionOutputUnitSnapshot")
-  consumptionRecipeUnits    ProductionConsumption[] @relation("ProductionConsumptionRecipeUnit")
-  consumptionInventoryUnits ProductionConsumption[] @relation("ProductionConsumptionInventoryUnit")
+  priceHistories            PriceHistory[]            @relation("PriceHistoryInventoryUnit")
+  inventoryHistories        InventoryHistory[]        @relation("InventoryHistoryInventoryUnit")
+  purchaseItems             PurchaseItem[]            @relation("PurchaseItemInventoryUnit")
+  recipeYields              Recipe[]                  @relation("RecipeYieldUnit")
+  recipeItems               RecipeItem[]              @relation("RecipeItemUnit")
+  productionOutputSnapshots Production[]              @relation("ProductionOutputUnitSnapshot")
+  consumptionRecipeUnits    ProductionConsumption[]   @relation("ProductionConsumptionRecipeUnit")
+  consumptionInventoryUnits ProductionConsumption[]   @relation("ProductionConsumptionInventoryUnit")
+  stocktakeItems            StocktakeItem[]
+  inventoryAdjustmentItems  InventoryAdjustmentItem[]
 
   @@index([dimension, status])
 }
@@ -102,11 +125,13 @@ model Product {
   unitConversions           ProductUnitConversion[]
   priceMasters              PriceMaster[]
   inventory                 Inventory?
-  purchaseItems             PurchaseItem[]          @relation("PurchaseItemProductInventoryUnit")
-  outputRecipes             Recipe[]                @relation("RecipeOutputProduct")
-  productionOutputSnapshots Production[]            @relation("ProductionOutputProductSnapshot")
-  recipeItems               RecipeItem[]            @relation("RecipeItemProduct")
-  consumptions              ProductionConsumption[] @relation("ProductionConsumptionProductInventoryUnit")
+  purchaseItems             PurchaseItem[]            @relation("PurchaseItemProductInventoryUnit")
+  outputRecipes             Recipe[]                  @relation("RecipeOutputProduct")
+  productionOutputSnapshots Production[]              @relation("ProductionOutputProductSnapshot")
+  recipeItems               RecipeItem[]              @relation("RecipeItemProduct")
+  consumptions              ProductionConsumption[]   @relation("ProductionConsumptionProductInventoryUnit")
+  stocktakeItems            StocktakeItem[]
+  inventoryAdjustmentItems  InventoryAdjustmentItem[]
 
   // Supports PurchaseItem's composite foreign key, which guarantees that every
   // recorded purchase quantity uses this product's inventory unit.
@@ -203,35 +228,40 @@ model Inventory {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  product   Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
-  histories InventoryHistory[]
+  product                  Product                   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  histories                InventoryHistory[]
+  inventoryAdjustmentItems InventoryAdjustmentItem[]
 }
 
 model InventoryHistory {
-  id                            String                   @id @default(cuid())
-  inventoryId                   String
+  id                              String                   @id @default(cuid())
+  inventoryId                     String
   // A purchase item can create at most one receipt history, making a retry or
   // duplicate POSTED transition unable to create a second stock movement. A
   // PostgreSQL trigger also permits this source only while its Purchase is POSTED.
-  sourcePurchaseItemId          String?                  @unique
+  sourcePurchaseItemId            String?                  @unique
   // A production consumption can create at most one stock-consumption history.
   // A PostgreSQL trigger permits this source only while its Production is POSTED.
-  sourceProductionConsumptionId String?                  @unique
-  sourceProductionId            String?                  @unique
+  sourceProductionConsumptionId   String?                  @unique
+  sourceProductionId              String?                  @unique
+  // A stocktake adjustment item can create at most one inventory adjustment
+  // history entry.
+  sourceInventoryAdjustmentItemId String?                  @unique
   // Snapshot the inventory unit to preserve the meaning of past quantities.
-  inventoryUnitId               String
-  type                          InventoryTransactionType
-  quantityDelta                 Decimal                  @db.Decimal(24, 9)
-  quantityAfter                 Decimal                  @db.Decimal(24, 9)
-  occurredAt                    DateTime                 @default(now())
-  note                          String?
-  createdAt                     DateTime                 @default(now())
+  inventoryUnitId                 String
+  type                            InventoryTransactionType
+  quantityDelta                   Decimal                  @db.Decimal(24, 9)
+  quantityAfter                   Decimal                  @db.Decimal(24, 9)
+  occurredAt                      DateTime                 @default(now())
+  note                            String?
+  createdAt                       DateTime                 @default(now())
 
-  inventory                   Inventory              @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
-  sourcePurchaseItem          PurchaseItem?          @relation("InventoryHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
-  sourceProductionConsumption ProductionConsumption? @relation("InventoryHistorySourceProductionConsumption", fields: [sourceProductionConsumptionId], references: [id], onDelete: Restrict)
-  sourceProduction            Production?            @relation("InventoryHistorySourceProduction", fields: [sourceProductionId], references: [id], onDelete: Restrict)
-  inventoryUnit               Unit                   @relation("InventoryHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+  inventory                     Inventory                @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
+  sourcePurchaseItem            PurchaseItem?            @relation("InventoryHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
+  sourceProductionConsumption   ProductionConsumption?   @relation("InventoryHistorySourceProductionConsumption", fields: [sourceProductionConsumptionId], references: [id], onDelete: Restrict)
+  sourceProduction              Production?              @relation("InventoryHistorySourceProduction", fields: [sourceProductionId], references: [id], onDelete: Restrict)
+  sourceInventoryAdjustmentItem InventoryAdjustmentItem? @relation("InventoryHistorySourceInventoryAdjustmentItem", fields: [sourceInventoryAdjustmentItemId], references: [id], onDelete: Restrict)
+  inventoryUnit                 Unit                     @relation("InventoryHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
   @@index([inventoryId, occurredAt])
   @@index([inventoryUnitId, occurredAt])
@@ -409,6 +439,83 @@ model ProductionLog {
 
   @@index([productionId, createdAt])
   @@index([toStatus, createdAt])
+}
+
+model Stocktake {
+  id          String          @id @default(cuid())
+  status      StocktakeStatus @default(DRAFT)
+  startedAt   DateTime?
+  completedAt DateTime?
+  note        String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  items      StocktakeItem[]
+  adjustment InventoryAdjustment?
+
+  @@index([status, createdAt])
+}
+
+model StocktakeItem {
+  id                     String   @id @default(cuid())
+  stocktakeId            String
+  productId              String
+  inventoryUnitId        String
+  systemQuantitySnapshot Decimal? @db.Decimal(24, 9)
+  countedQuantity        Decimal? @db.Decimal(24, 9)
+  differenceQuantity     Decimal? @db.Decimal(24, 9)
+  note                   String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  stocktake      Stocktake                @relation(fields: [stocktakeId], references: [id], onDelete: Restrict)
+  product        Product                  @relation(fields: [productId, inventoryUnitId], references: [id, inventoryUnitId], onDelete: Restrict)
+  inventoryUnit  Unit                     @relation(fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+  adjustmentItem InventoryAdjustmentItem? @relation("StocktakeItemAdjustmentItem")
+
+  @@unique([stocktakeId, productId])
+  @@index([productId])
+  @@index([inventoryUnitId])
+}
+
+model InventoryAdjustment {
+  id          String                    @id @default(cuid())
+  stocktakeId String                    @unique
+  status      InventoryAdjustmentStatus @default(DRAFT)
+  postedAt    DateTime?
+  note        String?
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+
+  stocktake Stocktake                 @relation(fields: [stocktakeId], references: [id], onDelete: Restrict)
+  items     InventoryAdjustmentItem[]
+
+  @@index([status, createdAt])
+}
+
+model InventoryAdjustmentItem {
+  id              String                    @id @default(cuid())
+  adjustmentId    String
+  stocktakeItemId String                    @unique
+  productId       String
+  inventoryId     String
+  inventoryUnitId String
+  quantityDelta   Decimal                   @db.Decimal(24, 9)
+  reason          InventoryAdjustmentReason
+  note            String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  adjustment    InventoryAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Restrict)
+  stocktakeItem StocktakeItem       @relation("StocktakeItemAdjustmentItem", fields: [stocktakeItemId], references: [id], onDelete: Restrict)
+  product       Product             @relation(fields: [productId, inventoryUnitId], references: [id, inventoryUnitId], onDelete: Restrict)
+  inventory     Inventory           @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
+  inventoryUnit Unit                @relation(fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+  history       InventoryHistory?   @relation("InventoryHistorySourceInventoryAdjustmentItem")
+
+  @@index([adjustmentId])
+  @@index([productId])
+  @@index([inventoryId])
 }
 
 model ProductionConsumption {

@@ -9,6 +9,7 @@ import {
 import { PrismaModule } from "./prisma/prisma.module";
 import { PurchaseModule } from "./modules/purchase/purchase.module";
 import { ProductionModule } from "./modules/production/production.module";
+import { StocktakeModule } from "./modules/stocktake/stocktake.module";
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { ProductionModule } from "./modules/production/production.module";
     PrismaModule,
     PurchaseModule,
     ProductionModule,
+    StocktakeModule,
   ],
   controllers: [AppController],
 })
