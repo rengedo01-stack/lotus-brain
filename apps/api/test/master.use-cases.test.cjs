@@ -108,7 +108,7 @@ class FakeRepository {
   async updateUnit(id, input) {
     this.events.push(["update-unit", id]);
     if (id === "missing") return "NOT_FOUND";
-    return makeUnit({ id, name: input.name ?? "updated", symbol: input.symbol ?? "u", status: input.status ?? "ACTIVE" });
+    return makeUnit({ id, status: input.status });
   }
 
   async createSupplier(input) {
@@ -173,7 +173,7 @@ test("unit use cases support create, get, list, and update", async () => {
   assert.equal(create.code, "U-100");
   assert.equal((await new GetUnitUseCase(repository).execute("unit-1")).code, "U-001");
   assert.equal((await new ListUnitsUseCase(repository).execute({ limit: 1, offset: 1 }))[0].code, "U-002");
-  assert.equal((await new UpdateUnitUseCase(repository).execute("unit-1", { name: "Changed" })).name, "Changed");
+  assert.equal((await new UpdateUnitUseCase(repository).execute("unit-1", { status: "INACTIVE" })).status, "INACTIVE");
 });
 
 test("supplier use cases support create, get, list, and update", async () => {

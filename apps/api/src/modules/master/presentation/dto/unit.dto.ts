@@ -20,15 +20,6 @@ export class CreateUnitDto {
 }
 
 export class UpdateUnitDto {
-  @IsOptional()
-  @IsString()
-  name?: string;
-
-  @IsOptional()
-  @IsString()
-  symbol?: string;
-
-  @IsOptional()
   @IsEnum(MasterStatus)
-  status?: MasterStatus;
+  status!: MasterStatus;
 }

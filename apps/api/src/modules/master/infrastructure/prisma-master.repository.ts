@@ -134,9 +134,7 @@ export class PrismaMasterRepository implements MasterRepository {
     const updated = await this.prisma.unit.update({
       where: { id },
       data: {
-        name: input.name ?? current.name,
-        symbol: input.symbol ?? current.symbol,
-        status: input.status ?? current.status,
+        status: input.status,
       },
     });
     return this.mapUnit(updated);

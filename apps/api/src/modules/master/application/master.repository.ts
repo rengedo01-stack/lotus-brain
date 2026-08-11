@@ -53,9 +53,7 @@ export type UnitInput = {
 };
 
 export type UnitUpdateInput = {
-  name?: string;
-  symbol?: string;
-  status?: MasterStatus;
+  status: MasterStatus;
 };
 
 export type SupplierView = {
