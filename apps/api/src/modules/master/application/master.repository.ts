@@ -77,6 +77,22 @@ export type SupplierUpdateInput = {
   status?: MasterStatus;
 };
 
+export type ProductUnitConversionView = {
+  id: string;
+  productId: string;
+  unitId: string;
+  factorToBaseUnit: string;
+  status: MasterStatus;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type ProductUnitConversionInput = {
+  unitId: string;
+  factorToBaseUnit: string;
+  status?: MasterStatus;
+};
+
 export interface MasterRepository {
   createProduct(input: ProductInput): Promise<ProductView>;
   getProduct(id: string): Promise<ProductView | null>;
@@ -92,6 +108,10 @@ export interface MasterRepository {
   getSupplier(id: string): Promise<SupplierView | null>;
   listSuppliers(query: ListQuery): Promise<SupplierView[]>;
   updateSupplier(id: string, input: SupplierUpdateInput): Promise<SupplierView | "NOT_FOUND">;
+
+  createProductUnitConversion(productId: string, input: ProductUnitConversionInput): Promise<ProductUnitConversionView>;
+  getProductUnitConversion(productId: string, id: string): Promise<ProductUnitConversionView | null>;
+  listProductUnitConversions(productId: string): Promise<ProductUnitConversionView[]>;
 }
 
 export const MASTER_REPOSITORY = Symbol("MASTER_REPOSITORY");

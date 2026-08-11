@@ -1,10 +1,13 @@
 import { Injectable } from "@nestjs/common";
+import { Prisma } from "../../../generated/prisma/client";
 import type { MasterStatus, UnitDimension } from "../../../generated/prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
-import { MasterValidationError } from "../application/master.errors";
+import { MasterRequestError, MasterValidationError } from "../application/master.errors";
 import {
   type ListQuery,
   type MasterRepository,
+  type ProductUnitConversionInput,
+  type ProductUnitConversionView,
   type ProductInput,
   type ProductUpdateInput,
   type ProductView,
@@ -48,6 +51,16 @@ type SupplierRow = {
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
+};
+
+type ProductUnitConversionRow = {
+  id: string;
+  productId: string;
+  unitId: string;
+  factorToBaseUnit: Prisma.Decimal;
+  status: MasterStatus;
+  createdAt: Date;
+  updatedAt: Date;
 };
 
 @Injectable()
@@ -179,6 +192,70 @@ export class PrismaMasterRepository implements MasterRepository {
     return this.mapSupplier(updated);
   }
 
+  async createProductUnitConversion(
+    productId: string,
+    input: ProductUnitConversionInput,
+  ): Promise<ProductUnitConversionView> {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: {
+        id: true,
+        baseUnitId: true,
+        inventoryUnitId: true,
+        baseUnit: { select: { dimension: true } },
+      },
+    });
+    if (product === null) {
+      throw new MasterValidationError(`Product ${productId} was not found.`);
+    }
+
+    const unit = await this.prisma.unit.findUnique({
+      where: { id: input.unitId },
+      select: { id: true, dimension: true },
+    });
+    if (unit === null) {
+      throw new MasterValidationError(`Unit ${input.unitId} was not found.`);
+    }
+
+    if (unit.dimension !== product.baseUnit.dimension) {
+      throw new MasterValidationError(`Unit ${input.unitId} is not dimension-compatible with Product ${productId}.`);
+    }
+
+    if (unit.id === product.baseUnitId) {
+      throw new MasterValidationError(`Product ${productId} must not define an explicit identity conversion for its base unit ${input.unitId}.`);
+    }
+
+    const factor = this.parseDecimal(input.factorToBaseUnit, "factorToBaseUnit");
+    if (factor.lte(0)) {
+      throw new MasterValidationError("Conversion factor must be greater than zero.");
+    }
+
+    const created = await this.prisma.productUnitConversion.create({
+      data: {
+        productId,
+        unitId: input.unitId,
+        factorToBaseUnit: factor,
+        status: input.status ?? "ACTIVE",
+      },
+    });
+    return this.mapProductUnitConversion(created);
+  }
+
+  async getProductUnitConversion(productId: string, id: string): Promise<ProductUnitConversionView | null> {
+    const conversion = await this.prisma.productUnitConversion.findFirst({
+      where: { id, productId },
+    });
+    return conversion === null ? null : this.mapProductUnitConversion(conversion);
+  }
+
+  async listProductUnitConversions(productId: string): Promise<ProductUnitConversionView[]> {
+    const conversions = await this.prisma.productUnitConversion.findMany({
+      where: { productId },
+      orderBy: [{ unitId: "asc" }, { id: "asc" }],
+    });
+    return conversions.map((conversion) => this.mapProductUnitConversion(conversion));
+  }
+
   private async ensureUnitExists(unitId: string): Promise<void> {
     const unit = await this.prisma.unit.findUnique({ where: { id: unitId } });
     if (unit === null) {
@@ -224,5 +301,25 @@ export class PrismaMasterRepository implements MasterRepository {
       updatedAt: supplier.updatedAt,
       deletedAt: supplier.deletedAt,
     };
+  }
+
+  private mapProductUnitConversion(conversion: ProductUnitConversionRow): ProductUnitConversionView {
+    return {
+      id: conversion.id,
+      productId: conversion.productId,
+      unitId: conversion.unitId,
+      factorToBaseUnit: conversion.factorToBaseUnit.toString(),
+      status: conversion.status,
+      createdAt: conversion.createdAt,
+      updatedAt: conversion.updatedAt,
+    };
+  }
+
+  private parseDecimal(value: string, field: string): Prisma.Decimal {
+    try {
+      return new Prisma.Decimal(value);
+    } catch {
+      throw new MasterRequestError(`Invalid decimal value for ${field}.`);
+    }
   }
 }

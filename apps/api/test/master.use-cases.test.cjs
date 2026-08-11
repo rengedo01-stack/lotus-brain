@@ -3,12 +3,15 @@ const assert = require("node:assert/strict");
 
 const {
   CreateProductUseCase,
+  CreateProductUnitConversionUseCase,
   CreateSupplierUseCase,
   CreateUnitUseCase,
   GetProductUseCase,
+  GetProductUnitConversionUseCase,
   GetSupplierUseCase,
   GetUnitUseCase,
   ListProductsUseCase,
+  ListProductUnitConversionsUseCase,
   ListSuppliersUseCase,
   ListUnitsUseCase,
   UpdateProductUseCase,
@@ -18,6 +21,7 @@ const {
 const {
   MasterConflictError,
   MasterNotFoundError,
+  MasterRequestError,
   MasterValidationError,
 } = require("../dist/modules/master/application/master.errors.js");
 const {
@@ -61,12 +65,24 @@ const makeSupplier = (overrides = {}) => ({
   ...overrides,
 });
 
+const makeConversion = (overrides = {}) => ({
+  id: "conv-1",
+  productId: "prod-1",
+  unitId: "unit-convert",
+  factorToBaseUnit: "0.001000000",
+  status: "ACTIVE",
+  createdAt: new Date("2026-08-11T00:00:00.000Z"),
+  updatedAt: new Date("2026-08-11T00:00:00.000Z"),
+  ...overrides,
+});
+
 class FakeRepository {
   constructor() {
     this.events = [];
     this.products = [makeProduct({ code: "P-001" }), makeProduct({ id: "prod-2", code: "P-002" })];
     this.units = [makeUnit({ code: "U-001" }), makeUnit({ id: "unit-2", code: "U-002" })];
     this.suppliers = [makeSupplier({ code: "S-001" }), makeSupplier({ id: "supplier-2", code: "S-002" })];
+    this.conversions = [makeConversion({ unitId: "unit-2" }), makeConversion({ id: "conv-2", unitId: "unit-3" })];
   }
 
   async createProduct(input) {
@@ -131,6 +147,21 @@ class FakeRepository {
     if (id === "missing") return "NOT_FOUND";
     return makeSupplier({ id, name: input.name ?? "updated", status: input.status ?? "ACTIVE" });
   }
+
+  async createProductUnitConversion(productId, input) {
+    this.events.push(["create-conversion", productId, input.unitId, input.factorToBaseUnit]);
+    return makeConversion({ productId, unitId: input.unitId, factorToBaseUnit: input.factorToBaseUnit, status: input.status ?? "ACTIVE" });
+  }
+
+  async getProductUnitConversion(productId, id) {
+    this.events.push(["get-conversion", productId, id]);
+    return this.conversions.find((item) => item.productId === productId && item.id === id) ?? null;
+  }
+
+  async listProductUnitConversions(productId) {
+    this.events.push(["list-conversions", productId]);
+    return this.conversions.filter((item) => item.productId === productId).sort((a, b) => a.unitId.localeCompare(b.unitId) || a.id.localeCompare(b.id));
+  }
 }
 
 const makeController = (repository) => new MasterController(
@@ -138,6 +169,9 @@ const makeController = (repository) => new MasterController(
   { execute: (id) => repository.getProduct(id) },
   { execute: (query) => repository.listProducts(query) },
   { execute: (id, input) => repository.updateProduct(id, input) },
+  { execute: (productId, input) => repository.createProductUnitConversion(productId, input) },
+  { execute: (productId, id) => repository.getProductUnitConversion(productId, id) },
+  { execute: (productId) => repository.listProductUnitConversions(productId) },
   { execute: (input) => repository.createUnit(input) },
   { execute: (id) => repository.getUnit(id) },
   { execute: (query) => repository.listUnits(query) },
@@ -160,6 +194,18 @@ test("product use cases support create, get, list, and update", async () => {
   assert.equal((await new GetProductUseCase(repository).execute("prod-1")).code, "P-001");
   assert.equal((await new ListProductsUseCase(repository).execute({ limit: 1, offset: 1 }))[0].code, "P-002");
   assert.equal((await new UpdateProductUseCase(repository).execute("prod-1", { name: "Changed" })).name, "Changed");
+});
+
+test("product unit conversion use cases support create, get, and list", async () => {
+  const repository = new FakeRepository();
+  const created = await new CreateProductUnitConversionUseCase(repository).execute("prod-1", {
+    unitId: "unit-2",
+    factorToBaseUnit: "0.125",
+  });
+  assert.equal(created.productId, "prod-1");
+  assert.equal(created.factorToBaseUnit, "0.125");
+  assert.equal((await new GetProductUnitConversionUseCase(repository).execute("prod-1", "conv-1")).unitId, "unit-2");
+  assert.equal((await new ListProductUnitConversionsUseCase(repository).execute("prod-1"))[0].unitId, "unit-2");
 });
 
 test("unit use cases support create, get, list, and update", async () => {
@@ -192,6 +238,8 @@ test("use cases map missing records to not found errors", async () => {
   const repository = new FakeRepository();
   await assert.rejects(() => new GetProductUseCase(repository).execute("missing"), MasterNotFoundError);
   await assert.rejects(() => new UpdateProductUseCase(repository).execute("missing", { name: "x" }), MasterNotFoundError);
+  await assert.rejects(() => new CreateProductUnitConversionUseCase(repository).execute("missing", { unitId: "u", factorToBaseUnit: "1" }), MasterNotFoundError);
+  await assert.rejects(() => new GetProductUnitConversionUseCase(repository).execute("missing", "conv"), MasterNotFoundError);
   await assert.rejects(() => new GetUnitUseCase(repository).execute("missing"), MasterNotFoundError);
   await assert.rejects(() => new UpdateUnitUseCase(repository).execute("missing", { name: "x" }), MasterNotFoundError);
   await assert.rejects(() => new GetSupplierUseCase(repository).execute("missing"), MasterNotFoundError);
@@ -204,6 +252,9 @@ test("controller maps master errors to HTTP exceptions", async () => {
     { execute: async () => { throw new MasterNotFoundError("Product", "missing"); } },
     { execute: async () => [] },
     { execute: async () => { throw new MasterConflictError("conflict"); } },
+    { execute: async (productId, input) => makeConversion({ productId, unitId: input.unitId, factorToBaseUnit: input.factorToBaseUnit }) },
+    { execute: async () => { throw new MasterNotFoundError("ProductUnitConversion", "missing"); } },
+    { execute: async () => [] },
     { execute: async (input) => makeUnit({ code: input.code }) },
     { execute: async () => { throw new MasterNotFoundError("Unit", "missing"); } },
     { execute: async () => [] },
@@ -222,6 +273,7 @@ test("controller maps master errors to HTTP exceptions", async () => {
   });
   assert.equal(product.code, "P-200");
   await assert.rejects(async () => controller.getProduct("missing"), (error) => error?.name === "NotFoundException");
+  await assert.rejects(async () => controller.getProductUnitConversion("prod", "missing"), (error) => error?.name === "NotFoundException");
 });
 
 test("controller surfaces master validation and conflict errors", async () => {
@@ -230,6 +282,9 @@ test("controller surfaces master validation and conflict errors", async () => {
     { execute: async () => { throw new MasterValidationError("bad"); } },
     { execute: async () => [] },
     { execute: async () => { throw new MasterConflictError("conflict"); } },
+    { execute: async () => { throw new MasterRequestError("bad decimal"); } },
+    { execute: async () => { throw new MasterValidationError("missing product"); } },
+    { execute: async () => [] },
     { execute: async () => { throw new MasterValidationError("bad"); } },
     { execute: async () => { throw new MasterValidationError("bad"); } },
     { execute: async () => [] },
@@ -242,4 +297,5 @@ test("controller surfaces master validation and conflict errors", async () => {
 
   await assert.rejects(async () => controller.createProduct({ code: "P", name: "P", baseUnitId: "u", inventoryUnitId: "u" }), (error) => error?.name === "UnprocessableEntityException");
   await assert.rejects(async () => controller.updateProduct("id", { name: "x" }), (error) => error?.name === "ConflictException");
+  await assert.rejects(async () => controller.createProductUnitConversion("prod", { unitId: "u", factorToBaseUnit: "nan" }), (error) => error?.name === "BadRequestException");
 });
