@@ -47,24 +47,24 @@ test("login use case returns safe user data and tokens", async () => {
         createdAt: new Date("2026-08-11T00:00:00.000Z"),
         updatedAt: new Date("2026-08-11T00:00:00.000Z"),
         deletedAt: null,
+        credentialVersion: 1,
         passwordHash,
       };
     },
-    async createSession(input) {
+    async createSessionAndMarkUserLogin(input) {
       assert.equal(input.userId, "user-1");
+      assert.equal(input.credentialVersion, 1);
       assert.ok(input.tokenHash.length > 0);
       assert.ok(input.csrfTokenHash.length > 0);
       return {
         id: "session-1",
         userId: "user-1",
+        credentialVersion: 1,
         expiresAt: input.expiresAt,
         revokedAt: null,
         csrfTokenHash: input.csrfTokenHash,
         lastSeenAt: null,
       };
-    },
-    async markUserLogin(userId) {
-      assert.equal(userId, "user-1");
     },
   };
   const result = await new LoginUseCase(repository).execute({
@@ -107,14 +107,12 @@ for (const status of ["DISABLED", "LOCKED"]) {
           lastLoginAt: null,
           createdAt: new Date("2026-08-11T00:00:00.000Z"),
           updatedAt: new Date("2026-08-11T00:00:00.000Z"),
+          credentialVersion: 1,
           passwordHash,
         };
       },
-      async createSession() {
+      async createSessionAndMarkUserLogin() {
         throw new Error("session must not be created");
-      },
-      async markUserLogin() {
-        throw new Error("lastLoginAt must not be updated");
       },
     };
     await assert.rejects(
@@ -127,7 +125,6 @@ for (const status of ["DISABLED", "LOCKED"]) {
 test("login rejects a soft-deleted user before every session side effect", async () => {
   const passwordHash = await argon2.hash("change-me-now", { type: argon2.argon2id });
   let sessionsCreated = 0;
-  let loginMarks = 0;
   const repository = {
     async findUserByEmail() {
       return {
@@ -139,14 +136,12 @@ test("login rejects a soft-deleted user before every session side effect", async
         lastLoginAt: new Date("2026-08-11T00:00:00.000Z"),
         createdAt: new Date("2026-08-11T00:00:00.000Z"),
         updatedAt: new Date("2026-08-11T00:00:00.000Z"),
+        credentialVersion: 1,
         passwordHash,
       };
     },
-    async createSession() {
+    async createSessionAndMarkUserLogin() {
       sessionsCreated += 1;
-    },
-    async markUserLogin() {
-      loginMarks += 1;
     },
   };
 
@@ -155,7 +150,6 @@ test("login rejects a soft-deleted user before every session side effect", async
     (error) => error instanceof AuthInvalidCredentialsError && error.message === "Invalid email or password.",
   );
   assert.equal(sessionsCreated, 0);
-  assert.equal(loginMarks, 0);
 });
 
 test("login rejects a wrong password with the generic invalid-credentials response", async () => {
@@ -171,6 +165,7 @@ test("login rejects a wrong password with the generic invalid-credentials respon
         lastLoginAt: null,
         createdAt: new Date("2026-08-11T00:00:00.000Z"),
         updatedAt: new Date("2026-08-11T00:00:00.000Z"),
+        credentialVersion: 1,
         passwordHash,
       };
     },
@@ -203,6 +198,7 @@ function makeAuthenticatedUser(overrides = {}) {
     createdAt: new Date("2026-08-11T00:00:00.000Z"),
     updatedAt: new Date("2026-08-11T00:00:00.000Z"),
     deletedAt: null,
+    credentialVersion: 1,
     ...overrides,
   };
 }
@@ -214,6 +210,7 @@ function makeSession(overrides = {}) {
     expiresAt: new Date(Date.now() + 60_000),
     revokedAt: null,
     csrfTokenHash: hashSecret("csrf-token"),
+    credentialVersion: 1,
     lastSeenAt: null,
     user: makeAuthenticatedUser(),
     ...overrides,
@@ -293,6 +290,17 @@ for (const status of ["DISABLED", "LOCKED"]) {
 test("session guard rejects an existing session for a soft-deleted user", async () => {
   const session = makeSession({
     user: makeAuthenticatedUser({ deletedAt: new Date("2026-08-12T00:00:00.000Z") }),
+  });
+  await assert.rejects(
+    () => makeSessionGuard(session).canActivate(makeHttpContext(makeSessionRequest())),
+    UnauthorizedException,
+  );
+});
+
+test("session guard rejects an existing session with a stale credential version", async () => {
+  const session = makeSession({
+    credentialVersion: 1,
+    user: makeAuthenticatedUser({ credentialVersion: 2 }),
   });
   await assert.rejects(
     () => makeSessionGuard(session).canActivate(makeHttpContext(makeSessionRequest())),

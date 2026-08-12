@@ -37,6 +37,7 @@ enum AuthorizationAuditSource {
 enum IdentityAuditAction {
   UPDATE_USER_STATUS
   SOFT_DELETE_USER
+  CHANGE_PASSWORD
 }
 
 enum RoleStatus {
@@ -205,15 +206,16 @@ model Supplier {
 }
 
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
-  displayName  String
-  passwordHash String
-  status       UserStatus @default(ACTIVE)
-  lastLoginAt  DateTime?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  deletedAt    DateTime?
+  id                String     @id @default(cuid())
+  email             String     @unique
+  displayName       String
+  passwordHash      String
+  credentialVersion Int        @default(1)
+  status            UserStatus @default(ACTIVE)
+  lastLoginAt       DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  deletedAt         DateTime?
 
   sessions                  IdentitySession[]
   userRoles                 UserRole[]
@@ -226,17 +228,18 @@ model User {
 }
 
 model IdentitySession {
-  id            String    @id @default(cuid())
-  userId        String
-  tokenHash     String    @unique
-  csrfTokenHash String    @unique
-  expiresAt     DateTime
-  revokedAt     DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  lastSeenAt    DateTime?
-  userAgent     String?
-  ipAddress     String?
+  id                String    @id @default(cuid())
+  userId            String
+  tokenHash         String    @unique
+  csrfTokenHash     String    @unique
+  credentialVersion Int
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  lastSeenAt        DateTime?
+  userAgent         String?
+  ipAddress         String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 

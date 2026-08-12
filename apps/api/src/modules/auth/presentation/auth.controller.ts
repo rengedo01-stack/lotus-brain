@@ -8,18 +8,27 @@ import {
   Res,
   UnauthorizedException,
   Body,
+  ConflictException,
+  UnprocessableEntityException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ApiBody, ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { Response } from "express";
-import { LoginUseCase, LogoutUseCase, RotateCsrfTokenUseCase, GetCurrentUserUseCase } from "../application/auth.use-cases";
-import { AuthInvalidCredentialsError } from "../auth.errors";
+import {
+  ChangePasswordUseCase,
+  LoginUseCase,
+  LogoutUseCase,
+  RotateCsrfTokenUseCase,
+  GetCurrentUserUseCase,
+} from "../application/auth.use-cases";
+import { AuthConflictError, AuthInvalidCredentialsError, AuthValidationError } from "../auth.errors";
 import { Public } from "../decorators/public.decorator";
 import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
 import { LoginDto } from "./dto/login.dto";
 import type { EnvironmentVariables } from "../../../config/environment";
 import { makeSessionCookieName } from "../auth.utils";
 import type { AuthenticatedRequest, LoginResponse } from "../auth.types";
+import { ChangePasswordDto } from "./dto/change-password.dto";
 
 @ApiTags("auth")
 @Controller("auth")
@@ -27,6 +36,7 @@ export class AuthController {
   constructor(
     private readonly configService: ConfigService<EnvironmentVariables, true>,
     private readonly loginUseCase: LoginUseCase,
+    private readonly changePasswordUseCase: ChangePasswordUseCase,
     private readonly getCurrentUserUseCase: GetCurrentUserUseCase,
     private readonly rotateCsrfTokenUseCase: RotateCsrfTokenUseCase,
     private readonly logoutUseCase: LogoutUseCase,
@@ -64,6 +74,39 @@ export class AuthController {
       return { user: result.user, csrfToken: result.csrfToken };
     } catch (error: unknown) {
       if (error instanceof AuthInvalidCredentialsError) throw new UnauthorizedException(error.message);
+      throw error;
+    }
+  }
+
+  @Post("password/change")
+  @AuthenticatedOnly()
+  @HttpCode(200)
+  @ApiOperation({ summary: "Change the current authenticated user's password" })
+  @ApiCookieAuth()
+  async changePassword(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: ChangePasswordDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    if (request.authUser === undefined) throw new UnauthorizedException("Authentication required.");
+    try {
+      await this.changePasswordUseCase.execute({
+        userId: request.authUser.id,
+        currentPassword: dto.currentPassword,
+        newPassword: dto.newPassword,
+      });
+      response.clearCookie(makeSessionCookieName(this.configService.get("NODE_ENV", { infer: true }) === "production"), {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: this.configService.get("NODE_ENV", { infer: true }) === "production",
+        path: "/",
+      });
+      response.setHeader("Cache-Control", "no-store");
+      return { status: "ok" as const };
+    } catch (error: unknown) {
+      if (error instanceof AuthInvalidCredentialsError) throw new UnauthorizedException(error.message);
+      if (error instanceof AuthConflictError) throw new ConflictException("Credential state conflict. Retry after signing in again.");
+      if (error instanceof AuthValidationError) throw new UnprocessableEntityException(error.message);
       throw error;
     }
   }

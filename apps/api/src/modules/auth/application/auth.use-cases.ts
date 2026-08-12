@@ -1,8 +1,19 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { AuthForbiddenError, AuthInvalidCredentialsError, AuthNotFoundError } from "../auth.errors";
-import { AUTH_REPOSITORY, type AuthRepository, type AuthUserView, type BootstrapUserInput, type LoginInput } from "./auth.repository";
+import {
+  AuthForbiddenError,
+  AuthInvalidCredentialsError,
+  AuthNotFoundError,
+} from "../auth.errors";
+import {
+  AUTH_REPOSITORY,
+  type AuthRepository,
+  type AuthUserView,
+  type BootstrapUserInput,
+  type LoginInput,
+} from "./auth.repository";
 import { hashSecret, makeOpaqueToken, normalizeEmail, secondsFromDays } from "../auth.utils";
 import { AUTH_SESSION_TTL_DAYS } from "../auth.constants";
+import { PasswordPolicy } from "../password.policy";
 
 @Injectable()
 export class LoginUseCase {
@@ -26,19 +37,45 @@ export class LoginUseCase {
     const csrfTokenHash = hashSecret(csrfToken);
     const sessionExpiresAt = new Date(Date.now() + secondsFromDays(AUTH_SESSION_TTL_DAYS) * 1000);
 
-    await this.repository.createSession({
+    await this.repository.createSessionAndMarkUserLogin({
       csrfTokenHash,
+      credentialVersion: user.credentialVersion,
       expiresAt: sessionExpiresAt,
       ipAddress: input.ipAddress ?? null,
       tokenHash: sessionTokenHash,
       userAgent: input.userAgent ?? null,
       userId: user.id,
     });
-    await this.repository.markUserLogin(user.id, new Date());
-    const { passwordHash, deletedAt, ...safeUser } = user;
+    const { passwordHash, deletedAt, credentialVersion, ...safeUser } = user;
     void passwordHash;
     void deletedAt;
+    void credentialVersion;
     return { user: safeUser, csrfToken, sessionToken, sessionExpiresAt };
+  }
+}
+
+@Injectable()
+export class ChangePasswordUseCase {
+  constructor(@Inject(AUTH_REPOSITORY) private readonly repository: AuthRepository) {}
+
+  async execute(input: { userId: string; currentPassword: string; newPassword: string }): Promise<void> {
+    PasswordPolicy.assertChange(input.currentPassword, input.newPassword);
+
+    const user = await this.repository.findUserCredentialById(input.userId);
+    if (user === null || user.status !== "ACTIVE" || user.deletedAt !== null) {
+      throw new AuthInvalidCredentialsError("Invalid credentials.");
+    }
+
+    const argon2 = await import("argon2");
+    const passwordMatches = await argon2.verify(user.passwordHash, input.currentPassword);
+    if (!passwordMatches) throw new AuthInvalidCredentialsError("Invalid credentials.");
+
+    const passwordHash = await argon2.hash(input.newPassword, { type: argon2.argon2id });
+    await this.repository.changePassword({
+      userId: user.id,
+      expectedCredentialVersion: user.credentialVersion,
+      passwordHash,
+    });
   }
 }
 
@@ -84,9 +121,11 @@ export class BootstrapUserUseCase {
     if (userCount > 0) {
       throw new AuthForbiddenError("A user already exists; bootstrap is only allowed once.");
     }
+    PasswordPolicy.assertPassword(input.password);
     const argon2 = await import("argon2");
     return this.repository.bootstrapUser({
-      ...input,
+      email: input.email,
+      displayName: input.displayName,
       passwordHash: await argon2.hash(input.password, { type: argon2.argon2id }),
     });
   }

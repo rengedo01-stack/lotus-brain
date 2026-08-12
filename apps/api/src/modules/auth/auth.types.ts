@@ -8,7 +8,7 @@ export type AuthenticatedRequestUser = Pick<
 
 export type AuthenticatedRequestSession = Pick<
   IdentitySession,
-  "id" | "userId" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
+  "id" | "userId" | "credentialVersion" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
 >;
 
 export type AuthenticatedRequest = Request & {
