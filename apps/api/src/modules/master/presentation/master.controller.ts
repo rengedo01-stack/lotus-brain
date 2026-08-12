@@ -35,6 +35,8 @@ import { CreateProductUnitConversionDto } from "./dto/product-unit-conversion.dt
 import { CreateSupplierDto, UpdateSupplierDto } from "./dto/supplier.dto";
 import { ListQueryDto } from "./dto/list-query.dto";
 import { CreateUnitDto, UpdateUnitDto } from "./dto/unit.dto";
+import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
+import { Permissions } from "../../authorization/permission.registry";
 
 @ApiTags("masters")
 @Controller()
@@ -58,90 +60,105 @@ export class MasterController {
   ) {}
 
   @Post("products")
+  @RequirePermissions(Permissions.MASTER_WRITE)
   @ApiOperation({ summary: "Create a product" })
   createProduct(@Body() dto: CreateProductDto) {
     return this.run(() => this.createProductUseCase.execute(dto));
   }
 
   @Get("products")
+  @RequirePermissions(Permissions.MASTER_READ)
   @ApiOperation({ summary: "List products" })
   listProducts(@Query() query: ListQueryDto) {
     return this.run(() => this.listProductsUseCase.execute(query));
   }
 
   @Get("products/:id")
+  @RequirePermissions(Permissions.MASTER_READ)
   @ApiOperation({ summary: "Get a product" })
   getProduct(@Param("id") id: string) {
     return this.run(() => this.getProductUseCase.execute(id));
   }
 
   @Patch("products/:id")
+  @RequirePermissions(Permissions.MASTER_WRITE)
   @ApiOperation({ summary: "Update a product" })
   updateProduct(@Param("id") id: string, @Body() dto: UpdateProductDto) {
     return this.run(() => this.updateProductUseCase.execute(id, dto));
   }
 
   @Post("products/:productId/unit-conversions")
+  @RequirePermissions(Permissions.MASTER_WRITE)
   @ApiOperation({ summary: "Create a product unit conversion" })
   createProductUnitConversion(@Param("productId") productId: string, @Body() dto: CreateProductUnitConversionDto) {
     return this.run(() => this.createProductUnitConversionUseCase.execute(productId, dto));
   }
 
   @Get("products/:productId/unit-conversions")
+  @RequirePermissions(Permissions.MASTER_READ)
   @ApiOperation({ summary: "List product unit conversions" })
   listProductUnitConversions(@Param("productId") productId: string) {
     return this.run(() => this.listProductUnitConversionsUseCase.execute(productId));
   }
 
   @Get("products/:productId/unit-conversions/:id")
+  @RequirePermissions(Permissions.MASTER_READ)
   @ApiOperation({ summary: "Get a product unit conversion" })
   getProductUnitConversion(@Param("productId") productId: string, @Param("id") id: string) {
     return this.run(() => this.getProductUnitConversionUseCase.execute(productId, id));
   }
 
   @Post("units")
+  @RequirePermissions(Permissions.MASTER_WRITE)
   @ApiOperation({ summary: "Create a unit" })
   createUnit(@Body() dto: CreateUnitDto) {
     return this.run(() => this.createUnitUseCase.execute(dto));
   }
 
   @Get("units")
+  @RequirePermissions(Permissions.MASTER_READ)
   @ApiOperation({ summary: "List units" })
   listUnits(@Query() query: ListQueryDto) {
     return this.run(() => this.listUnitsUseCase.execute(query));
   }
 
   @Get("units/:id")
+  @RequirePermissions(Permissions.MASTER_READ)
   @ApiOperation({ summary: "Get a unit" })
   getUnit(@Param("id") id: string) {
     return this.run(() => this.getUnitUseCase.execute(id));
   }
 
   @Patch("units/:id")
+  @RequirePermissions(Permissions.MASTER_WRITE)
   @ApiOperation({ summary: "Update a unit" })
   updateUnit(@Param("id") id: string, @Body() dto: UpdateUnitDto) {
     return this.run(() => this.updateUnitUseCase.execute(id, dto));
   }
 
   @Post("suppliers")
+  @RequirePermissions(Permissions.MASTER_WRITE)
   @ApiOperation({ summary: "Create a supplier" })
   createSupplier(@Body() dto: CreateSupplierDto) {
     return this.run(() => this.createSupplierUseCase.execute(dto));
   }
 
   @Get("suppliers")
+  @RequirePermissions(Permissions.MASTER_READ)
   @ApiOperation({ summary: "List suppliers" })
   listSuppliers(@Query() query: ListQueryDto) {
     return this.run(() => this.listSuppliersUseCase.execute(query));
   }
 
   @Get("suppliers/:id")
+  @RequirePermissions(Permissions.MASTER_READ)
   @ApiOperation({ summary: "Get a supplier" })
   getSupplier(@Param("id") id: string) {
     return this.run(() => this.getSupplierUseCase.execute(id));
   }
 
   @Patch("suppliers/:id")
+  @RequirePermissions(Permissions.MASTER_WRITE)
   @ApiOperation({ summary: "Update a supplier" })
   updateSupplier(@Param("id") id: string, @Body() dto: UpdateSupplierDto) {
     return this.run(() => this.updateSupplierUseCase.execute(id, dto));

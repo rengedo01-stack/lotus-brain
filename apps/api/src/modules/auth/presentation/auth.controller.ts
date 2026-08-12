@@ -15,6 +15,7 @@ import type { Response } from "express";
 import { LoginUseCase, LogoutUseCase, RotateCsrfTokenUseCase, GetCurrentUserUseCase } from "../application/auth.use-cases";
 import { AuthInvalidCredentialsError } from "../auth.errors";
 import { Public } from "../decorators/public.decorator";
+import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
 import { LoginDto } from "./dto/login.dto";
 import type { EnvironmentVariables } from "../../../config/environment";
 import { makeSessionCookieName } from "../auth.utils";
@@ -68,6 +69,7 @@ export class AuthController {
   }
 
   @Get("me")
+  @AuthenticatedOnly()
   @ApiOperation({ summary: "Get the current authenticated user" })
   @ApiCookieAuth()
   async me(@Req() request: AuthenticatedRequest) {
@@ -76,6 +78,7 @@ export class AuthController {
   }
 
   @Get("csrf")
+  @AuthenticatedOnly()
   @ApiOperation({ summary: "Rotate and return a CSRF token for the current session" })
   @ApiOkResponse({ description: "A CSRF token was issued." })
   @ApiCookieAuth()
@@ -88,6 +91,7 @@ export class AuthController {
   }
 
   @Post("logout")
+  @AuthenticatedOnly()
   @HttpCode(200)
   @ApiOperation({ summary: "Log out the current authenticated user" })
   async logout(@Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {

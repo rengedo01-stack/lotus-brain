@@ -31,6 +31,8 @@ import {
 } from "../application/purchase-draft.errors";
 import { CreatePurchaseDto } from "./dto/create-purchase.dto";
 import { UpdatePurchaseDto } from "./dto/update-purchase.dto";
+import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
+import { Permissions } from "../../authorization/permission.registry";
 
 type PostedPurchaseResponse = {
   id: string;
@@ -50,30 +52,35 @@ export class PurchaseController {
   ) {}
 
   @Post()
+  @RequirePermissions(Permissions.PURCHASE_WRITE)
   @ApiOperation({ summary: "Create a purchase draft" })
   createPurchase(@Body() dto: CreatePurchaseDto) {
     return this.runDraft(() => this.createPurchaseDraftUseCase.execute(dto));
   }
 
   @Get(":id")
+  @RequirePermissions(Permissions.PURCHASE_READ)
   @ApiOperation({ summary: "Get a purchase" })
   getPurchase(@Param("id") id: string) {
     return this.runDraft(() => this.getPurchaseUseCase.execute(id));
   }
 
   @Patch(":id")
+  @RequirePermissions(Permissions.PURCHASE_WRITE)
   @ApiOperation({ summary: "Update a purchase draft" })
   updatePurchase(@Param("id") id: string, @Body() dto: UpdatePurchaseDto) {
     return this.runDraft(() => this.updatePurchaseDraftUseCase.execute(id, dto));
   }
 
   @Post(":id/confirm")
+  @RequirePermissions(Permissions.PURCHASE_CONFIRM)
   @ApiOperation({ summary: "Confirm a purchase draft" })
   confirmPurchase(@Param("id") id: string) {
     return this.runDraft(() => this.confirmPurchaseUseCase.execute(id));
   }
 
   @Post(":id/post")
+  @RequirePermissions(Permissions.PURCHASE_POST)
   @HttpCode(200)
   @ApiOperation({ summary: "Post a purchase and apply its price and inventory effects" })
   @ApiOkResponse({ description: "The purchase was posted." })

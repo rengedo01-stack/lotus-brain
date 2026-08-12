@@ -8,6 +8,7 @@ import {
 import { Reflector } from "@nestjs/core";
 import { createHash } from "node:crypto";
 import { AUTH_CSRF_EXEMPT_KEY, AUTH_PUBLIC_KEY, CSRF_HEADER_NAME } from "../auth.constants";
+import { isAuthInfrastructurePath } from "../auth.routes";
 import type { AuthenticatedRequest } from "../auth.types";
 
 @Injectable()
@@ -26,7 +27,7 @@ export class CsrfGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (isPublic === true || isCsrfExempt === true || this.isDocsPath(request.url)) return true;
+    if (isPublic === true || isCsrfExempt === true || isAuthInfrastructurePath(request.url)) return true;
 
     const session = request.authSession;
     if (session === undefined) throw new UnauthorizedException("Authentication required.");
@@ -50,9 +51,5 @@ export class CsrfGuard implements CanActivate {
 
   private isSafeMethod(method: string): boolean {
     return ["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
-  }
-
-  private isDocsPath(pathname: string): boolean {
-    return pathname.includes("/docs") || pathname.includes("/docs-json");
   }
 }
