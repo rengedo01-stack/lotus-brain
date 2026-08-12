@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../../../prisma/prisma.service";
 import type {
   AuthRepository,
+  AuthLoginUserView,
   AuthSessionUserView,
   AuthSessionView,
   AuthUserView,
@@ -37,10 +38,10 @@ const sessionSelect = {
 export class PrismaAuthRepository implements AuthRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findUserByEmail(email: string): Promise<(AuthUserView & { passwordHash: string }) | null> {
+  async findUserByEmail(email: string): Promise<(AuthLoginUserView & { passwordHash: string }) | null> {
     return this.prisma.user.findUnique({
       where: { email: normalizeEmail(email) },
-      select: { ...userSelect, passwordHash: true },
+      select: { ...userSelect, passwordHash: true, deletedAt: true },
     });
   }
 
