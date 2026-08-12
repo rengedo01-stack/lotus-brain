@@ -1,6 +1,8 @@
 export const Permissions = Object.freeze({
   AUTHORIZATION_READ: "authorization.read",
   AUTHORIZATION_MANAGE: "authorization.manage",
+  IDENTITY_READ: "identity.read",
+  IDENTITY_MANAGE: "identity.manage",
   MASTER_READ: "master.read",
   MASTER_WRITE: "master.write",
   PURCHASE_READ: "purchase.read",
@@ -32,6 +34,14 @@ export const PERMISSION_REGISTRY: Readonly<Record<PermissionCode, PermissionMeta
   }),
   [Permissions.AUTHORIZATION_MANAGE]: Object.freeze({
     description: "Manage custom authorization policy.",
+    customRoleAssignable: false,
+  }),
+  [Permissions.IDENTITY_READ]: Object.freeze({
+    description: "Read user identity directory and lifecycle state.",
+    customRoleAssignable: true,
+  }),
+  [Permissions.IDENTITY_MANAGE]: Object.freeze({
+    description: "Manage user identity lifecycle.",
     customRoleAssignable: false,
   }),
   [Permissions.MASTER_READ]: Object.freeze({ description: "Read master data.", customRoleAssignable: true }),

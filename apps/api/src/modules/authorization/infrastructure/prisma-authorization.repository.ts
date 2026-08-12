@@ -79,10 +79,20 @@ export class PrismaAuthorizationRepository
     const email = normalizeEmail(inputEmail);
 
     return this.prisma.$transaction(async (transaction) => {
-      const user = await transaction.user.findUnique({
-        where: { email },
-        select: { id: true, email: true, status: true, deletedAt: true },
-      });
+      // Serialize SYSTEM_ADMIN grants with identity lifecycle mutations. Both
+      // paths lock this User row before checking eligibility or assignments.
+      const lockedUsers = await transaction.$queryRaw<Array<{
+        id: string;
+        email: string;
+        status: "ACTIVE" | "DISABLED" | "LOCKED";
+        deletedAt: Date | null;
+      }>>(Prisma.sql`
+        SELECT "id", "email", "status", "deletedAt"
+        FROM "User"
+        WHERE "email" = ${email}
+        FOR UPDATE
+      `);
+      const user = lockedUsers[0] ?? null;
       if (user === null) return { kind: "USER_NOT_FOUND", email };
       if (user.status !== "ACTIVE" || user.deletedAt !== null) {
         return { kind: "USER_INELIGIBLE", email };
