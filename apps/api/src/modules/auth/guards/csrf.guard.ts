@@ -1,6 +1,7 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -31,11 +32,11 @@ export class CsrfGuard implements CanActivate {
     if (session === undefined) throw new UnauthorizedException("Authentication required.");
 
     const csrfToken = this.readCsrfToken(request);
-    if (csrfToken === null) throw new UnauthorizedException("CSRF token is required.");
+    if (csrfToken === null) throw new ForbiddenException("CSRF token is required.");
 
     const tokenHash = createHash("sha256").update(csrfToken).digest("hex");
     if (tokenHash !== session.csrfTokenHash) {
-      throw new UnauthorizedException("CSRF token is invalid.");
+      throw new ForbiddenException("CSRF token is invalid.");
     }
     return true;
   }

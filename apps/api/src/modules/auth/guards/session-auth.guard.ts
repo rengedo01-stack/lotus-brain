@@ -37,11 +37,26 @@ export class SessionAuthGuard implements CanActivate {
 
     const tokenHash = hashSecret(token);
     const session = await this.repository.findSessionByTokenHash(tokenHash);
-    if (session === null || session.revokedAt !== null || session.expiresAt <= new Date()) {
+    if (
+      session === null ||
+      session.revokedAt !== null ||
+      session.expiresAt <= new Date() ||
+      session.user === null ||
+      session.user.status !== "ACTIVE" ||
+      session.user.deletedAt !== null
+    ) {
       throw new UnauthorizedException("Authentication required.");
     }
 
-    request.authUser = session.user;
+    request.authUser = {
+      id: session.user.id,
+      email: session.user.email,
+      displayName: session.user.displayName,
+      status: session.user.status,
+      lastLoginAt: session.user.lastLoginAt,
+      createdAt: session.user.createdAt,
+      updatedAt: session.user.updatedAt,
+    };
     request.authSession = session;
     await this.repository.touchSession(session.id, new Date()).catch(() => undefined);
     return true;
