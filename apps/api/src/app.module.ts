@@ -46,6 +46,8 @@ import { IdentityModule } from "./modules/identity/identity.module";
               "req.headers['x-csrf-token']",
               "res.headers['set-cookie']",
               "req.body.password",
+              "req.body.currentPassword",
+              "req.body.newPassword",
               "req.body.passwordHash",
               "req.body.token",
               "req.body.csrfToken",

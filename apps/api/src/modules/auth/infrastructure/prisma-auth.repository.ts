@@ -1,14 +1,18 @@
 import { Injectable } from "@nestjs/common";
+import { Prisma } from "../../../generated/prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import type {
   AuthRepository,
   AuthLoginUserView,
+  AuthPasswordCredentialView,
   AuthSessionUserView,
   AuthSessionView,
   AuthUserView,
+  ChangePasswordInput,
 } from "../application/auth.repository";
 import { normalizeEmail } from "../auth.utils";
 import { SystemRoleCodes } from "../../authorization/authorization.constants";
+import { AuthConflictError, AuthInvalidCredentialsError } from "../auth.errors";
 
 const userSelect = {
   id: true,
@@ -23,6 +27,7 @@ const userSelect = {
 const sessionUserSelect = {
   ...userSelect,
   deletedAt: true,
+  credentialVersion: true,
 } as const;
 
 const sessionSelect = {
@@ -31,6 +36,7 @@ const sessionSelect = {
   expiresAt: true,
   revokedAt: true,
   csrfTokenHash: true,
+  credentialVersion: true,
   lastSeenAt: true,
 } as const;
 
@@ -41,7 +47,14 @@ export class PrismaAuthRepository implements AuthRepository {
   async findUserByEmail(email: string): Promise<(AuthLoginUserView & { passwordHash: string }) | null> {
     return this.prisma.user.findUnique({
       where: { email: normalizeEmail(email) },
-      select: { ...userSelect, passwordHash: true, deletedAt: true },
+      select: { ...userSelect, passwordHash: true, deletedAt: true, credentialVersion: true },
+    });
+  }
+
+  async findUserCredentialById(userId: string): Promise<AuthPasswordCredentialView | null> {
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, passwordHash: true, credentialVersion: true, status: true, deletedAt: true },
     });
   }
 
@@ -64,24 +77,96 @@ export class PrismaAuthRepository implements AuthRepository {
     });
   }
 
-  async createSession(input: {
+  async createSessionAndMarkUserLogin(input: {
     userId: string;
+    credentialVersion: number;
     tokenHash: string;
     csrfTokenHash: string;
     expiresAt: Date;
     userAgent?: string | null;
     ipAddress?: string | null;
   }): Promise<AuthSessionView> {
-    return this.prisma.identitySession.create({
-      data: {
-        userId: input.userId,
-        tokenHash: input.tokenHash,
-        csrfTokenHash: input.csrfTokenHash,
-        expiresAt: input.expiresAt,
-        userAgent: input.userAgent ?? null,
-        ipAddress: input.ipAddress ?? null,
-      },
-      select: sessionSelect,
+    return this.prisma.$transaction(async (transaction) => {
+      // This short row lock is acquired only after Argon2 verification. It
+      // serializes login's credential snapshot with a concurrent password
+      // change; the DB trigger independently enforces the same invariant.
+      const lockedUsers = await transaction.$queryRaw<Array<{
+        id: string;
+        credentialVersion: number;
+        status: "ACTIVE" | "DISABLED" | "LOCKED";
+        deletedAt: Date | null;
+      }>>(Prisma.sql`
+        SELECT "id", "credentialVersion", "status", "deletedAt"
+        FROM "User"
+        WHERE "id" = ${input.userId}
+        FOR UPDATE
+      `);
+      const user = lockedUsers[0] ?? null;
+      if (
+        user === null ||
+        user.status !== "ACTIVE" ||
+        user.deletedAt !== null ||
+        user.credentialVersion !== input.credentialVersion
+      ) {
+        throw new AuthInvalidCredentialsError("Invalid email or password.");
+      }
+
+      const session = await transaction.identitySession.create({
+        data: {
+          userId: input.userId,
+          tokenHash: input.tokenHash,
+          csrfTokenHash: input.csrfTokenHash,
+          credentialVersion: input.credentialVersion,
+          expiresAt: input.expiresAt,
+          userAgent: input.userAgent ?? null,
+          ipAddress: input.ipAddress ?? null,
+        },
+        select: sessionSelect,
+      });
+      await transaction.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+      return session;
+    });
+  }
+
+  async changePassword(input: ChangePasswordInput): Promise<void> {
+    await this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.user.updateMany({
+        where: {
+          id: input.userId,
+          credentialVersion: input.expectedCredentialVersion,
+          status: "ACTIVE",
+          deletedAt: null,
+        },
+        data: {
+          passwordHash: input.passwordHash,
+          credentialVersion: { increment: 1 },
+        },
+      });
+
+      if (updated.count !== 1) {
+        const current = await transaction.user.findUnique({
+          where: { id: input.userId },
+          select: { status: true, deletedAt: true },
+        });
+        if (current === null || current.status !== "ACTIVE" || current.deletedAt !== null) {
+          throw new AuthInvalidCredentialsError("Invalid credentials.");
+        }
+        throw new AuthConflictError("Credential state changed. Retry with your current password.");
+      }
+
+      await transaction.identitySession.updateMany({
+        where: { userId: input.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      await transaction.identityAuditLog.create({
+        data: {
+          action: "CHANGE_PASSWORD",
+          actorUserId: input.userId,
+          targetUserId: input.userId,
+          beforeState: { credentialVersion: input.expectedCredentialVersion },
+          afterState: { credentialVersion: input.expectedCredentialVersion + 1 },
+        },
+      });
     });
   }
 
@@ -112,13 +197,6 @@ export class PrismaAuthRepository implements AuthRepository {
     await this.prisma.identitySession.updateMany({
       where: { id: sessionId, revokedAt: null },
       data: { lastSeenAt },
-    });
-  }
-
-  async markUserLogin(userId: string, loggedInAt: Date): Promise<void> {
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { lastLoginAt: loggedInAt },
     });
   }
 

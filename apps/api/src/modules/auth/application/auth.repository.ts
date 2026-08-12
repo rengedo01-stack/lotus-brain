@@ -5,13 +5,18 @@ export type AuthUserView = Pick<
   "id" | "email" | "displayName" | "status" | "lastLoginAt" | "createdAt" | "updatedAt"
 >;
 
-export type AuthSessionUserView = AuthUserView & Pick<User, "deletedAt">;
+export type AuthSessionUserView = AuthUserView & Pick<User, "deletedAt" | "credentialVersion">;
 
-export type AuthLoginUserView = AuthUserView & Pick<User, "deletedAt">;
+export type AuthLoginUserView = AuthUserView & Pick<User, "deletedAt" | "credentialVersion">;
+
+export type AuthPasswordCredentialView = Pick<
+  User,
+  "id" | "passwordHash" | "credentialVersion" | "status" | "deletedAt"
+>;
 
 export type AuthSessionView = Pick<
   IdentitySession,
-  "id" | "userId" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
+  "id" | "userId" | "credentialVersion" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
 >;
 
 export type LoginInput = {
@@ -19,6 +24,12 @@ export type LoginInput = {
   password: string;
   userAgent?: string | null;
   ipAddress?: string | null;
+};
+
+export type ChangePasswordInput = {
+  userId: string;
+  expectedCredentialVersion: number;
+  passwordHash: string;
 };
 
 export type BootstrapUserInput = {
@@ -29,22 +40,24 @@ export type BootstrapUserInput = {
 
 export interface AuthRepository {
   findUserByEmail(email: string): Promise<(AuthLoginUserView & { passwordHash: string }) | null>;
+  findUserCredentialById(userId: string): Promise<AuthPasswordCredentialView | null>;
   findUserById(id: string): Promise<AuthUserView | null>;
   findSessionByTokenHash(tokenHash: string): Promise<
     (AuthSessionView & { user: AuthSessionUserView | null }) | null
   >;
-  createSession(input: {
+  createSessionAndMarkUserLogin(input: {
     userId: string;
+    credentialVersion: number;
     tokenHash: string;
     csrfTokenHash: string;
     expiresAt: Date;
     userAgent?: string | null;
     ipAddress?: string | null;
   }): Promise<AuthSessionView>;
+  changePassword(input: ChangePasswordInput): Promise<void>;
   rotateSessionCsrfToken(sessionId: string, csrfTokenHash: string): Promise<AuthSessionView | null>;
   revokeSession(sessionId: string): Promise<boolean>;
   touchSession(sessionId: string, lastSeenAt: Date): Promise<void>;
-  markUserLogin(userId: string, loggedInAt: Date): Promise<void>;
   getUserCount(): Promise<number>;
   bootstrapUser(input: { email: string; displayName: string; passwordHash: string }): Promise<AuthUserView>;
 }

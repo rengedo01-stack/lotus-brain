@@ -1,6 +1,13 @@
 import { Module } from "@nestjs/common";
 import { PrismaModule } from "../../prisma/prisma.module";
-import { LoginUseCase, LogoutUseCase, RotateCsrfTokenUseCase, GetCurrentUserUseCase, BootstrapUserUseCase } from "./application/auth.use-cases";
+import {
+  LoginUseCase,
+  LogoutUseCase,
+  RotateCsrfTokenUseCase,
+  GetCurrentUserUseCase,
+  BootstrapUserUseCase,
+  ChangePasswordUseCase,
+} from "./application/auth.use-cases";
 import { AUTH_REPOSITORY } from "./application/auth.repository";
 import { PrismaAuthRepository } from "./infrastructure/prisma-auth.repository";
 import { AuthController } from "./presentation/auth.controller";
@@ -10,12 +17,21 @@ import { AuthController } from "./presentation/auth.controller";
   controllers: [AuthController],
   providers: [
     LoginUseCase,
+    ChangePasswordUseCase,
     GetCurrentUserUseCase,
     RotateCsrfTokenUseCase,
     LogoutUseCase,
     BootstrapUserUseCase,
     { provide: AUTH_REPOSITORY, useClass: PrismaAuthRepository },
   ],
-  exports: [AUTH_REPOSITORY, LoginUseCase, GetCurrentUserUseCase, RotateCsrfTokenUseCase, LogoutUseCase, BootstrapUserUseCase],
+  exports: [
+    AUTH_REPOSITORY,
+    LoginUseCase,
+    ChangePasswordUseCase,
+    GetCurrentUserUseCase,
+    RotateCsrfTokenUseCase,
+    LogoutUseCase,
+    BootstrapUserUseCase,
+  ],
 })
 export class AuthModule {}

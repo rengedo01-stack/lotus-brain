@@ -7,6 +7,7 @@ const { PrismaPg } = require("@prisma/adapter-pg");
 async function main() {
   const { PrismaClient } = require("../dist/generated/prisma/client.js");
   const { SystemRoleCodes } = require("../dist/modules/authorization/authorization.constants.js");
+  const { PasswordPolicy } = require("../dist/modules/auth/password.policy.js");
   if (typeof process.env.DATABASE_URL !== "string" || process.env.DATABASE_URL.length === 0) {
     throw new Error("DATABASE_URL is required.");
   }
@@ -28,6 +29,7 @@ async function main() {
     if (!email || !displayName || !password) {
       throw new Error("Email, display name, and password are required.");
     }
+    PasswordPolicy.assertPassword(password);
 
     const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
     const created = await prisma.$transaction(async (transaction) => {
