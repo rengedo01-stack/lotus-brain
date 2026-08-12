@@ -7,6 +7,7 @@ import type {
   AuthUserView,
 } from "../application/auth.repository";
 import { normalizeEmail } from "../auth.utils";
+import { SystemRoleCodes } from "../../authorization/authorization.constants";
 
 const userSelect = {
   id: true,
@@ -125,13 +126,27 @@ export class PrismaAuthRepository implements AuthRepository {
   }
 
   async bootstrapUser(input: { email: string; displayName: string; passwordHash: string }): Promise<AuthUserView> {
-    return this.prisma.user.create({
-      data: {
-        email: normalizeEmail(input.email),
-        displayName: input.displayName,
-        passwordHash: input.passwordHash,
-      },
-      select: userSelect,
+    return this.prisma.$transaction(async (transaction) => {
+      const legacyRole = await transaction.role.findUnique({
+        where: { code: SystemRoleCodes.LEGACY_AUTHENTICATED },
+        select: { id: true },
+      });
+      if (legacyRole === null) {
+        throw new Error("LEGACY_AUTHENTICATED role is not configured. Apply the RBAC migration before bootstrapping a user.");
+      }
+
+      const user = await transaction.user.create({
+        data: {
+          email: normalizeEmail(input.email),
+          displayName: input.displayName,
+          passwordHash: input.passwordHash,
+        },
+        select: userSelect,
+      });
+      await transaction.userRole.create({
+        data: { userId: user.id, roleId: legacyRole.id },
+      });
+      return user;
     });
   }
 }

@@ -19,6 +19,14 @@ enum UserStatus {
   LOCKED
 }
 
+enum AuthorizationAuditAction {
+  GRANT_SYSTEM_ADMIN
+}
+
+enum AuthorizationAuditSource {
+  SERVER_CLI
+}
+
 enum UnitDimension {
   COUNT
   MASS
@@ -190,7 +198,9 @@ model User {
   updatedAt    DateTime     @updatedAt
   deletedAt    DateTime?
 
-  sessions IdentitySession[]
+  sessions               IdentitySession[]
+  userRoles              UserRole[]
+  authorizationAuditLogs AuthorizationAuditLog[] @relation("AuthorizationAuditTargetUser")
 
   @@index([status, deletedAt])
 }
@@ -212,6 +222,68 @@ model IdentitySession {
 
   @@index([userId, revokedAt, expiresAt])
   @@index([expiresAt, revokedAt])
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  rolePermissions RolePermission[]
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userRoles              UserRole[]
+  rolePermissions        RolePermission[]
+  authorizationAuditLogs AuthorizationAuditLog[]
+}
+
+model UserRole {
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model AuthorizationAuditLog {
+  id           String                   @id @default(cuid())
+  action       AuthorizationAuditAction
+  source       AuthorizationAuditSource
+  targetUserId String
+  roleId       String
+  createdAt    DateTime                 @default(now())
+
+  targetUser User @relation("AuthorizationAuditTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
+  role       Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@index([targetUserId, createdAt])
+  @@index([roleId])
 }
 
 model PriceMaster {

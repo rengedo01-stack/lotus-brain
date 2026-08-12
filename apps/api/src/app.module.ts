@@ -11,6 +11,8 @@ import {
 import { AuthModule } from "./modules/auth/auth.module";
 import { CsrfGuard } from "./modules/auth/guards/csrf.guard";
 import { SessionAuthGuard } from "./modules/auth/guards/session-auth.guard";
+import { AuthorizationGuard } from "./modules/authorization/guards/authorization.guard";
+import { AuthorizationModule } from "./modules/authorization/authorization.module";
 import { LOGIN_THROTTLE_LIMIT, LOGIN_THROTTLE_TTL_MS } from "./modules/auth/auth.constants";
 import { PrismaModule } from "./prisma/prisma.module";
 import { MasterModule } from "./modules/master/master.module";
@@ -55,6 +57,7 @@ import { StocktakeModule } from "./modules/stocktake/stocktake.module";
     }),
     PrismaModule,
     AuthModule,
+    AuthorizationModule,
     MasterModule,
     PurchaseModule,
     ProductionModule,
@@ -69,6 +72,10 @@ import { StocktakeModule } from "./modules/stocktake/stocktake.module";
     {
       provide: APP_GUARD,
       useClass: SessionAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: AuthorizationGuard,
     },
     {
       provide: APP_GUARD,

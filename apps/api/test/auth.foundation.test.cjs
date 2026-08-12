@@ -9,7 +9,16 @@ const {
 const { AuthInvalidCredentialsError, AuthForbiddenError } = require("../dist/modules/auth/auth.errors.js");
 const { SessionAuthGuard } = require("../dist/modules/auth/guards/session-auth.guard.js");
 const { CsrfGuard } = require("../dist/modules/auth/guards/csrf.guard.js");
-const { ForbiddenException, UnauthorizedException } = require("@nestjs/common");
+const { AuthorizationGuard } = require("../dist/modules/authorization/guards/authorization.guard.js");
+const { RequirePermissions } = require("../dist/modules/authorization/decorators/require-permissions.decorator.js");
+const { Permissions, ALL_PERMISSION_CODES } = require("../dist/modules/authorization/permission.registry.js");
+const { AUTHENTICATED_ONLY_KEY, REQUIRED_PERMISSIONS_KEY } = require("../dist/modules/authorization/authorization.constants.js");
+const { ForbiddenException, ServiceUnavailableException, UnauthorizedException } = require("@nestjs/common");
+const { MasterController } = require("../dist/modules/master/presentation/master.controller.js");
+const { PurchaseController } = require("../dist/modules/purchase/presentation/purchase.controller.js");
+const { ProductionController } = require("../dist/modules/production/presentation/production.controller.js");
+const { StocktakeController } = require("../dist/modules/stocktake/presentation/stocktake.controller.js");
+const { AuthController } = require("../dist/modules/auth/presentation/auth.controller.js");
 const {
   hashSecret,
   makeOpaqueToken,
@@ -258,4 +267,117 @@ test("csrf guard accepts a valid token and keeps unauthenticated state changes a
     () => guard.canActivate(makeHttpContext(makeSessionRequest({ method: "POST" }))),
     UnauthorizedException,
   );
+});
+
+function makeAuthorizationGuard({ isPublic = false, isAuthenticatedOnly = false, permissions, evaluate } = {}) {
+  const reflector = {
+    getAllAndOverride(key) {
+      if (key === "auth:public") return isPublic;
+      if (key === AUTHENTICATED_ONLY_KEY) return isAuthenticatedOnly;
+      if (key === REQUIRED_PERMISSIONS_KEY) return permissions;
+      return undefined;
+    },
+  };
+  const service = {
+    async hasAllPermissions(userId, requiredPermissions) {
+      assert.equal(userId, "user-1");
+      assert.deepEqual(requiredPermissions, permissions);
+      return evaluate === undefined ? true : evaluate();
+    },
+  };
+  return new AuthorizationGuard(reflector, service);
+}
+
+test("permission registry is fixed and RequirePermissions rejects unknown codes", () => {
+  assert.equal(Object.isFrozen(Permissions), true);
+  assert.deepEqual(ALL_PERMISSION_CODES, [
+    "master.read", "master.write", "purchase.read", "purchase.write", "purchase.confirm", "purchase.post",
+    "production.post", "stocktake.read", "stocktake.write", "stocktake.confirm", "stocktake.post",
+  ]);
+  assert.throws(() => RequirePermissions("purchase.typo"), /known permission/i);
+  assert.throws(() => RequirePermissions(), /one or more/i);
+});
+
+test("authorization guard is public/authenticated-only aware and denies unclassified endpoints", async () => {
+  const anonymousRequest = { url: "/api/v1/health" };
+  assert.equal(
+    await makeAuthorizationGuard({ isPublic: true }).canActivate(makeHttpContext(anonymousRequest)),
+    true,
+  );
+  await assert.rejects(
+    () => makeAuthorizationGuard().canActivate(makeHttpContext(anonymousRequest)),
+    UnauthorizedException,
+  );
+
+  const authenticatedRequest = { url: "/api/v1/unclassified", authUser: makeAuthenticatedUser() };
+  assert.equal(
+    await makeAuthorizationGuard({ isAuthenticatedOnly: true }).canActivate(makeHttpContext(authenticatedRequest)),
+    true,
+  );
+  await assert.rejects(
+    () => makeAuthorizationGuard().canActivate(makeHttpContext(authenticatedRequest)),
+    ForbiddenException,
+  );
+});
+
+test("authorization guard evaluates current DB permissions and fails closed", async () => {
+  const request = { url: "/api/v1/purchases/purchase-1/post", authUser: makeAuthenticatedUser() };
+  const required = [Permissions.PURCHASE_POST];
+  assert.equal(
+    await makeAuthorizationGuard({ permissions: required }).canActivate(makeHttpContext(request)),
+    true,
+  );
+  await assert.rejects(
+    () => makeAuthorizationGuard({ permissions: required, evaluate: () => false }).canActivate(makeHttpContext(request)),
+    ForbiddenException,
+  );
+  await assert.rejects(
+    () => makeAuthorizationGuard({
+      permissions: required,
+      evaluate: () => { throw new Error("database offline"); },
+    }).canActivate(makeHttpContext(request)),
+    ServiceUnavailableException,
+  );
+});
+
+test("every existing business endpoint has the exact required permission", () => {
+  const assertions = [
+    [MasterController, "createProduct", Permissions.MASTER_WRITE],
+    [MasterController, "listProducts", Permissions.MASTER_READ],
+    [MasterController, "getProduct", Permissions.MASTER_READ],
+    [MasterController, "updateProduct", Permissions.MASTER_WRITE],
+    [MasterController, "createProductUnitConversion", Permissions.MASTER_WRITE],
+    [MasterController, "listProductUnitConversions", Permissions.MASTER_READ],
+    [MasterController, "getProductUnitConversion", Permissions.MASTER_READ],
+    [MasterController, "createUnit", Permissions.MASTER_WRITE],
+    [MasterController, "listUnits", Permissions.MASTER_READ],
+    [MasterController, "getUnit", Permissions.MASTER_READ],
+    [MasterController, "updateUnit", Permissions.MASTER_WRITE],
+    [MasterController, "createSupplier", Permissions.MASTER_WRITE],
+    [MasterController, "listSuppliers", Permissions.MASTER_READ],
+    [MasterController, "getSupplier", Permissions.MASTER_READ],
+    [MasterController, "updateSupplier", Permissions.MASTER_WRITE],
+    [PurchaseController, "createPurchase", Permissions.PURCHASE_WRITE],
+    [PurchaseController, "getPurchase", Permissions.PURCHASE_READ],
+    [PurchaseController, "updatePurchase", Permissions.PURCHASE_WRITE],
+    [PurchaseController, "confirmPurchase", Permissions.PURCHASE_CONFIRM],
+    [PurchaseController, "postPurchase", Permissions.PURCHASE_POST],
+    [ProductionController, "postProduction", Permissions.PRODUCTION_POST],
+    [StocktakeController, "create", Permissions.STOCKTAKE_WRITE],
+    [StocktakeController, "get", Permissions.STOCKTAKE_READ],
+    [StocktakeController, "update", Permissions.STOCKTAKE_WRITE],
+    [StocktakeController, "confirm", Permissions.STOCKTAKE_CONFIRM],
+    [StocktakeController, "post", Permissions.STOCKTAKE_POST],
+  ];
+  for (const [controller, methodName, expectedPermission] of assertions) {
+    assert.deepEqual(
+      Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, controller.prototype[methodName]),
+      [expectedPermission],
+      `${controller.name}.${methodName}`,
+    );
+  }
+
+  for (const methodName of ["me", "csrf", "logout"]) {
+    assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, AuthController.prototype[methodName]), true);
+  }
 });

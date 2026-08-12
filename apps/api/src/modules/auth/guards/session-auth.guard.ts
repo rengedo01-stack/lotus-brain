@@ -9,6 +9,7 @@ import { Reflector } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import { hashSecret } from "../auth.utils";
 import { AUTH_PUBLIC_KEY, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_INSECURE } from "../auth.constants";
+import { isAuthInfrastructurePath } from "../auth.routes";
 import { AUTH_REPOSITORY, type AuthRepository } from "../application/auth.repository";
 import type { EnvironmentVariables } from "../../../config/environment";
 import type { AuthenticatedRequest } from "../auth.types";
@@ -30,7 +31,7 @@ export class SessionAuthGuard implements CanActivate {
     if (isPublic === true) return true;
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    if (this.isDocsPath(request.url)) return true;
+    if (isAuthInfrastructurePath(request.url)) return true;
 
     const token = this.readSessionToken(request);
     if (token === null) throw new UnauthorizedException("Authentication required.");
@@ -68,9 +69,5 @@ export class SessionAuthGuard implements CanActivate {
     const cookieToken = request.cookies?.[cookieName];
     if (typeof cookieToken === "string" && cookieToken.length > 0) return cookieToken;
     return null;
-  }
-
-  private isDocsPath(pathname: string): boolean {
-    return pathname.includes("/docs") || pathname.includes("/docs-json");
   }
 }

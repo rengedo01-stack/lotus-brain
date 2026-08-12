@@ -15,6 +15,8 @@ import { InvalidStocktakeError, StocktakeConflictError, StocktakeNotFoundError }
 import { ConfirmStocktakeUseCase, CreateStocktakeUseCase, GetStocktakeUseCase, PostStocktakeUseCase, UpdateStocktakeUseCase } from "../application/stocktake.use-cases";
 import { CreateStocktakeDto } from "./dto/create-stocktake.dto";
 import { UpdateStocktakeDto } from "./dto/update-stocktake.dto";
+import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
+import { Permissions } from "../../authorization/permission.registry";
 
 @ApiTags("stocktakes")
 @Controller("stocktakes")
@@ -28,30 +30,35 @@ export class StocktakeController {
   ) {}
 
   @Post()
+  @RequirePermissions(Permissions.STOCKTAKE_WRITE)
   @ApiOperation({ summary: "Create a stocktake draft" })
   create(@Body() dto: CreateStocktakeDto) {
     return this.run(() => this.createStocktakeUseCase.execute(dto));
   }
 
   @Get(":id")
+  @RequirePermissions(Permissions.STOCKTAKE_READ)
   @ApiOperation({ summary: "Get a stocktake" })
   get(@Param("id") id: string) {
     return this.run(() => this.getStocktakeUseCase.execute(id));
   }
 
   @Patch(":id")
+  @RequirePermissions(Permissions.STOCKTAKE_WRITE)
   @ApiOperation({ summary: "Update a stocktake draft" })
   update(@Param("id") id: string, @Body() dto: UpdateStocktakeDto) {
     return this.run(() => this.updateStocktakeUseCase.execute(id, dto));
   }
 
   @Post(":id/confirm")
+  @RequirePermissions(Permissions.STOCKTAKE_CONFIRM)
   @ApiOperation({ summary: "Confirm a stocktake draft" })
   confirm(@Param("id") id: string) {
     return this.run(() => this.confirmStocktakeUseCase.execute(id));
   }
 
   @Post(":id/post")
+  @RequirePermissions(Permissions.STOCKTAKE_POST)
   @HttpCode(200)
   @ApiOperation({ summary: "Post a confirmed stocktake" })
   @ApiOkResponse({ description: "The stocktake was posted." })
