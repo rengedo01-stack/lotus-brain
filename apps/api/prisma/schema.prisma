@@ -13,6 +13,12 @@ enum MasterStatus {
   INACTIVE
 }
 
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  LOCKED
+}
+
 enum UnitDimension {
   COUNT
   MASS
@@ -171,6 +177,41 @@ model Supplier {
   purchases    Purchase[]
 
   @@index([status, deletedAt])
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  displayName  String
+  passwordHash String
+  status       UserStatus   @default(ACTIVE)
+  lastLoginAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  deletedAt    DateTime?
+
+  sessions IdentitySession[]
+
+  @@index([status, deletedAt])
+}
+
+model IdentitySession {
+  id            String   @id @default(cuid())
+  userId        String
+  tokenHash     String   @unique
+  csrfTokenHash String   @unique
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastSeenAt    DateTime?
+  userAgent     String?
+  ipAddress     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, revokedAt, expiresAt])
+  @@index([expiresAt, revokedAt])
 }
 
 model PriceMaster {
