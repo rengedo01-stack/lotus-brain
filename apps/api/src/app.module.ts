@@ -19,6 +19,7 @@ import { MasterModule } from "./modules/master/master.module";
 import { PurchaseModule } from "./modules/purchase/purchase.module";
 import { ProductionModule } from "./modules/production/production.module";
 import { StocktakeModule } from "./modules/stocktake/stocktake.module";
+import { IdentityModule } from "./modules/identity/identity.module";
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { StocktakeModule } from "./modules/stocktake/stocktake.module";
     PrismaModule,
     AuthModule,
     AuthorizationModule,
+    IdentityModule,
     MasterModule,
     PurchaseModule,
     ProductionModule,

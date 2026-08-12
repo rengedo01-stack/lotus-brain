@@ -34,6 +34,11 @@ enum AuthorizationAuditSource {
   AUTHORIZATION_API
 }
 
+enum IdentityAuditAction {
+  UPDATE_USER_STATUS
+  SOFT_DELETE_USER
+}
+
 enum RoleStatus {
   ACTIVE
   DISABLED
@@ -214,6 +219,8 @@ model User {
   userRoles                 UserRole[]
   authorizationAuditActions AuthorizationAuditLog[] @relation("AuthorizationAuditActorUser")
   authorizationAuditLogs    AuthorizationAuditLog[] @relation("AuthorizationAuditTargetUser")
+  identityAuditActions      IdentityAuditLog[]      @relation("IdentityAuditActorUser")
+  identityAuditLogs         IdentityAuditLog[]      @relation("IdentityAuditTargetUser")
 
   @@index([status, deletedAt])
 }
@@ -307,6 +314,22 @@ model AuthorizationAuditLog {
   @@index([actorUserId, createdAt])
   @@index([roleId])
   @@index([permissionId])
+}
+
+model IdentityAuditLog {
+  id           String              @id @default(cuid())
+  action       IdentityAuditAction
+  actorUserId  String
+  targetUserId String
+  beforeState  Json?
+  afterState   Json?
+  createdAt    DateTime            @default(now())
+
+  actorUser  User @relation("IdentityAuditActorUser", fields: [actorUserId], references: [id], onDelete: Restrict)
+  targetUser User @relation("IdentityAuditTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
+
+  @@index([actorUserId, createdAt])
+  @@index([targetUserId, createdAt])
 }
 
 model PriceMaster {
