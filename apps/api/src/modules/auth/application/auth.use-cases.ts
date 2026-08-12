@@ -12,7 +12,9 @@ export class LoginUseCase {
     const email = normalizeEmail(input.email);
     const user = await this.repository.findUserByEmail(email);
     if (user === null) throw new AuthInvalidCredentialsError("Invalid email or password.");
-    if (user.status !== "ACTIVE") throw new AuthInvalidCredentialsError("Invalid email or password.");
+    if (user.status !== "ACTIVE" || user.deletedAt !== null) {
+      throw new AuthInvalidCredentialsError("Invalid email or password.");
+    }
     if (typeof user.passwordHash !== "string") throw new AuthInvalidCredentialsError("Invalid email or password.");
     const argon2 = await import("argon2");
     const passwordMatches = await argon2.verify(user.passwordHash, input.password);
@@ -33,8 +35,9 @@ export class LoginUseCase {
       userId: user.id,
     });
     await this.repository.markUserLogin(user.id, new Date());
-    const { passwordHash, ...safeUser } = user;
+    const { passwordHash, deletedAt, ...safeUser } = user;
     void passwordHash;
+    void deletedAt;
     return { user: safeUser, csrfToken, sessionToken, sessionExpiresAt };
   }
 }

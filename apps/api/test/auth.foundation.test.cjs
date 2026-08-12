@@ -46,6 +46,7 @@ test("login use case returns safe user data and tokens", async () => {
         lastLoginAt: null,
         createdAt: new Date("2026-08-11T00:00:00.000Z"),
         updatedAt: new Date("2026-08-11T00:00:00.000Z"),
+        deletedAt: null,
         passwordHash,
       };
     },
@@ -77,9 +78,10 @@ test("login use case returns safe user data and tokens", async () => {
   assert.ok(result.sessionToken.length > 30);
   assert.ok(result.csrfToken.length > 30);
   assert.equal(result.user.passwordHash, undefined);
+  assert.equal(result.user.deletedAt, undefined);
 });
 
-test("login use case rejects invalid credentials", async () => {
+test("login use case rejects invalid credentials without disclosing the cause", async () => {
   const repository = {
     async findUserByEmail() {
       return null;
@@ -87,7 +89,95 @@ test("login use case rejects invalid credentials", async () => {
   };
   await assert.rejects(
     () => new LoginUseCase(repository).execute({ email: "missing@lotus-brain.local", password: "secret" }),
-    AuthInvalidCredentialsError,
+    (error) => error instanceof AuthInvalidCredentialsError && error.message === "Invalid email or password.",
+  );
+});
+
+for (const status of ["DISABLED", "LOCKED"]) {
+  test(`login rejects a ${status} user with the generic invalid-credentials response`, async () => {
+    const passwordHash = await argon2.hash("change-me-now", { type: argon2.argon2id });
+    const repository = {
+      async findUserByEmail() {
+        return {
+          id: "user-1",
+          email: "user@lotus-brain.local",
+          displayName: "User",
+          status,
+          deletedAt: null,
+          lastLoginAt: null,
+          createdAt: new Date("2026-08-11T00:00:00.000Z"),
+          updatedAt: new Date("2026-08-11T00:00:00.000Z"),
+          passwordHash,
+        };
+      },
+      async createSession() {
+        throw new Error("session must not be created");
+      },
+      async markUserLogin() {
+        throw new Error("lastLoginAt must not be updated");
+      },
+    };
+    await assert.rejects(
+      () => new LoginUseCase(repository).execute({ email: "user@lotus-brain.local", password: "change-me-now" }),
+      (error) => error instanceof AuthInvalidCredentialsError && error.message === "Invalid email or password.",
+    );
+  });
+}
+
+test("login rejects a soft-deleted user before every session side effect", async () => {
+  const passwordHash = await argon2.hash("change-me-now", { type: argon2.argon2id });
+  let sessionsCreated = 0;
+  let loginMarks = 0;
+  const repository = {
+    async findUserByEmail() {
+      return {
+        id: "soft-deleted-user",
+        email: "deleted@lotus-brain.local",
+        displayName: "Deleted user",
+        status: "ACTIVE",
+        deletedAt: new Date("2026-08-12T00:00:00.000Z"),
+        lastLoginAt: new Date("2026-08-11T00:00:00.000Z"),
+        createdAt: new Date("2026-08-11T00:00:00.000Z"),
+        updatedAt: new Date("2026-08-11T00:00:00.000Z"),
+        passwordHash,
+      };
+    },
+    async createSession() {
+      sessionsCreated += 1;
+    },
+    async markUserLogin() {
+      loginMarks += 1;
+    },
+  };
+
+  await assert.rejects(
+    () => new LoginUseCase(repository).execute({ email: "deleted@lotus-brain.local", password: "change-me-now" }),
+    (error) => error instanceof AuthInvalidCredentialsError && error.message === "Invalid email or password.",
+  );
+  assert.equal(sessionsCreated, 0);
+  assert.equal(loginMarks, 0);
+});
+
+test("login rejects a wrong password with the generic invalid-credentials response", async () => {
+  const passwordHash = await argon2.hash("correct-password", { type: argon2.argon2id });
+  const repository = {
+    async findUserByEmail() {
+      return {
+        id: "user-1",
+        email: "user@lotus-brain.local",
+        displayName: "User",
+        status: "ACTIVE",
+        deletedAt: null,
+        lastLoginAt: null,
+        createdAt: new Date("2026-08-11T00:00:00.000Z"),
+        updatedAt: new Date("2026-08-11T00:00:00.000Z"),
+        passwordHash,
+      };
+    },
+  };
+  await assert.rejects(
+    () => new LoginUseCase(repository).execute({ email: "user@lotus-brain.local", password: "wrong-password" }),
+    (error) => error instanceof AuthInvalidCredentialsError && error.message === "Invalid email or password.",
   );
 });
 
