@@ -381,6 +381,7 @@ function makeAuthorizationGuard({ isPublic = false, isAuthenticatedOnly = false,
 test("permission registry is fixed and RequirePermissions rejects unknown codes", () => {
   assert.equal(Object.isFrozen(Permissions), true);
   assert.deepEqual(ALL_PERMISSION_CODES, [
+    "authorization.read", "authorization.manage",
     "master.read", "master.write", "purchase.read", "purchase.write", "purchase.confirm", "purchase.post",
     "production.post", "stocktake.read", "stocktake.write", "stocktake.confirm", "stocktake.post",
   ]);

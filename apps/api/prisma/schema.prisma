@@ -21,10 +21,22 @@ enum UserStatus {
 
 enum AuthorizationAuditAction {
   GRANT_SYSTEM_ADMIN
+  CREATE_CUSTOM_ROLE
+  UPDATE_CUSTOM_ROLE
+  GRANT_ROLE_PERMISSION
+  REVOKE_ROLE_PERMISSION
+  GRANT_USER_ROLE
+  REVOKE_USER_ROLE
 }
 
 enum AuthorizationAuditSource {
   SERVER_CLI
+  AUTHORIZATION_API
+}
+
+enum RoleStatus {
+  ACTIVE
+  DISABLED
 }
 
 enum UnitDimension {
@@ -188,32 +200,33 @@ model Supplier {
 }
 
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
+  id           String     @id @default(cuid())
+  email        String     @unique
   displayName  String
   passwordHash String
-  status       UserStatus   @default(ACTIVE)
+  status       UserStatus @default(ACTIVE)
   lastLoginAt  DateTime?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
   deletedAt    DateTime?
 
-  sessions               IdentitySession[]
-  userRoles              UserRole[]
-  authorizationAuditLogs AuthorizationAuditLog[] @relation("AuthorizationAuditTargetUser")
+  sessions                  IdentitySession[]
+  userRoles                 UserRole[]
+  authorizationAuditActions AuthorizationAuditLog[] @relation("AuthorizationAuditActorUser")
+  authorizationAuditLogs    AuthorizationAuditLog[] @relation("AuthorizationAuditTargetUser")
 
   @@index([status, deletedAt])
 }
 
 model IdentitySession {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   userId        String
-  tokenHash     String   @unique
-  csrfTokenHash String   @unique
+  tokenHash     String    @unique
+  csrfTokenHash String    @unique
   expiresAt     DateTime
   revokedAt     DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
   lastSeenAt    DateTime?
   userAgent     String?
   ipAddress     String?
@@ -230,17 +243,19 @@ model Permission {
   description String?
   createdAt   DateTime @default(now())
 
-  rolePermissions RolePermission[]
+  rolePermissions        RolePermission[]
+  authorizationAuditLogs AuthorizationAuditLog[]
 }
 
 model Role {
-  id          String   @id @default(cuid())
-  code        String   @unique
+  id          String     @id @default(cuid())
+  code        String     @unique
   name        String
   description String?
-  isSystem    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isSystem    Boolean    @default(false)
+  status      RoleStatus @default(ACTIVE)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
   userRoles              UserRole[]
   rolePermissions        RolePermission[]
@@ -275,15 +290,23 @@ model AuthorizationAuditLog {
   id           String                   @id @default(cuid())
   action       AuthorizationAuditAction
   source       AuthorizationAuditSource
-  targetUserId String
-  roleId       String
+  actorUserId  String?
+  targetUserId String?
+  roleId       String?
+  permissionId String?
+  beforeState  Json?
+  afterState   Json?
   createdAt    DateTime                 @default(now())
 
-  targetUser User @relation("AuthorizationAuditTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
-  role       Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  actorUser  User?       @relation("AuthorizationAuditActorUser", fields: [actorUserId], references: [id], onDelete: Restrict)
+  targetUser User?       @relation("AuthorizationAuditTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
+  role       Role?       @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  permission Permission? @relation(fields: [permissionId], references: [id], onDelete: Restrict)
 
   @@index([targetUserId, createdAt])
+  @@index([actorUserId, createdAt])
   @@index([roleId])
+  @@index([permissionId])
 }
 
 model PriceMaster {
