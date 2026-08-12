@@ -5,6 +5,8 @@ export type AuthUserView = Pick<
   "id" | "email" | "displayName" | "status" | "lastLoginAt" | "createdAt" | "updatedAt"
 >;
 
+export type AuthSessionUserView = AuthUserView & Pick<User, "deletedAt">;
+
 export type AuthSessionView = Pick<
   IdentitySession,
   "id" | "userId" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
@@ -26,7 +28,9 @@ export type BootstrapUserInput = {
 export interface AuthRepository {
   findUserByEmail(email: string): Promise<(AuthUserView & { passwordHash: string }) | null>;
   findUserById(id: string): Promise<AuthUserView | null>;
-  findSessionByTokenHash(tokenHash: string): Promise<(AuthSessionView & { user: AuthUserView }) | null>;
+  findSessionByTokenHash(tokenHash: string): Promise<
+    (AuthSessionView & { user: AuthSessionUserView | null }) | null
+  >;
   createSession(input: {
     userId: string;
     tokenHash: string;
