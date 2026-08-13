@@ -14,6 +14,11 @@ import { SessionAuthGuard } from "./modules/auth/guards/session-auth.guard";
 import { AuthorizationGuard } from "./modules/authorization/guards/authorization.guard";
 import { AuthorizationModule } from "./modules/authorization/authorization.module";
 import { LOGIN_THROTTLE_LIMIT, LOGIN_THROTTLE_TTL_MS } from "./modules/auth/auth.constants";
+import { hashSecret, normalizeEmail } from "./modules/auth/auth.utils";
+import {
+  PASSWORD_RECOVERY_EMAIL_THROTTLE_LIMIT,
+  PASSWORD_RECOVERY_EMAIL_THROTTLE_TTL_MS,
+} from "./modules/notification/notification.constants";
 import { PrismaModule } from "./prisma/prisma.module";
 import { MasterModule } from "./modules/master/master.module";
 import { PurchaseModule } from "./modules/purchase/purchase.module";
@@ -33,6 +38,20 @@ import { NotificationModule } from "./modules/notification/notification.module";
       {
         limit: LOGIN_THROTTLE_LIMIT,
         ttl: LOGIN_THROTTLE_TTL_MS,
+      },
+      {
+        name: "passwordRecoveryEmail",
+        limit: PASSWORD_RECOVERY_EMAIL_THROTTLE_LIMIT,
+        ttl: PASSWORD_RECOVERY_EMAIL_THROTTLE_TTL_MS,
+        skipIf: (context) => {
+          const request = context.switchToHttp().getRequest<{ originalUrl?: string; url?: string }>();
+          const pathname = (request.originalUrl ?? request.url ?? "").split("?", 1)[0];
+          return pathname !== "/api/v1/auth/password/recovery/request";
+        },
+        getTracker: (request) => {
+          const rawEmail = typeof request.body?.email === "string" ? request.body.email : "";
+          return `password-recovery-email:${hashSecret(normalizeEmail(rawEmail))}`;
+        },
       },
     ]),
     LoggerModule.forRootAsync({

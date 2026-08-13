@@ -3,3 +3,9 @@ export function makeVerificationUrl(publicWebBaseUrl: string, rawToken: string):
   url.hash = `token=${rawToken}`;
   return url.toString();
 }
+
+export function makePasswordRecoveryUrl(publicWebBaseUrl: string, rawToken: string): string {
+  const url = new URL("/reset-password", publicWebBaseUrl);
+  url.hash = `token=${rawToken}`;
+  return url.toString();
+}

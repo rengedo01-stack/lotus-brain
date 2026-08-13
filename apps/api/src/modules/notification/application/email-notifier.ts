@@ -4,8 +4,20 @@ export type EmailVerificationDelivery = {
   verificationUrl: string;
 };
 
+export type PasswordRecoveryDelivery = {
+  destinationAddress: string;
+  expiresAt: Date;
+  recoveryUrl: string;
+};
+
+export type PasswordResetCompletedDelivery = {
+  destinationAddress: string;
+};
+
 export interface EmailNotifier {
   sendEmailVerification(delivery: EmailVerificationDelivery): Promise<void>;
+  sendPasswordRecovery(delivery: PasswordRecoveryDelivery): Promise<void>;
+  sendPasswordResetCompleted(delivery: PasswordResetCompletedDelivery): Promise<void>;
 }
 
 export const EMAIL_NOTIFIER = Symbol("EMAIL_NOTIFIER");
