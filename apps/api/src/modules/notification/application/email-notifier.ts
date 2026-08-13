@@ -1,0 +1,22 @@
+export type EmailVerificationDelivery = {
+  destinationAddress: string;
+  expiresAt: Date;
+  verificationUrl: string;
+};
+
+export interface EmailNotifier {
+  sendEmailVerification(delivery: EmailVerificationDelivery): Promise<void>;
+}
+
+export const EMAIL_NOTIFIER = Symbol("EMAIL_NOTIFIER");
+
+export class NotificationDeliveryError extends Error {
+  constructor(readonly code: "AUTH_FAILURE" | "CONNECTION_FAILURE" | "RECIPIENT_REJECTED" | "TIMEOUT" | "UNKNOWN") {
+    super("Notification delivery failed.");
+  }
+}
+
+export function notificationErrorCode(error: unknown): NotificationDeliveryError["code"] {
+  if (error instanceof NotificationDeliveryError) return error.code;
+  return "UNKNOWN";
+}
