@@ -1,0 +1,38 @@
+import { Module } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import type { EnvironmentVariables } from "../../config/environment";
+import { PrismaModule } from "../../prisma/prisma.module";
+import { EMAIL_NOTIFIER } from "./application/email-notifier";
+import { EmailVerificationService } from "./application/email-verification.service";
+import { NotificationOutboxWorker } from "./application/notification-outbox.worker";
+import { RECOVERY_CHANNEL_REPOSITORY } from "./application/recovery-channel.repository";
+import { PrismaRecoveryChannelRepository } from "./infrastructure/prisma-recovery-channel.repository";
+import { InMemoryEmailNotifier } from "./infrastructure/in-memory-email-notifier";
+import { SmtpEmailNotifier } from "./infrastructure/smtp-email-notifier";
+import { EmailVerificationController } from "./presentation/email-verification.controller";
+
+@Module({
+  imports: [PrismaModule],
+  controllers: [EmailVerificationController],
+  providers: [
+    EmailVerificationService,
+    NotificationOutboxWorker,
+    PrismaRecoveryChannelRepository,
+    { provide: RECOVERY_CHANNEL_REPOSITORY, useExisting: PrismaRecoveryChannelRepository },
+    {
+      provide: EMAIL_NOTIFIER,
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService<EnvironmentVariables, true>) =>
+        configService.get("NODE_ENV", { infer: true }) === "production"
+          ? new SmtpEmailNotifier(configService)
+          : new InMemoryEmailNotifier(),
+    },
+  ],
+  exports: [
+    EmailVerificationService,
+    NotificationOutboxWorker,
+    RECOVERY_CHANNEL_REPOSITORY,
+    EMAIL_NOTIFIER,
+  ],
+})
+export class NotificationModule {}

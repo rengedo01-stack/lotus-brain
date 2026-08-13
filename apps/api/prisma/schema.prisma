@@ -38,6 +38,20 @@ enum IdentityAuditAction {
   UPDATE_USER_STATUS
   SOFT_DELETE_USER
   CHANGE_PASSWORD
+  EMAIL_VERIFICATION_REQUESTED
+  EMAIL_VERIFIED
+}
+
+enum NotificationOutboxKind {
+  EMAIL_VERIFICATION
+}
+
+enum NotificationOutboxStatus {
+  PENDING
+  PROCESSING
+  SENT
+  DEAD
+  CANCELLED
 }
 
 enum RoleStatus {
@@ -206,23 +220,27 @@ model Supplier {
 }
 
 model User {
-  id                String     @id @default(cuid())
-  email             String     @unique
-  displayName       String
-  passwordHash      String
-  credentialVersion Int        @default(1)
-  status            UserStatus @default(ACTIVE)
-  lastLoginAt       DateTime?
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
-  deletedAt         DateTime?
+  id                       String     @id @default(cuid())
+  email                    String     @unique
+  displayName              String
+  passwordHash             String
+  credentialVersion        Int        @default(1)
+  emailVerifiedAt          DateTime?
+  emailVerificationVersion Int        @default(1)
+  status                   UserStatus @default(ACTIVE)
+  lastLoginAt              DateTime?
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @updatedAt
+  deletedAt                DateTime?
 
   sessions                  IdentitySession[]
   userRoles                 UserRole[]
-  authorizationAuditActions AuthorizationAuditLog[] @relation("AuthorizationAuditActorUser")
-  authorizationAuditLogs    AuthorizationAuditLog[] @relation("AuthorizationAuditTargetUser")
-  identityAuditActions      IdentityAuditLog[]      @relation("IdentityAuditActorUser")
-  identityAuditLogs         IdentityAuditLog[]      @relation("IdentityAuditTargetUser")
+  authorizationAuditActions AuthorizationAuditLog[]  @relation("AuthorizationAuditActorUser")
+  authorizationAuditLogs    AuthorizationAuditLog[]  @relation("AuthorizationAuditTargetUser")
+  identityAuditActions      IdentityAuditLog[]       @relation("IdentityAuditActorUser")
+  identityAuditLogs         IdentityAuditLog[]       @relation("IdentityAuditTargetUser")
+  emailVerificationTokens   EmailVerificationToken[]
+  notificationOutbox        NotificationOutbox[]
 
   @@index([status, deletedAt])
 }
@@ -245,6 +263,45 @@ model IdentitySession {
 
   @@index([userId, revokedAt, expiresAt])
   @@index([expiresAt, revokedAt])
+}
+
+model EmailVerificationToken {
+  id                   String    @id @default(cuid())
+  userId               String
+  tokenHash            String    @unique
+  emailVersionSnapshot Int
+  expiresAt            DateTime
+  consumedAt           DateTime?
+  invalidatedAt        DateTime?
+  createdAt            DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, emailVersionSnapshot])
+  @@index([expiresAt])
+}
+
+model NotificationOutbox {
+  id                   String                   @id @default(cuid())
+  kind                 NotificationOutboxKind
+  userId               String
+  destinationAddress   String?
+  emailVersionSnapshot Int
+  status               NotificationOutboxStatus @default(PENDING)
+  attemptCount         Int                      @default(0)
+  nextAttemptAt        DateTime                 @default(now())
+  leaseUntil           DateTime?
+  claimedBy            String?
+  createdAt            DateTime                 @default(now())
+  sentAt               DateTime?
+  terminalAt           DateTime?
+  lastErrorCode        String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@index([userId, createdAt])
+  @@index([leaseUntil])
 }
 
 model Permission {
@@ -322,14 +379,14 @@ model AuthorizationAuditLog {
 model IdentityAuditLog {
   id           String              @id @default(cuid())
   action       IdentityAuditAction
-  actorUserId  String
+  actorUserId  String?
   targetUserId String
   beforeState  Json?
   afterState   Json?
   createdAt    DateTime            @default(now())
 
-  actorUser  User @relation("IdentityAuditActorUser", fields: [actorUserId], references: [id], onDelete: Restrict)
-  targetUser User @relation("IdentityAuditTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
+  actorUser  User? @relation("IdentityAuditActorUser", fields: [actorUserId], references: [id], onDelete: Restrict)
+  targetUser User  @relation("IdentityAuditTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
 
   @@index([actorUserId, createdAt])
   @@index([targetUserId, createdAt])

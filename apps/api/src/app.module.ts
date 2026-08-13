@@ -20,6 +20,7 @@ import { PurchaseModule } from "./modules/purchase/purchase.module";
 import { ProductionModule } from "./modules/production/production.module";
 import { StocktakeModule } from "./modules/stocktake/stocktake.module";
 import { IdentityModule } from "./modules/identity/identity.module";
+import { NotificationModule } from "./modules/notification/notification.module";
 
 @Module({
   imports: [
@@ -50,8 +51,12 @@ import { IdentityModule } from "./modules/identity/identity.module";
               "req.body.newPassword",
               "req.body.passwordHash",
               "req.body.token",
+              "req.body.verificationToken",
+              "req.body.resetToken",
+              "req.body.recoveryToken",
               "req.body.csrfToken",
               "req.body.sessionToken",
+              "SMTP_PASSWORD",
             ],
             remove: true,
           },
@@ -62,6 +67,7 @@ import { IdentityModule } from "./modules/identity/identity.module";
     AuthModule,
     AuthorizationModule,
     IdentityModule,
+    NotificationModule,
     MasterModule,
     PurchaseModule,
     ProductionModule,
