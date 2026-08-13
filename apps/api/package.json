@@ -10,7 +10,7 @@
     "auth:grant-system-admin": "node scripts/grant-system-admin.cjs",
     "notification:worker": "node dist/notification.worker.js",
     "lint": "eslint \"src/**/*.ts\" --max-warnings=0",
-    "test:unit": "node --test test/*.test.cjs",
+    "test:unit": "node --test --test-concurrency=1 test/*.test.cjs",
     "prisma:validate": "prisma validate --config ./prisma.config.ts",
     "prisma:generate": "prisma generate --config ./prisma.config.ts"
   },

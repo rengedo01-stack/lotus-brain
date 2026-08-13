@@ -4,18 +4,21 @@ import type { EnvironmentVariables } from "../../config/environment";
 import { PrismaModule } from "../../prisma/prisma.module";
 import { EMAIL_NOTIFIER } from "./application/email-notifier";
 import { EmailVerificationService } from "./application/email-verification.service";
+import { PasswordRecoveryService } from "./application/password-recovery.service";
 import { NotificationOutboxWorker } from "./application/notification-outbox.worker";
 import { RECOVERY_CHANNEL_REPOSITORY } from "./application/recovery-channel.repository";
 import { PrismaRecoveryChannelRepository } from "./infrastructure/prisma-recovery-channel.repository";
 import { InMemoryEmailNotifier } from "./infrastructure/in-memory-email-notifier";
 import { SmtpEmailNotifier } from "./infrastructure/smtp-email-notifier";
 import { EmailVerificationController } from "./presentation/email-verification.controller";
+import { PasswordRecoveryController } from "./presentation/password-recovery.controller";
 
 @Module({
   imports: [PrismaModule],
-  controllers: [EmailVerificationController],
+  controllers: [EmailVerificationController, PasswordRecoveryController],
   providers: [
     EmailVerificationService,
+    PasswordRecoveryService,
     NotificationOutboxWorker,
     PrismaRecoveryChannelRepository,
     { provide: RECOVERY_CHANNEL_REPOSITORY, useExisting: PrismaRecoveryChannelRepository },
@@ -30,6 +33,7 @@ import { EmailVerificationController } from "./presentation/email-verification.c
   ],
   exports: [
     EmailVerificationService,
+    PasswordRecoveryService,
     NotificationOutboxWorker,
     RECOVERY_CHANNEL_REPOSITORY,
     EMAIL_NOTIFIER,

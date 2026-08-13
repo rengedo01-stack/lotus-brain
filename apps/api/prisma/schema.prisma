@@ -40,10 +40,14 @@ enum IdentityAuditAction {
   CHANGE_PASSWORD
   EMAIL_VERIFICATION_REQUESTED
   EMAIL_VERIFIED
+  PASSWORD_RECOVERY_REQUESTED
+  PASSWORD_RESET_COMPLETED
 }
 
 enum NotificationOutboxKind {
   EMAIL_VERIFICATION
+  PASSWORD_RECOVERY
+  PASSWORD_RESET_COMPLETED
 }
 
 enum NotificationOutboxStatus {
@@ -241,6 +245,7 @@ model User {
   identityAuditLogs         IdentityAuditLog[]       @relation("IdentityAuditTargetUser")
   emailVerificationTokens   EmailVerificationToken[]
   notificationOutbox        NotificationOutbox[]
+  passwordRecoveryTokens    PasswordRecoveryToken[]
 
   @@index([status, deletedAt])
 }
@@ -281,21 +286,39 @@ model EmailVerificationToken {
   @@index([expiresAt])
 }
 
+model PasswordRecoveryToken {
+  id                               String    @id @default(cuid())
+  userId                           String
+  tokenHash                        String    @unique
+  credentialVersionSnapshot        Int
+  emailVerificationVersionSnapshot Int
+  expiresAt                        DateTime
+  consumedAt                       DateTime?
+  invalidatedAt                    DateTime?
+  createdAt                        DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
 model NotificationOutbox {
-  id                   String                   @id @default(cuid())
-  kind                 NotificationOutboxKind
-  userId               String
-  destinationAddress   String?
-  emailVersionSnapshot Int
-  status               NotificationOutboxStatus @default(PENDING)
-  attemptCount         Int                      @default(0)
-  nextAttemptAt        DateTime                 @default(now())
-  leaseUntil           DateTime?
-  claimedBy            String?
-  createdAt            DateTime                 @default(now())
-  sentAt               DateTime?
-  terminalAt           DateTime?
-  lastErrorCode        String?
+  id                        String                   @id @default(cuid())
+  kind                      NotificationOutboxKind
+  userId                    String
+  destinationAddress        String?
+  emailVersionSnapshot      Int
+  credentialVersionSnapshot Int?
+  status                    NotificationOutboxStatus @default(PENDING)
+  attemptCount              Int                      @default(0)
+  nextAttemptAt             DateTime                 @default(now())
+  leaseUntil                DateTime?
+  claimedBy                 String?
+  createdAt                 DateTime                 @default(now())
+  sentAt                    DateTime?
+  terminalAt                DateTime?
+  lastErrorCode             String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 

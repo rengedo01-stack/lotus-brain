@@ -7,6 +7,8 @@ import {
   NotificationDeliveryError,
   type EmailNotifier,
   type EmailVerificationDelivery,
+  type PasswordRecoveryDelivery,
+  type PasswordResetCompletedDelivery,
 } from "../application/email-notifier";
 
 @Injectable()
@@ -48,6 +50,43 @@ export class SmtpEmailNotifier implements EmailNotifier {
           "",
           `This link expires at ${delivery.expiresAt.toISOString()}.`,
           "If you did not request this, you can ignore this email.",
+        ].join("\n"),
+      });
+    } catch (error: unknown) {
+      throw new NotificationDeliveryError(this.classifyError(error));
+    }
+  }
+
+  async sendPasswordRecovery(delivery: PasswordRecoveryDelivery): Promise<void> {
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to: delivery.destinationAddress,
+        subject: "Reset your Lotus BRAIN password",
+        text: [
+          "A password reset was requested for your Lotus BRAIN account.",
+          "",
+          delivery.recoveryUrl,
+          "",
+          `This link expires at ${delivery.expiresAt.toISOString()}.`,
+          "If you did not request this, you can ignore this email.",
+        ].join("\n"),
+      });
+    } catch (error: unknown) {
+      throw new NotificationDeliveryError(this.classifyError(error));
+    }
+  }
+
+  async sendPasswordResetCompleted(delivery: PasswordResetCompletedDelivery): Promise<void> {
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to: delivery.destinationAddress,
+        subject: "Your Lotus BRAIN password was reset",
+        text: [
+          "Your Lotus BRAIN password was reset successfully.",
+          "",
+          "If you did not make this change, contact your operator or support immediately.",
         ].join("\n"),
       });
     } catch (error: unknown) {
