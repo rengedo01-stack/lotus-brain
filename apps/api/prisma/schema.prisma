@@ -46,6 +46,9 @@ enum IdentityAuditAction {
   USER_INVITATION_RESENT
   USER_INVITATION_CANCELLED
   USER_INVITATION_ACCEPTED
+  PASSKEY_REGISTERED
+  PASSKEY_RENAMED
+  PASSKEY_REVOKED
 }
 
 enum NotificationOutboxKind {
@@ -248,16 +251,18 @@ model User {
   updatedAt                DateTime   @updatedAt
   deletedAt                DateTime?
 
-  sessions                  IdentitySession[]
-  userRoles                 UserRole[]
-  authorizationAuditActions AuthorizationAuditLog[]  @relation("AuthorizationAuditActorUser")
-  authorizationAuditLogs    AuthorizationAuditLog[]  @relation("AuthorizationAuditTargetUser")
-  identityAuditActions      IdentityAuditLog[]       @relation("IdentityAuditActorUser")
-  identityAuditLogs         IdentityAuditLog[]       @relation("IdentityAuditTargetUser")
-  emailVerificationTokens   EmailVerificationToken[]
-  notificationOutbox        NotificationOutbox[]
-  passwordRecoveryTokens    PasswordRecoveryToken[]
-  createdInvitations        UserInvitation[]         @relation("UserInvitationCreatedBy")
+  sessions                       IdentitySession[]
+  userRoles                      UserRole[]
+  authorizationAuditActions      AuthorizationAuditLog[]         @relation("AuthorizationAuditActorUser")
+  authorizationAuditLogs         AuthorizationAuditLog[]         @relation("AuthorizationAuditTargetUser")
+  identityAuditActions           IdentityAuditLog[]              @relation("IdentityAuditActorUser")
+  identityAuditLogs              IdentityAuditLog[]              @relation("IdentityAuditTargetUser")
+  emailVerificationTokens        EmailVerificationToken[]
+  notificationOutbox             NotificationOutbox[]
+  passwordRecoveryTokens         PasswordRecoveryToken[]
+  createdInvitations             UserInvitation[]                @relation("UserInvitationCreatedBy")
+  webAuthnCredentials            WebAuthnCredential[]
+  webAuthnRegistrationChallenges WebAuthnRegistrationChallenge[]
 
   @@index([status, deletedAt])
 }
@@ -276,7 +281,8 @@ model IdentitySession {
   userAgent         String?
   ipAddress         String?
 
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user                           User                            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  webAuthnRegistrationChallenges WebAuthnRegistrationChallenge[]
 
   @@index([userId, revokedAt, expiresAt])
   @@index([expiresAt, revokedAt])
@@ -344,6 +350,45 @@ model UserInvitationToken {
   invitation UserInvitation @relation(fields: [invitationId], references: [id], onDelete: Restrict)
 
   @@index([invitationId, expiresAt])
+  @@index([expiresAt])
+}
+
+model WebAuthnCredential {
+  id           String    @id @default(cuid())
+  userId       String
+  credentialId String    @unique
+  publicKey    Bytes
+  counter      BigInt
+  transports   String[]
+  deviceType   String?
+  backedUp     Boolean?
+  displayName  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([userId, revokedAt])
+}
+
+model WebAuthnRegistrationChallenge {
+  id                        String    @id @default(cuid())
+  userId                    String
+  identitySessionId         String
+  challengeHash             String    @unique
+  credentialVersionSnapshot Int
+  expiresAt                 DateTime
+  consumedAt                DateTime?
+  invalidatedAt             DateTime?
+  createdAt                 DateTime  @default(now())
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  identitySession IdentitySession @relation(fields: [identitySessionId], references: [id], onDelete: Restrict)
+
+  @@index([userId, identitySessionId, expiresAt])
   @@index([expiresAt])
 }
 
