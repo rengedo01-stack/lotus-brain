@@ -17,6 +17,9 @@ export type EnvironmentVariables = {
   SMTP_PORT: number;
   SMTP_SECURE: boolean;
   SMTP_USER?: string;
+  WEBAUTHN_ORIGIN: string;
+  WEBAUTHN_RP_ID: string;
+  WEBAUTHN_RP_NAME: string;
 };
 
 export function validateEnvironment(
@@ -31,6 +34,7 @@ export function validateEnvironment(
   );
   const databaseUrl = readNonEmptyString(environment.DATABASE_URL, "DATABASE_URL");
   const publicWebBaseUrl = readPublicWebBaseUrl(environment.PUBLIC_WEB_BASE_URL, nodeEnvironment);
+  const webAuthn = readWebAuthnConfiguration(environment, nodeEnvironment, publicWebBaseUrl);
 
   if (corsOrigin.split(",").some((origin) => origin.trim().length === 0)) {
     throw new Error("CORS_ORIGIN must be a comma-separated list of non-empty origins.");
@@ -46,8 +50,71 @@ export function validateEnvironment(
     NODE_ENV: nodeEnvironment,
     PORT: port,
     PUBLIC_WEB_BASE_URL: publicWebBaseUrl,
+    ...webAuthn,
     ...smtp,
   };
+}
+
+function readWebAuthnConfiguration(
+  environment: Record<string, unknown>,
+  nodeEnvironment: NodeEnvironment,
+  publicWebBaseUrl: string,
+): Pick<EnvironmentVariables, "WEBAUTHN_ORIGIN" | "WEBAUTHN_RP_ID" | "WEBAUTHN_RP_NAME"> {
+  const isProduction = nodeEnvironment === "production";
+  const rpName = readNonEmptyString(environment.WEBAUTHN_RP_NAME, "WEBAUTHN_RP_NAME", isProduction ? undefined : "Lotus BRAIN");
+  const configuredOrigin = readNonEmptyString(
+    environment.WEBAUTHN_ORIGIN,
+    "WEBAUTHN_ORIGIN",
+    isProduction ? undefined : publicWebBaseUrl,
+  );
+  let origin: URL;
+  try {
+    origin = new URL(configuredOrigin);
+  } catch {
+    throw new Error("WEBAUTHN_ORIGIN must be a valid absolute origin.");
+  }
+  if (
+    origin.username ||
+    origin.password ||
+    origin.pathname !== "/" ||
+    origin.search ||
+    origin.hash ||
+    (origin.protocol !== "http:" && origin.protocol !== "https:")
+  ) {
+    throw new Error("WEBAUTHN_ORIGIN must be an HTTP(S) origin without a path, credentials, query, or fragment.");
+  }
+  if (isProduction && origin.protocol !== "https:") {
+    throw new Error("WEBAUTHN_ORIGIN must use HTTPS in production.");
+  }
+  if (!isProduction && origin.protocol === "http:" && !isLocalWebAuthnHost(origin.hostname)) {
+    throw new Error("Non-production HTTP WEBAUTHN_ORIGIN is permitted only for localhost.");
+  }
+
+  const rpId = readNonEmptyString(
+    environment.WEBAUTHN_RP_ID,
+    "WEBAUTHN_RP_ID",
+    isProduction ? undefined : origin.hostname === "localhost" ? "localhost" : undefined,
+  ).toLowerCase();
+  if (!isValidRpId(rpId) || !(origin.hostname === rpId || origin.hostname.endsWith(`.${rpId}`))) {
+    throw new Error("WEBAUTHN_RP_ID must be a configured registrable suffix of WEBAUTHN_ORIGIN.");
+  }
+  if (rpId === "localhost" && origin.hostname !== "localhost") {
+    throw new Error("WEBAUTHN_RP_ID localhost is valid only with a localhost origin.");
+  }
+
+  return {
+    WEBAUTHN_RP_NAME: rpName,
+    WEBAUTHN_RP_ID: rpId,
+    WEBAUTHN_ORIGIN: origin.origin,
+  };
+}
+
+function isLocalWebAuthnHost(hostname: string): boolean {
+  return hostname === "localhost";
+}
+
+function isValidRpId(value: string): boolean {
+  return value === "localhost" || /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(value);
 }
 
 function readNodeEnvironment(value: unknown): NodeEnvironment {

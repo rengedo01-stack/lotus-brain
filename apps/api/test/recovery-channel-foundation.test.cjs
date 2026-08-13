@@ -28,6 +28,9 @@ test("production recovery-channel configuration requires HTTPS canonical web and
     SMTP_USER: "smtp-user",
     SMTP_PASSWORD: "smtp-password",
     SMTP_FROM: "Lotus BRAIN <no-reply@example.test>",
+    WEBAUTHN_RP_NAME: "Lotus BRAIN",
+    WEBAUTHN_RP_ID: "example.test",
+    WEBAUTHN_ORIGIN: "https://app.example.test",
   };
   assert.doesNotThrow(() => validateEnvironment(base));
   assert.throws(() => validateEnvironment({ ...base, PUBLIC_WEB_BASE_URL: "http://app.example.test" }));
