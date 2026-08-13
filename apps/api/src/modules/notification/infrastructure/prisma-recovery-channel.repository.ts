@@ -17,6 +17,7 @@ import type {
   PreparedEmailVerificationDelivery,
   PreparedPasswordRecoveryDelivery,
   PreparedPasswordResetCompletedDelivery,
+  PreparedSecurityNotificationDelivery,
   RecoveryChannelRepository,
 } from "../application/recovery-channel.repository";
 
@@ -42,11 +43,13 @@ type PasswordRecoveryTokenRecord = {
   invalidatedAt: Date | null;
   passwordHash: string;
   userCredentialVersion: number;
+  userAuthenticationPolicyVersion: number;
   userDeletedAt: Date | null;
   userEmail: string;
   userEmailVerificationVersion: number;
   userEmailVerifiedAt: Date | null;
   userId: string;
+  userPasskeyMfaEnabledAt: Date | null;
   userStatus: UserStatus;
 };
 
@@ -239,13 +242,27 @@ export class PrismaRecoveryChannelRepository implements RecoveryChannelRepositor
         throw new PasswordRecoveryTokenInvalidError("Recovery credential is invalid or expired.");
       }
 
+      const resetPasskeyMfa = token.userPasskeyMfaEnabledAt !== null;
       await transaction.user.update({
         where: { id: token.userId },
-        data: {
-          passwordHash: input.passwordHash,
-          credentialVersion: { increment: 1 },
-        },
+        data: resetPasskeyMfa
+          ? {
+              passwordHash: input.passwordHash,
+              credentialVersion: { increment: 1 },
+              passkeyMfaEnabledAt: null,
+              authenticationPolicyVersion: { increment: 1 },
+            }
+          : {
+              passwordHash: input.passwordHash,
+              credentialVersion: { increment: 1 },
+            },
       });
+      if (resetPasskeyMfa) {
+        await transaction.webAuthnCredential.updateMany({
+          where: { userId: token.userId, revokedAt: null },
+          data: { revokedAt: now },
+        });
+      }
       await transaction.passwordRecoveryToken.update({
         where: { id: token.id },
         data: { consumedAt: now },
@@ -272,6 +289,24 @@ export class PrismaRecoveryChannelRepository implements RecoveryChannelRepositor
           afterState: { credentialVersion: token.userCredentialVersion + 1 },
         },
       });
+      if (resetPasskeyMfa) {
+        await transaction.identityAuditLog.create({
+          data: {
+            action: "PASSKEYS_RESET_BY_RECOVERY",
+            actorUserId: null,
+            targetUserId: token.userId,
+            beforeState: {
+              mfaEnabled: true,
+              authenticationPolicyVersion: token.userAuthenticationPolicyVersion,
+            },
+            afterState: {
+              mfaEnabled: false,
+              authenticationPolicyVersion: token.userAuthenticationPolicyVersion + 1,
+              activePasskeysRevoked: true,
+            },
+          },
+        });
+      }
       await transaction.notificationOutbox.create({
         data: {
           kind: "PASSWORD_RESET_COMPLETED",
@@ -281,6 +316,17 @@ export class PrismaRecoveryChannelRepository implements RecoveryChannelRepositor
           credentialVersionSnapshot: token.userCredentialVersion + 1,
         },
       });
+      if (resetPasskeyMfa) {
+        await transaction.notificationOutbox.create({
+          data: {
+            kind: "AUTHENTICATORS_RESET_BY_RECOVERY",
+            userId: token.userId,
+            destinationAddress: token.userEmail,
+            emailVersionSnapshot: token.userEmailVerificationVersion,
+            credentialVersionSnapshot: token.userCredentialVersion + 1,
+          },
+        });
+      }
     });
   }
 
@@ -301,7 +347,11 @@ export class PrismaRecoveryChannelRepository implements RecoveryChannelRepositor
       Prisma.sql`"kind" IN (
         'EMAIL_VERIFICATION'::"NotificationOutboxKind",
         'PASSWORD_RECOVERY'::"NotificationOutboxKind",
-        'PASSWORD_RESET_COMPLETED'::"NotificationOutboxKind"
+        'PASSWORD_RESET_COMPLETED'::"NotificationOutboxKind",
+        'PASSKEY_REGISTERED'::"NotificationOutboxKind",
+        'PASSKEY_MFA_ENABLED'::"NotificationOutboxKind",
+        'PASSKEY_MFA_DISABLED'::"NotificationOutboxKind",
+        'AUTHENTICATORS_RESET_BY_RECOVERY'::"NotificationOutboxKind"
       )`,
     );
   }
@@ -433,6 +483,27 @@ export class PrismaRecoveryChannelRepository implements RecoveryChannelRepositor
     });
   }
 
+  async prepareSecurityNotificationDelivery(
+    claim: NotificationOutboxClaim,
+    workerId: string,
+    now: Date,
+  ): Promise<PreparedSecurityNotificationDelivery | null> {
+    const securityKind = claim.kind;
+    if (
+      securityKind !== "PASSKEY_REGISTERED" &&
+      securityKind !== "PASSKEY_MFA_ENABLED" &&
+      securityKind !== "PASSKEY_MFA_DISABLED" &&
+      securityKind !== "AUTHENTICATORS_RESET_BY_RECOVERY"
+    ) {
+      return null;
+    }
+    return this.prisma.$transaction(async (transaction) => {
+      const outbox = await this.lockClaimedOutbox(transaction, claim, workerId, now, securityKind);
+      if (outbox === null || outbox.destinationAddress === null) return null;
+      return { destinationAddress: outbox.destinationAddress, kind: securityKind };
+    });
+  }
+
   async markEmailVerificationSent(outboxId: string, workerId: string, now: Date): Promise<void> {
     await this.prisma.notificationOutbox.updateMany({
       where: { id: outboxId, status: "PROCESSING", claimedBy: workerId },
@@ -509,6 +580,8 @@ export class PrismaRecoveryChannelRepository implements RecoveryChannelRepositor
         "PasswordRecoveryToken"."invalidatedAt",
         "User"."passwordHash" AS "passwordHash",
         "User"."credentialVersion" AS "userCredentialVersion",
+        "User"."authenticationPolicyVersion" AS "userAuthenticationPolicyVersion",
+        "User"."passkeyMfaEnabledAt" AS "userPasskeyMfaEnabledAt",
         "User"."email" AS "userEmail",
         "User"."status" AS "userStatus",
         "User"."deletedAt" AS "userDeletedAt",

@@ -19,15 +19,18 @@ import type {
 type TransactionClient = Prisma.TransactionClient;
 
 type LockedUser = {
+  authenticationPolicyVersion: number;
   credentialVersion: number;
   deletedAt: Date | null;
   displayName: string;
   email: string;
+  emailVerificationVersion: number;
   id: string;
   status: UserStatus;
 };
 
 type LockedSession = {
+  authenticationPolicyVersion: number;
   credentialVersion: number;
   expiresAt: Date;
   id: string;
@@ -69,11 +72,18 @@ export class PrismaPasskeyEnrollmentRepository implements PasskeyEnrollmentRepos
     const [user, session] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: userId },
-        select: { id: true, passwordHash: true, credentialVersion: true, status: true, deletedAt: true },
+        select: {
+          id: true,
+          passwordHash: true,
+          credentialVersion: true,
+          authenticationPolicyVersion: true,
+          status: true,
+          deletedAt: true,
+        },
       }),
       this.prisma.identitySession.findUnique({
         where: { id: identitySessionId },
-        select: { userId: true, credentialVersion: true, revokedAt: true, expiresAt: true },
+        select: { userId: true, credentialVersion: true, authenticationPolicyVersion: true, revokedAt: true, expiresAt: true },
       }),
     ]);
     if (
@@ -82,7 +92,8 @@ export class PrismaPasskeyEnrollmentRepository implements PasskeyEnrollmentRepos
       session.userId !== user.id ||
       session.revokedAt !== null ||
       session.expiresAt <= new Date() ||
-      session.credentialVersion !== user.credentialVersion
+      session.credentialVersion !== user.credentialVersion ||
+      session.authenticationPolicyVersion !== user.authenticationPolicyVersion
     ) {
       return null;
     }
@@ -230,6 +241,14 @@ export class PrismaPasskeyEnrollmentRepository implements PasskeyEnrollmentRepos
             afterState: { passkeyId: credential.id },
           },
         });
+        await transaction.notificationOutbox.create({
+          data: {
+            kind: "PASSKEY_REGISTERED",
+            userId: user.id,
+            destinationAddress: user.email,
+            emailVersionSnapshot: user.emailVerificationVersion,
+          },
+        });
         return this.toPasskeyView(credential);
       });
     } catch (error: unknown) {
@@ -288,38 +307,45 @@ export class PrismaPasskeyEnrollmentRepository implements PasskeyEnrollmentRepos
     passkeyId: string;
     userId: string;
   }): Promise<PasskeyView> {
-    return this.prisma.$transaction(async (transaction) => {
-      const user = await this.lockUser(transaction, input.userId);
-      const session = await this.lockSession(transaction, input.identitySessionId);
-      this.assertCurrentUserSession(user, session, input.userId, input.expectedCredentialVersion, new Date());
-      const passkey = await transaction.webAuthnCredential.findFirst({
-        where: { id: input.passkeyId, userId: user.id },
-        select: { id: true, revokedAt: true },
+    try {
+      return await this.prisma.$transaction(async (transaction) => {
+        const user = await this.lockUser(transaction, input.userId);
+        const session = await this.lockSession(transaction, input.identitySessionId);
+        this.assertCurrentUserSession(user, session, input.userId, input.expectedCredentialVersion, new Date());
+        const passkey = await transaction.webAuthnCredential.findFirst({
+          where: { id: input.passkeyId, userId: user.id },
+          select: { id: true, revokedAt: true },
+        });
+        if (passkey === null) throw new PasskeyNotFoundError("Passkey was not found.");
+        if (passkey.revokedAt !== null) throw new PasskeyConflictError("Passkey is already revoked.");
+        const now = new Date();
+        const updated = await transaction.webAuthnCredential.update({
+          where: { id: passkey.id },
+          data: { revokedAt: now },
+          select: passkeySelect,
+        });
+        await transaction.identityAuditLog.create({
+          data: {
+            action: "PASSKEY_REVOKED",
+            actorUserId: user.id,
+            targetUserId: user.id,
+            beforeState: { passkeyId: passkey.id, revokedAt: null },
+            afterState: { passkeyId: updated.id, revokedAt: now.toISOString() },
+          },
+        });
+        return this.toPasskeyView(updated);
       });
-      if (passkey === null) throw new PasskeyNotFoundError("Passkey was not found.");
-      if (passkey.revokedAt !== null) throw new PasskeyConflictError("Passkey is already revoked.");
-      const now = new Date();
-      const updated = await transaction.webAuthnCredential.update({
-        where: { id: passkey.id },
-        data: { revokedAt: now },
-        select: passkeySelect,
-      });
-      await transaction.identityAuditLog.create({
-        data: {
-          action: "PASSKEY_REVOKED",
-          actorUserId: user.id,
-          targetUserId: user.id,
-          beforeState: { passkeyId: passkey.id, revokedAt: null },
-          afterState: { passkeyId: updated.id, revokedAt: now.toISOString() },
-        },
-      });
-      return this.toPasskeyView(updated);
-    });
+    } catch (error: unknown) {
+      if (this.isPrismaError(error, "P0001")) {
+        throw new PasskeyConflictError("The final active passkey cannot be revoked while passkey MFA is enabled.");
+      }
+      throw error;
+    }
   }
 
   private async lockUser(transaction: TransactionClient, userId: string): Promise<LockedUser> {
     const users = await transaction.$queryRaw<LockedUser[]>(Prisma.sql`
-      SELECT "id", "email", "displayName", "credentialVersion", "status", "deletedAt"
+      SELECT "id", "email", "displayName", "credentialVersion", "authenticationPolicyVersion", "emailVerificationVersion", "status", "deletedAt"
       FROM "User"
       WHERE "id" = ${userId}
       FOR UPDATE
@@ -331,7 +357,7 @@ export class PrismaPasskeyEnrollmentRepository implements PasskeyEnrollmentRepos
 
   private async lockSession(transaction: TransactionClient, sessionId: string): Promise<LockedSession> {
     const sessions = await transaction.$queryRaw<LockedSession[]>(Prisma.sql`
-      SELECT "id", "userId", "credentialVersion", "expiresAt", "revokedAt"
+      SELECT "id", "userId", "credentialVersion", "authenticationPolicyVersion", "expiresAt", "revokedAt"
       FROM "IdentitySession"
       WHERE "id" = ${sessionId}
       FOR UPDATE
@@ -370,7 +396,8 @@ export class PrismaPasskeyEnrollmentRepository implements PasskeyEnrollmentRepos
       session.userId !== user.id ||
       session.revokedAt !== null ||
       session.expiresAt <= now ||
-      session.credentialVersion !== user.credentialVersion
+      session.credentialVersion !== user.credentialVersion ||
+      session.authenticationPolicyVersion !== user.authenticationPolicyVersion
     ) {
       throw this.invalidCeremony();
     }

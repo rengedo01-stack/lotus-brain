@@ -8,7 +8,7 @@ export type AuthenticatedRequestUser = Pick<
 
 export type AuthenticatedRequestSession = Pick<
   IdentitySession,
-  "id" | "userId" | "credentialVersion" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
+  "id" | "userId" | "credentialVersion" | "authenticationPolicyVersion" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
 >;
 
 export type AuthenticatedRequest = Request & {
@@ -19,4 +19,8 @@ export type AuthenticatedRequest = Request & {
 export type LoginResponse = {
   user: AuthenticatedRequestUser;
   csrfToken: string;
+} | {
+  status: "MFA_REQUIRED";
+  options: object;
+  preAuthCsrfToken: string;
 };

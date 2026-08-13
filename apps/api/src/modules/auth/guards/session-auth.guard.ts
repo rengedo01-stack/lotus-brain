@@ -45,7 +45,8 @@ export class SessionAuthGuard implements CanActivate {
       session.user === null ||
       session.user.status !== "ACTIVE" ||
       session.user.deletedAt !== null ||
-      session.credentialVersion !== session.user.credentialVersion
+      session.credentialVersion !== session.user.credentialVersion ||
+      session.authenticationPolicyVersion !== session.user.authenticationPolicyVersion
     ) {
       throw new UnauthorizedException("Authentication required.");
     }

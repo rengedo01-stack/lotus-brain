@@ -121,6 +121,11 @@ if (databaseUrl === undefined) {
       });
       assert.equal(audit.actorUserId, user.id);
       assert.equal(JSON.stringify(audit).includes(`${fixture}-credential-one`), false);
+      const registrationNotice = await prisma.notificationOutbox.findFirstOrThrow({
+        where: { kind: "PASSKEY_REGISTERED", userId: user.id },
+      });
+      assert.equal(registrationNotice.destinationAddress, user.email);
+      assert.equal(JSON.stringify(registrationNotice).includes(`${fixture}-credential-one`), false);
 
       await assert.rejects(
         () => repository.claimRegistrationChallenge({
@@ -265,6 +270,7 @@ if (databaseUrl === undefined) {
         await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${functionName}"();`);
       }
     } finally {
+      await prisma.notificationOutbox.deleteMany({ where: { userId: { in: users } } });
       await prisma.identityAuditLog.deleteMany({ where: { targetUserId: { in: users } } });
       await prisma.webAuthnCredential.deleteMany({ where: { id: { in: credentials } } });
       await prisma.webAuthnRegistrationChallenge.deleteMany({ where: { id: { in: challenges } } });

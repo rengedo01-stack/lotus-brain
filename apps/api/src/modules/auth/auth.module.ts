@@ -17,10 +17,14 @@ import { PASSKEY_ENROLLMENT_REPOSITORY } from "./application/passkey-enrollment.
 import { PASSKEY_WEBAUTHN_ADAPTER } from "./application/passkey-webauthn.adapter";
 import { PrismaPasskeyEnrollmentRepository } from "./infrastructure/prisma-passkey-enrollment.repository";
 import { SimpleWebAuthnPasskeyAdapter } from "./infrastructure/simplewebauthn-passkey.adapter";
+import { PasskeyMfaService } from "./application/passkey-mfa.service";
+import { PASSKEY_MFA_REPOSITORY } from "./application/passkey-mfa.repository";
+import { PrismaPasskeyMfaRepository } from "./infrastructure/prisma-passkey-mfa.repository";
+import { PasskeyMfaController, PasskeyMfaLoginController } from "./presentation/passkey-mfa.controller";
 
 @Module({
   imports: [PrismaModule],
-  controllers: [AuthController, PasskeyController],
+  controllers: [AuthController, PasskeyController, PasskeyMfaController, PasskeyMfaLoginController],
   providers: [
     LoginUseCase,
     ChangePasswordUseCase,
@@ -29,10 +33,13 @@ import { SimpleWebAuthnPasskeyAdapter } from "./infrastructure/simplewebauthn-pa
     LogoutUseCase,
     BootstrapUserUseCase,
     PasskeyEnrollmentService,
+    PasskeyMfaService,
     PrismaPasskeyEnrollmentRepository,
+    PrismaPasskeyMfaRepository,
     SimpleWebAuthnPasskeyAdapter,
     { provide: AUTH_REPOSITORY, useClass: PrismaAuthRepository },
     { provide: PASSKEY_ENROLLMENT_REPOSITORY, useExisting: PrismaPasskeyEnrollmentRepository },
+    { provide: PASSKEY_MFA_REPOSITORY, useExisting: PrismaPasskeyMfaRepository },
     { provide: PASSKEY_WEBAUTHN_ADAPTER, useExisting: SimpleWebAuthnPasskeyAdapter },
   ],
   exports: [
@@ -44,7 +51,9 @@ import { SimpleWebAuthnPasskeyAdapter } from "./infrastructure/simplewebauthn-pa
     LogoutUseCase,
     BootstrapUserUseCase,
     PasskeyEnrollmentService,
+    PasskeyMfaService,
     PASSKEY_ENROLLMENT_REPOSITORY,
+    PASSKEY_MFA_REPOSITORY,
     PASSKEY_WEBAUTHN_ADAPTER,
   ],
 })

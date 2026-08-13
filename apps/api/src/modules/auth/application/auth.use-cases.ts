@@ -14,12 +14,24 @@ import {
 import { hashSecret, makeOpaqueToken, normalizeEmail, secondsFromDays } from "../auth.utils";
 import { AUTH_SESSION_TTL_DAYS } from "../auth.constants";
 import { PasswordPolicy } from "../password.policy";
+import { PasskeyMfaService, type MfaRequiredLogin } from "./passkey-mfa.service";
+
+export type PasswordLoginResult = {
+  status: "AUTHENTICATED";
+  user: AuthUserView;
+  csrfToken: string;
+  sessionToken: string;
+  sessionExpiresAt: Date;
+} | ({ status: "MFA_REQUIRED" } & MfaRequiredLogin);
 
 @Injectable()
 export class LoginUseCase {
-  constructor(@Inject(AUTH_REPOSITORY) private readonly repository: AuthRepository) {}
+  constructor(
+    @Inject(AUTH_REPOSITORY) private readonly repository: AuthRepository,
+    private readonly passkeyMfaService: PasskeyMfaService,
+  ) {}
 
-  async execute(input: LoginInput): Promise<{ user: AuthUserView; csrfToken: string; sessionToken: string; sessionExpiresAt: Date }> {
+  async execute(input: LoginInput): Promise<PasswordLoginResult> {
     const email = normalizeEmail(input.email);
     const user = await this.repository.findUserByEmail(email);
     if (user === null) throw new AuthInvalidCredentialsError("Invalid email or password.");
@@ -31,6 +43,15 @@ export class LoginUseCase {
     const passwordMatches = await argon2.verify(user.passwordHash, input.password);
     if (!passwordMatches) throw new AuthInvalidCredentialsError("Invalid email or password.");
 
+    if (user.passkeyMfaEnabledAt != null) {
+      const mfa = await this.passkeyMfaService.beginMfaLogin({
+        userId: user.id,
+        credentialVersion: user.credentialVersion,
+        authenticationPolicyVersion: user.authenticationPolicyVersion,
+      });
+      return { status: "MFA_REQUIRED", ...mfa };
+    }
+
     const sessionToken = makeOpaqueToken();
     const csrfToken = makeOpaqueToken();
     const sessionTokenHash = hashSecret(sessionToken);
@@ -40,17 +61,20 @@ export class LoginUseCase {
     await this.repository.createSessionAndMarkUserLogin({
       csrfTokenHash,
       credentialVersion: user.credentialVersion,
+      authenticationPolicyVersion: user.authenticationPolicyVersion,
       expiresAt: sessionExpiresAt,
       ipAddress: input.ipAddress ?? null,
       tokenHash: sessionTokenHash,
       userAgent: input.userAgent ?? null,
       userId: user.id,
     });
-    const { passwordHash, deletedAt, credentialVersion, ...safeUser } = user;
+    const { passwordHash, deletedAt, credentialVersion, authenticationPolicyVersion, passkeyMfaEnabledAt, ...safeUser } = user;
     void passwordHash;
     void deletedAt;
     void credentialVersion;
-    return { user: safeUser, csrfToken, sessionToken, sessionExpiresAt };
+    void authenticationPolicyVersion;
+    void passkeyMfaEnabledAt;
+    return { status: "AUTHENTICATED", user: safeUser, csrfToken, sessionToken, sessionExpiresAt };
   }
 }
 
