@@ -14,10 +14,17 @@ export type PasswordResetCompletedDelivery = {
   destinationAddress: string;
 };
 
+export type UserInvitationDelivery = {
+  destinationAddress: string;
+  expiresAt: Date;
+  invitationUrl: string;
+};
+
 export interface EmailNotifier {
   sendEmailVerification(delivery: EmailVerificationDelivery): Promise<void>;
   sendPasswordRecovery(delivery: PasswordRecoveryDelivery): Promise<void>;
   sendPasswordResetCompleted(delivery: PasswordResetCompletedDelivery): Promise<void>;
+  sendUserInvitation(delivery: UserInvitationDelivery): Promise<void>;
 }
 
 export const EMAIL_NOTIFIER = Symbol("EMAIL_NOTIFIER");

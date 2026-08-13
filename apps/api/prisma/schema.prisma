@@ -42,12 +42,17 @@ enum IdentityAuditAction {
   EMAIL_VERIFIED
   PASSWORD_RECOVERY_REQUESTED
   PASSWORD_RESET_COMPLETED
+  USER_INVITATION_CREATED
+  USER_INVITATION_RESENT
+  USER_INVITATION_CANCELLED
+  USER_INVITATION_ACCEPTED
 }
 
 enum NotificationOutboxKind {
   EMAIL_VERIFICATION
   PASSWORD_RECOVERY
   PASSWORD_RESET_COMPLETED
+  USER_INVITATION
 }
 
 enum NotificationOutboxStatus {
@@ -61,6 +66,12 @@ enum NotificationOutboxStatus {
 enum RoleStatus {
   ACTIVE
   DISABLED
+}
+
+enum UserInvitationStatus {
+  PENDING
+  ACCEPTED
+  CANCELLED
 }
 
 enum UnitDimension {
@@ -246,6 +257,7 @@ model User {
   emailVerificationTokens   EmailVerificationToken[]
   notificationOutbox        NotificationOutbox[]
   passwordRecoveryTokens    PasswordRecoveryToken[]
+  createdInvitations        UserInvitation[]         @relation("UserInvitationCreatedBy")
 
   @@index([status, deletedAt])
 }
@@ -303,12 +315,45 @@ model PasswordRecoveryToken {
   @@index([expiresAt])
 }
 
+model UserInvitation {
+  id              String               @id @default(cuid())
+  email           String
+  status          UserInvitationStatus @default(PENDING)
+  createdByUserId String
+  createdAt       DateTime             @default(now())
+  acceptedAt      DateTime?
+  cancelledAt     DateTime?
+
+  createdByUser      User                  @relation("UserInvitationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  tokens             UserInvitationToken[]
+  notificationOutbox NotificationOutbox[]
+
+  @@index([status, createdAt])
+  @@index([createdByUserId, createdAt])
+}
+
+model UserInvitationToken {
+  id            String    @id @default(cuid())
+  invitationId  String
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  invalidatedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  invitation UserInvitation @relation(fields: [invitationId], references: [id], onDelete: Restrict)
+
+  @@index([invitationId, expiresAt])
+  @@index([expiresAt])
+}
+
 model NotificationOutbox {
   id                        String                   @id @default(cuid())
   kind                      NotificationOutboxKind
-  userId                    String
+  userId                    String?
+  invitationId              String?
   destinationAddress        String?
-  emailVersionSnapshot      Int
+  emailVersionSnapshot      Int?
   credentialVersionSnapshot Int?
   status                    NotificationOutboxStatus @default(PENDING)
   attemptCount              Int                      @default(0)
@@ -320,10 +365,12 @@ model NotificationOutbox {
   terminalAt                DateTime?
   lastErrorCode             String?
 
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user       User?           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  invitation UserInvitation? @relation(fields: [invitationId], references: [id], onDelete: Restrict)
 
   @@index([status, nextAttemptAt])
   @@index([userId, createdAt])
+  @@index([invitationId, createdAt])
   @@index([leaseUntil])
 }
 
@@ -403,13 +450,13 @@ model IdentityAuditLog {
   id           String              @id @default(cuid())
   action       IdentityAuditAction
   actorUserId  String?
-  targetUserId String
+  targetUserId String?
   beforeState  Json?
   afterState   Json?
   createdAt    DateTime            @default(now())
 
   actorUser  User? @relation("IdentityAuditActorUser", fields: [actorUserId], references: [id], onDelete: Restrict)
-  targetUser User  @relation("IdentityAuditTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
+  targetUser User? @relation("IdentityAuditTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
 
   @@index([actorUserId, createdAt])
   @@index([targetUserId, createdAt])

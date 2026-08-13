@@ -9,6 +9,7 @@ import {
   type EmailVerificationDelivery,
   type PasswordRecoveryDelivery,
   type PasswordResetCompletedDelivery,
+  type UserInvitationDelivery,
 } from "../application/email-notifier";
 
 @Injectable()
@@ -87,6 +88,26 @@ export class SmtpEmailNotifier implements EmailNotifier {
           "Your Lotus BRAIN password was reset successfully.",
           "",
           "If you did not make this change, contact your operator or support immediately.",
+        ].join("\n"),
+      });
+    } catch (error: unknown) {
+      throw new NotificationDeliveryError(this.classifyError(error));
+    }
+  }
+
+  async sendUserInvitation(delivery: UserInvitationDelivery): Promise<void> {
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to: delivery.destinationAddress,
+        subject: "You have been invited to Lotus BRAIN",
+        text: [
+          "You have been invited to create your Lotus BRAIN account.",
+          "",
+          delivery.invitationUrl,
+          "",
+          `This link expires at ${delivery.expiresAt.toISOString()}.`,
+          "If you were not expecting this invitation, you can ignore this email.",
         ].join("\n"),
       });
     } catch (error: unknown) {

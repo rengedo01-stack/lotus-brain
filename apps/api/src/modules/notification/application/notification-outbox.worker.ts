@@ -1,14 +1,15 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "node:crypto";
 import type { EnvironmentVariables } from "../../../config/environment";
-import { makePasswordRecoveryUrl, makeVerificationUrl } from "../notification.url";
+import { makePasswordRecoveryUrl, makeUserInvitationUrl, makeVerificationUrl } from "../notification.url";
 import {
   EMAIL_VERIFICATION_TOKEN_TTL_MS,
   NOTIFICATION_IDLE_POLL_MS,
   NOTIFICATION_LEASE_MS,
   NOTIFICATION_MAX_ATTEMPTS,
   PASSWORD_RECOVERY_TOKEN_TTL_MS,
+  USER_INVITATION_TOKEN_TTL_MS,
 } from "../notification.constants";
 import { EMAIL_NOTIFIER, type EmailNotifier, notificationErrorCode } from "./email-notifier";
 import {
@@ -16,6 +17,11 @@ import {
   type NotificationOutboxClaim,
   type RecoveryChannelRepository,
 } from "./recovery-channel.repository";
+import {
+  USER_INVITATION_REPOSITORY,
+  type UserInvitationOutboxClaim,
+  type UserInvitationRepository,
+} from "./user-invitation.repository";
 
 @Injectable()
 export class NotificationOutboxWorker {
@@ -29,6 +35,9 @@ export class NotificationOutboxWorker {
     @Inject(EMAIL_NOTIFIER)
     private readonly notifier: EmailNotifier,
     private readonly configService: ConfigService<EnvironmentVariables, true>,
+    @Optional()
+    @Inject(USER_INVITATION_REPOSITORY)
+    private readonly userInvitationRepository?: UserInvitationRepository,
   ) {}
 
   stop(): void {
@@ -49,8 +58,15 @@ export class NotificationOutboxWorker {
         ? this.repository.claimDueNotification(this.workerId, now, leaseUntil)
         : this.repository.claimDueEmailVerification(this.workerId, now, leaseUntil)
     );
-    if (claim === null) return false;
+    if (claim !== null) return this.processRecoveryChannelClaim(claim);
+    if (this.userInvitationRepository === undefined) return false;
 
+    const invitationClaim = await this.userInvitationRepository.claimDueUserInvitation(this.workerId, now, leaseUntil);
+    if (invitationClaim === null) return false;
+    return this.processUserInvitationClaim(invitationClaim);
+  }
+
+  private async processRecoveryChannelClaim(claim: NotificationOutboxClaim): Promise<boolean> {
     try {
       if (claim.kind === "PASSWORD_RECOVERY") {
         const recoveryDelivery = await this.repository.preparePasswordRecoveryDelivery(
@@ -97,16 +113,50 @@ export class NotificationOutboxWorker {
       await this.repository.markEmailVerificationSent(claim.id, this.workerId, new Date());
     } catch (error: unknown) {
       const code = notificationErrorCode(error);
-      const nextAttemptAt = this.nextAttemptAt(claim, new Date());
+      const nextAttemptAt = this.nextAttemptAt(claim.attemptCount, new Date());
       await this.repository.markEmailVerificationFailed(claim, this.workerId, new Date(), code, nextAttemptAt);
       this.logger.warn(`Notification delivery deferred with ${code}.`);
     }
     return true;
   }
 
-  private nextAttemptAt(claim: NotificationOutboxClaim, now: Date): Date | null {
-    if (claim.attemptCount >= NOTIFICATION_MAX_ATTEMPTS) return null;
-    const exponentialBackoffMs = 1_000 * 2 ** Math.max(0, claim.attemptCount - 1);
+  private async processUserInvitationClaim(claim: UserInvitationOutboxClaim): Promise<boolean> {
+    if (this.userInvitationRepository === undefined) return false;
+    try {
+      const delivery = await this.userInvitationRepository.prepareUserInvitationDelivery(
+        claim,
+        this.workerId,
+        new Date(),
+        new Date(Date.now() + USER_INVITATION_TOKEN_TTL_MS),
+      );
+      if (delivery === null) return true;
+      await this.notifier.sendUserInvitation({
+        destinationAddress: delivery.destinationAddress,
+        expiresAt: delivery.expiresAt,
+        invitationUrl: makeUserInvitationUrl(
+          this.configService.get("PUBLIC_WEB_BASE_URL", { infer: true }),
+          delivery.rawToken,
+        ),
+      });
+      await this.userInvitationRepository.markUserInvitationSent(claim.id, this.workerId, new Date());
+    } catch (error: unknown) {
+      const code = notificationErrorCode(error);
+      const nextAttemptAt = this.nextAttemptAt(claim.attemptCount, new Date());
+      await this.userInvitationRepository.markUserInvitationFailed(
+        claim,
+        this.workerId,
+        new Date(),
+        code,
+        nextAttemptAt,
+      );
+      this.logger.warn(`Invitation delivery deferred with ${code}.`);
+    }
+    return true;
+  }
+
+  private nextAttemptAt(attemptCount: number, now: Date): Date | null {
+    if (attemptCount >= NOTIFICATION_MAX_ATTEMPTS) return null;
+    const exponentialBackoffMs = 1_000 * 2 ** Math.max(0, attemptCount - 1);
     const jitterMs = Math.floor(Math.random() * 250);
     return new Date(now.getTime() + exponentialBackoffMs + jitterMs);
   }
