@@ -73,6 +73,7 @@ import { NotificationModule } from "./modules/notification/notification.module";
               "req.body.verificationToken",
               "req.body.resetToken",
               "req.body.recoveryToken",
+              "req.body.invitationToken",
               "req.body.csrfToken",
               "req.body.sessionToken",
               "SMTP_PASSWORD",

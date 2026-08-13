@@ -17,6 +17,13 @@ const nextConfig: NextConfig = {
           { key: "Referrer-Policy", value: "no-referrer" },
         ],
       },
+      {
+        source: "/accept-invitation",
+        headers: [
+          { key: "Cache-Control", value: "no-store" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+        ],
+      },
     ];
   },
 };
