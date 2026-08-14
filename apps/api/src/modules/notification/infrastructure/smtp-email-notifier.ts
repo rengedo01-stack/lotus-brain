@@ -9,6 +9,7 @@ import {
   type EmailVerificationDelivery,
   type PasswordRecoveryDelivery,
   type PasswordResetCompletedDelivery,
+  type SecurityNotificationDelivery,
   type UserInvitationDelivery,
 } from "../application/email-notifier";
 
@@ -112,6 +113,45 @@ export class SmtpEmailNotifier implements EmailNotifier {
       });
     } catch (error: unknown) {
       throw new NotificationDeliveryError(this.classifyError(error));
+    }
+  }
+
+  async sendSecurityNotification(delivery: SecurityNotificationDelivery): Promise<void> {
+    const content = this.securityNotificationContent(delivery.kind);
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to: delivery.destinationAddress,
+        subject: content.subject,
+        text: content.text,
+      });
+    } catch (error: unknown) {
+      throw new NotificationDeliveryError(this.classifyError(error));
+    }
+  }
+
+  private securityNotificationContent(kind: SecurityNotificationDelivery["kind"]): { subject: string; text: string } {
+    switch (kind) {
+      case "PASSKEY_REGISTERED":
+        return {
+          subject: "A passkey was added to your Lotus BRAIN account",
+          text: "A passkey was registered for your Lotus BRAIN account. If you did not make this change, contact your operator or support immediately.",
+        };
+      case "PASSKEY_MFA_ENABLED":
+        return {
+          subject: "Passkey MFA was enabled for your Lotus BRAIN account",
+          text: "Password plus passkey MFA was enabled for your Lotus BRAIN account. Existing sessions were signed out.",
+        };
+      case "PASSKEY_MFA_DISABLED":
+        return {
+          subject: "Passkey MFA was disabled for your Lotus BRAIN account",
+          text: "Password plus passkey MFA was disabled for your Lotus BRAIN account. Existing sessions were signed out.",
+        };
+      case "AUTHENTICATORS_RESET_BY_RECOVERY":
+        return {
+          subject: "Your Lotus BRAIN passkeys and MFA were reset",
+          text: "Password recovery reset passkey MFA and revoked all registered passkeys. If you did not make this change, contact your operator or support immediately.",
+        };
     }
   }
 

@@ -26,7 +26,7 @@ import { Public } from "../decorators/public.decorator";
 import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
 import { LoginDto } from "./dto/login.dto";
 import type { EnvironmentVariables } from "../../../config/environment";
-import { makeSessionCookieName } from "../auth.utils";
+import { makeMfaPreauthCookieName, makeSessionCookieName } from "../auth.utils";
 import type { AuthenticatedRequest, LoginResponse } from "../auth.types";
 import { ChangePasswordDto } from "./dto/change-password.dto";
 
@@ -64,13 +64,26 @@ export class AuthController {
         userAgent: request.headers["user-agent"] ?? null,
       });
       const isProduction = this.configService.get("NODE_ENV", { infer: true }) === "production";
+      response.setHeader("Cache-Control", "no-store");
+      if (result.status === "MFA_REQUIRED") {
+        response.cookie(makeMfaPreauthCookieName(isProduction), result.preAuthToken, {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: isProduction,
+          path: "/",
+        });
+        return {
+          status: "MFA_REQUIRED" as const,
+          options: result.options,
+          preAuthCsrfToken: result.preAuthCsrfToken,
+        };
+      }
       response.cookie(makeSessionCookieName(isProduction), result.sessionToken, {
         httpOnly: true,
         sameSite: "lax",
         secure: isProduction,
         path: "/",
       });
-      response.setHeader("Cache-Control", "no-store");
       return { user: result.user, csrfToken: result.csrfToken };
     } catch (error: unknown) {
       if (error instanceof AuthInvalidCredentialsError) throw new UnauthorizedException(error.message);

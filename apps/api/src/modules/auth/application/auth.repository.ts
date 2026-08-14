@@ -5,18 +5,21 @@ export type AuthUserView = Pick<
   "id" | "email" | "displayName" | "status" | "lastLoginAt" | "createdAt" | "updatedAt"
 >;
 
-export type AuthSessionUserView = AuthUserView & Pick<User, "deletedAt" | "credentialVersion">;
+export type AuthSessionUserView = AuthUserView & Pick<User, "deletedAt" | "credentialVersion" | "authenticationPolicyVersion">;
 
-export type AuthLoginUserView = AuthUserView & Pick<User, "deletedAt" | "credentialVersion">;
+export type AuthLoginUserView = AuthUserView & Pick<
+  User,
+  "deletedAt" | "credentialVersion" | "authenticationPolicyVersion" | "passkeyMfaEnabledAt"
+>;
 
 export type AuthPasswordCredentialView = Pick<
   User,
-  "id" | "passwordHash" | "credentialVersion" | "status" | "deletedAt"
+  "id" | "passwordHash" | "credentialVersion" | "authenticationPolicyVersion" | "status" | "deletedAt"
 >;
 
 export type AuthSessionView = Pick<
   IdentitySession,
-  "id" | "userId" | "credentialVersion" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
+  "id" | "userId" | "credentialVersion" | "authenticationPolicyVersion" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
 >;
 
 export type LoginInput = {
@@ -48,6 +51,7 @@ export interface AuthRepository {
   createSessionAndMarkUserLogin(input: {
     userId: string;
     credentialVersion: number;
+    authenticationPolicyVersion: number;
     tokenHash: string;
     csrfTokenHash: string;
     expiresAt: Date;

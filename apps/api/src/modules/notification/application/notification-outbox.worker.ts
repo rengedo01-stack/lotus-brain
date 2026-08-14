@@ -92,6 +92,19 @@ export class NotificationOutboxWorker {
         );
         if (completedDelivery === null) return true;
         await this.notifier.sendPasswordResetCompleted(completedDelivery);
+      } else if (
+        claim.kind === "PASSKEY_REGISTERED" ||
+        claim.kind === "PASSKEY_MFA_ENABLED" ||
+        claim.kind === "PASSKEY_MFA_DISABLED" ||
+        claim.kind === "AUTHENTICATORS_RESET_BY_RECOVERY"
+      ) {
+        const delivery = await this.repository.prepareSecurityNotificationDelivery(
+          claim,
+          this.workerId,
+          new Date(),
+        );
+        if (delivery === null) return true;
+        await this.notifier.sendSecurityNotification(delivery);
       } else {
         const delivery = await this.repository.prepareEmailVerificationDelivery(
           claim,

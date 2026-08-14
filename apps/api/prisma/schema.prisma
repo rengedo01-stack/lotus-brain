@@ -49,6 +49,9 @@ enum IdentityAuditAction {
   PASSKEY_REGISTERED
   PASSKEY_RENAMED
   PASSKEY_REVOKED
+  PASSKEY_MFA_ENABLED
+  PASSKEY_MFA_DISABLED
+  PASSKEYS_RESET_BY_RECOVERY
 }
 
 enum NotificationOutboxKind {
@@ -56,6 +59,15 @@ enum NotificationOutboxKind {
   PASSWORD_RECOVERY
   PASSWORD_RESET_COMPLETED
   USER_INVITATION
+  PASSKEY_REGISTERED
+  PASSKEY_MFA_ENABLED
+  PASSKEY_MFA_DISABLED
+  AUTHENTICATORS_RESET_BY_RECOVERY
+}
+
+enum WebAuthnStepUpPurpose {
+  ENABLE_MFA
+  DISABLE_MFA
 }
 
 enum NotificationOutboxStatus {
@@ -238,18 +250,20 @@ model Supplier {
 }
 
 model User {
-  id                       String     @id @default(cuid())
-  email                    String     @unique
-  displayName              String
-  passwordHash             String
-  credentialVersion        Int        @default(1)
-  emailVerifiedAt          DateTime?
-  emailVerificationVersion Int        @default(1)
-  status                   UserStatus @default(ACTIVE)
-  lastLoginAt              DateTime?
-  createdAt                DateTime   @default(now())
-  updatedAt                DateTime   @updatedAt
-  deletedAt                DateTime?
+  id                          String     @id @default(cuid())
+  email                       String     @unique
+  displayName                 String
+  passwordHash                String
+  credentialVersion           Int        @default(1)
+  authenticationPolicyVersion Int        @default(1)
+  passkeyMfaEnabledAt         DateTime?
+  emailVerifiedAt             DateTime?
+  emailVerificationVersion    Int        @default(1)
+  status                      UserStatus @default(ACTIVE)
+  lastLoginAt                 DateTime?
+  createdAt                   DateTime   @default(now())
+  updatedAt                   DateTime   @updatedAt
+  deletedAt                   DateTime?
 
   sessions                       IdentitySession[]
   userRoles                      UserRole[]
@@ -263,26 +277,30 @@ model User {
   createdInvitations             UserInvitation[]                @relation("UserInvitationCreatedBy")
   webAuthnCredentials            WebAuthnCredential[]
   webAuthnRegistrationChallenges WebAuthnRegistrationChallenge[]
+  webAuthnStepUpChallenges       WebAuthnStepUpChallenge[]
+  passkeyMfaLoginTransactions    PasskeyMfaLoginTransaction[]
 
   @@index([status, deletedAt])
 }
 
 model IdentitySession {
-  id                String    @id @default(cuid())
-  userId            String
-  tokenHash         String    @unique
-  csrfTokenHash     String    @unique
-  credentialVersion Int
-  expiresAt         DateTime
-  revokedAt         DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  lastSeenAt        DateTime?
-  userAgent         String?
-  ipAddress         String?
+  id                          String    @id @default(cuid())
+  userId                      String
+  tokenHash                   String    @unique
+  csrfTokenHash               String    @unique
+  credentialVersion           Int
+  authenticationPolicyVersion Int       @default(1)
+  expiresAt                   DateTime
+  revokedAt                   DateTime?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+  lastSeenAt                  DateTime?
+  userAgent                   String?
+  ipAddress                   String?
 
   user                           User                            @relation(fields: [userId], references: [id], onDelete: Restrict)
   webAuthnRegistrationChallenges WebAuthnRegistrationChallenge[]
+  webAuthnStepUpChallenges       WebAuthnStepUpChallenge[]
 
   @@index([userId, revokedAt, expiresAt])
   @@index([expiresAt, revokedAt])
@@ -389,6 +407,44 @@ model WebAuthnRegistrationChallenge {
   identitySession IdentitySession @relation(fields: [identitySessionId], references: [id], onDelete: Restrict)
 
   @@index([userId, identitySessionId, expiresAt])
+  @@index([expiresAt])
+}
+
+model WebAuthnStepUpChallenge {
+  id                                  String                @id @default(cuid())
+  userId                              String
+  identitySessionId                   String
+  purpose                             WebAuthnStepUpPurpose
+  challengeHash                       String                @unique
+  credentialVersionSnapshot           Int
+  authenticationPolicyVersionSnapshot Int
+  expiresAt                           DateTime
+  consumedAt                          DateTime?
+  invalidatedAt                       DateTime?
+  createdAt                           DateTime              @default(now())
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  identitySession IdentitySession @relation(fields: [identitySessionId], references: [id], onDelete: Restrict)
+
+  @@index([userId, identitySessionId, expiresAt])
+  @@index([expiresAt])
+}
+
+model PasskeyMfaLoginTransaction {
+  id                                  String    @id @default(cuid())
+  userId                              String
+  transactionTokenHash                String    @unique
+  csrfTokenHash                       String    @unique
+  challengeHash                       String    @unique
+  credentialVersionSnapshot           Int
+  authenticationPolicyVersionSnapshot Int
+  expiresAt                           DateTime
+  consumedAt                          DateTime?
+  createdAt                           DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, expiresAt])
   @@index([expiresAt])
 }
 

@@ -28,6 +28,7 @@ const sessionUserSelect = {
   ...userSelect,
   deletedAt: true,
   credentialVersion: true,
+  authenticationPolicyVersion: true,
 } as const;
 
 const sessionSelect = {
@@ -37,6 +38,7 @@ const sessionSelect = {
   revokedAt: true,
   csrfTokenHash: true,
   credentialVersion: true,
+  authenticationPolicyVersion: true,
   lastSeenAt: true,
 } as const;
 
@@ -47,14 +49,28 @@ export class PrismaAuthRepository implements AuthRepository {
   async findUserByEmail(email: string): Promise<(AuthLoginUserView & { passwordHash: string }) | null> {
     return this.prisma.user.findUnique({
       where: { email: normalizeEmail(email) },
-      select: { ...userSelect, passwordHash: true, deletedAt: true, credentialVersion: true },
+      select: {
+        ...userSelect,
+        passwordHash: true,
+        deletedAt: true,
+        credentialVersion: true,
+        authenticationPolicyVersion: true,
+        passkeyMfaEnabledAt: true,
+      },
     });
   }
 
   async findUserCredentialById(userId: string): Promise<AuthPasswordCredentialView | null> {
     return this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, passwordHash: true, credentialVersion: true, status: true, deletedAt: true },
+      select: {
+        id: true,
+        passwordHash: true,
+        credentialVersion: true,
+        authenticationPolicyVersion: true,
+        status: true,
+        deletedAt: true,
+      },
     });
   }
 
@@ -80,6 +96,7 @@ export class PrismaAuthRepository implements AuthRepository {
   async createSessionAndMarkUserLogin(input: {
     userId: string;
     credentialVersion: number;
+    authenticationPolicyVersion: number;
     tokenHash: string;
     csrfTokenHash: string;
     expiresAt: Date;
@@ -93,10 +110,11 @@ export class PrismaAuthRepository implements AuthRepository {
       const lockedUsers = await transaction.$queryRaw<Array<{
         id: string;
         credentialVersion: number;
+        authenticationPolicyVersion: number;
         status: "ACTIVE" | "DISABLED" | "LOCKED";
         deletedAt: Date | null;
       }>>(Prisma.sql`
-        SELECT "id", "credentialVersion", "status", "deletedAt"
+        SELECT "id", "credentialVersion", "authenticationPolicyVersion", "status", "deletedAt"
         FROM "User"
         WHERE "id" = ${input.userId}
         FOR UPDATE
@@ -107,6 +125,7 @@ export class PrismaAuthRepository implements AuthRepository {
         user.status !== "ACTIVE" ||
         user.deletedAt !== null ||
         user.credentialVersion !== input.credentialVersion
+        || user.authenticationPolicyVersion !== input.authenticationPolicyVersion
       ) {
         throw new AuthInvalidCredentialsError("Invalid email or password.");
       }
@@ -117,6 +136,7 @@ export class PrismaAuthRepository implements AuthRepository {
           tokenHash: input.tokenHash,
           csrfTokenHash: input.csrfTokenHash,
           credentialVersion: input.credentialVersion,
+          authenticationPolicyVersion: input.authenticationPolicyVersion,
           expiresAt: input.expiresAt,
           userAgent: input.userAgent ?? null,
           ipAddress: input.ipAddress ?? null,

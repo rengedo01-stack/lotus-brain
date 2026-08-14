@@ -4,6 +4,7 @@ import type {
   EmailVerificationDelivery,
   PasswordRecoveryDelivery,
   PasswordResetCompletedDelivery,
+  SecurityNotificationDelivery,
   UserInvitationDelivery,
 } from "../application/email-notifier";
 
@@ -17,6 +18,7 @@ export class InMemoryEmailNotifier implements EmailNotifier {
   readonly passwordRecoveryDeliveries: PasswordRecoveryDelivery[] = [];
   readonly passwordResetCompletedDeliveries: PasswordResetCompletedDelivery[] = [];
   readonly userInvitationDeliveries: UserInvitationDelivery[] = [];
+  readonly securityNotificationDeliveries: SecurityNotificationDelivery[] = [];
 
   async sendEmailVerification(delivery: EmailVerificationDelivery): Promise<void> {
     this.deliveries.push({ ...delivery });
@@ -32,5 +34,9 @@ export class InMemoryEmailNotifier implements EmailNotifier {
 
   async sendUserInvitation(delivery: UserInvitationDelivery): Promise<void> {
     this.userInvitationDeliveries.push({ ...delivery });
+  }
+
+  async sendSecurityNotification(delivery: SecurityNotificationDelivery): Promise<void> {
+    this.securityNotificationDeliveries.push({ ...delivery });
   }
 }

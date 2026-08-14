@@ -1,5 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
-import { SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_INSECURE } from "./auth.constants";
+import {
+  MFA_PREAUTH_COOKIE_NAME,
+  MFA_PREAUTH_COOKIE_NAME_INSECURE,
+  SESSION_COOKIE_NAME,
+  SESSION_COOKIE_NAME_INSECURE,
+} from "./auth.constants";
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -19,4 +24,8 @@ export function secondsFromDays(days: number): number {
 
 export function makeSessionCookieName(isProduction: boolean): string {
   return isProduction ? SESSION_COOKIE_NAME : SESSION_COOKIE_NAME_INSECURE;
+}
+
+export function makeMfaPreauthCookieName(isProduction: boolean): string {
+  return isProduction ? MFA_PREAUTH_COOKIE_NAME : MFA_PREAUTH_COOKIE_NAME_INSECURE;
 }

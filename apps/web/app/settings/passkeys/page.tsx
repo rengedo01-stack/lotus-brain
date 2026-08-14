@@ -1,6 +1,6 @@
 "use client";
 
-import { startRegistration } from "@simplewebauthn/browser";
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { FormEvent, useEffect, useState } from "react";
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api/v1";
@@ -16,16 +16,24 @@ type Passkey = {
   transports: string[];
 };
 
-type PageState = "ready" | "loading" | "registering" | "complete" | "error";
+type MfaStatus = {
+  activePasskeyCount: number;
+  enabled: boolean;
+  recoveryEmailVerified: boolean;
+};
+
+type PageState = "ready" | "loading" | "registering" | "mfa" | "complete" | "error";
 
 export default function PasskeysSettingsPage() {
   const [passkeys, setPasskeys] = useState<Passkey[]>([]);
   const [state, setState] = useState<PageState>("loading");
   const [message, setMessage] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
+  const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
 
   useEffect(() => {
     void refreshPasskeys();
+    void refreshMfaStatus();
   }, []);
 
   async function csrfToken(): Promise<string> {
@@ -56,6 +64,27 @@ export default function PasskeysSettingsPage() {
     } catch {
       setMessage("パスキーを読み込めませんでした。ログイン状態を確認してください。");
       setState("error");
+    }
+  }
+
+  async function refreshMfaStatus() {
+    try {
+      const response = await fetch(`${apiBaseUrl}/auth/mfa/passkey`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("MFA status could not be loaded.");
+      const payload = await response.json() as MfaStatus;
+      if (
+        typeof payload.enabled !== "boolean" ||
+        typeof payload.activePasskeyCount !== "number" ||
+        typeof payload.recoveryEmailVerified !== "boolean"
+      ) {
+        throw new Error("MFA status could not be loaded.");
+      }
+      setMfaStatus(payload);
+    } catch {
+      setMfaStatus(null);
     }
   }
 
@@ -144,12 +173,48 @@ export default function PasskeysSettingsPage() {
     }
   }
 
+  async function changeMfa(event: FormEvent<HTMLFormElement>, action: "enable" | "disable") {
+    event.preventDefault();
+    const currentPassword = new FormData(event.currentTarget).get("currentPassword");
+    if (typeof currentPassword !== "string" || currentPassword.length === 0) return;
+    setMessage(null);
+    setState("mfa");
+    try {
+      const csrf = await csrfToken();
+      const optionsResponse = await fetch(`${apiBaseUrl}/auth/mfa/passkey/${action}/options`, {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "content-type": "application/json", "x-csrf-token": csrf },
+        body: JSON.stringify({ currentPassword }),
+      });
+      if (!optionsResponse.ok) throw new Error("MFA change could not be started.");
+      const optionsJSON = await optionsResponse.json();
+      const assertion = await startAuthentication({ optionsJSON });
+      const verifyResponse = await fetch(`${apiBaseUrl}/auth/mfa/passkey/${action}/verify`, {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "content-type": "application/json", "x-csrf-token": csrf },
+        body: JSON.stringify({ response: assertion }),
+      });
+      if (!verifyResponse.ok) throw new Error("MFA change could not be verified.");
+      setState("complete");
+      setMessage(action === "enable"
+        ? "パスキーMFAを有効にしました。すべてのセッションが終了したため、もう一度ログインしてください。"
+        : "パスキーMFAを無効にしました。すべてのセッションが終了したため、もう一度ログインしてください。");
+    } catch {
+      setState("error");
+      setMessage("MFA設定を変更できませんでした。パスワードとパスキーを確認して再試行してください。");
+    }
+  }
+
   return (
     <main className="min-h-screen bg-gray-100 p-8">
       <section className="mx-auto max-w-2xl rounded-xl bg-white p-8 shadow">
         <h1 className="text-2xl font-bold">パスキー</h1>
         <p className="mt-2 text-sm text-gray-700">
-          パスキーの登録と管理を行えます。ログイン方法はこの画面では変更されません。
+          パスキーの登録と管理、およびパスワード＋パスキーMFAの設定を行えます。
         </p>
 
         <form className="mt-6 space-y-3 border-t pt-6" onSubmit={addPasskey}>
@@ -175,6 +240,56 @@ export default function PasskeysSettingsPage() {
         </form>
 
         {message !== null && <p className="mt-4 text-sm text-gray-800" role="status">{message}</p>}
+
+        <section className="mt-8 border-t pt-6">
+          <h2 className="text-lg font-semibold">パスキーMFA</h2>
+          {mfaStatus === null ? (
+            <p className="mt-3 text-sm text-gray-700">MFAの状態を読み込めませんでした。</p>
+          ) : (
+            <>
+              <p className="mt-3 text-sm text-gray-700">状態: {mfaStatus.enabled ? "有効" : "無効"}</p>
+              <p className="mt-1 text-sm text-gray-700">有効なパスキー: {mfaStatus.activePasskeyCount} 件</p>
+              <p className="mt-1 text-sm text-gray-700">復旧用メール: {mfaStatus.recoveryEmailVerified ? "確認済み" : "未確認"}</p>
+              {!mfaStatus.enabled ? (
+                <form className="mt-4 space-y-3" onSubmit={(event) => void changeMfa(event, "enable")}>
+                  <p className="text-sm text-gray-700">有効化には、確認済みの復旧用メール、1件以上の有効なパスキー、現在のパスワード、パスキー確認が必要です。</p>
+                  <label className="block">
+                    <span className="block text-sm font-medium">現在のパスワード</span>
+                    <input
+                      autoComplete="current-password"
+                      className="mt-1 w-full rounded border border-gray-300 px-3 py-2"
+                      disabled={state === "mfa"}
+                      name="currentPassword"
+                      required
+                      type="password"
+                    />
+                  </label>
+                  <button className="rounded bg-blue-700 px-4 py-2 font-medium text-white disabled:bg-gray-400" disabled={state === "mfa"} type="submit">
+                    {state === "mfa" ? "確認中…" : "パスキーMFAを有効化"}
+                  </button>
+                </form>
+              ) : (
+                <form className="mt-4 space-y-3" onSubmit={(event) => void changeMfa(event, "disable")}>
+                  <p className="text-sm text-gray-700">無効化にも、現在のパスワードとパスキー確認が必要です。</p>
+                  <label className="block">
+                    <span className="block text-sm font-medium">現在のパスワード</span>
+                    <input
+                      autoComplete="current-password"
+                      className="mt-1 w-full rounded border border-gray-300 px-3 py-2"
+                      disabled={state === "mfa"}
+                      name="currentPassword"
+                      required
+                      type="password"
+                    />
+                  </label>
+                  <button className="rounded bg-red-700 px-4 py-2 font-medium text-white disabled:bg-gray-400" disabled={state === "mfa"} type="submit">
+                    {state === "mfa" ? "確認中…" : "パスキーMFAを無効化"}
+                  </button>
+                </form>
+              )}
+            </>
+          )}
+        </section>
 
         <section className="mt-8 border-t pt-6">
           <h2 className="text-lg font-semibold">登録済みパスキー</h2>

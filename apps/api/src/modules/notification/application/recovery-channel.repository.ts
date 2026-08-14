@@ -4,7 +4,14 @@ export type NotificationOutboxClaim = {
   destinationAddress: string | null;
   emailVersionSnapshot: number;
   id: string;
-  kind: "EMAIL_VERIFICATION" | "PASSWORD_RECOVERY" | "PASSWORD_RESET_COMPLETED";
+  kind:
+    | "EMAIL_VERIFICATION"
+    | "PASSWORD_RECOVERY"
+    | "PASSWORD_RESET_COMPLETED"
+    | "PASSKEY_REGISTERED"
+    | "PASSKEY_MFA_ENABLED"
+    | "PASSKEY_MFA_DISABLED"
+    | "AUTHENTICATORS_RESET_BY_RECOVERY";
   userId: string;
 };
 
@@ -22,6 +29,11 @@ export type PreparedPasswordRecoveryDelivery = {
 
 export type PreparedPasswordResetCompletedDelivery = {
   destinationAddress: string;
+};
+
+export type PreparedSecurityNotificationDelivery = {
+  destinationAddress: string;
+  kind: "PASSKEY_REGISTERED" | "PASSKEY_MFA_ENABLED" | "PASSKEY_MFA_DISABLED" | "AUTHENTICATORS_RESET_BY_RECOVERY";
 };
 
 export type PasswordResetPreparation = {
@@ -57,6 +69,11 @@ export interface RecoveryChannelRepository {
     workerId: string,
     now: Date,
   ): Promise<PreparedPasswordResetCompletedDelivery | null>;
+  prepareSecurityNotificationDelivery(
+    claim: NotificationOutboxClaim,
+    workerId: string,
+    now: Date,
+  ): Promise<PreparedSecurityNotificationDelivery | null>;
   markEmailVerificationSent(outboxId: string, workerId: string, now: Date): Promise<void>;
   markEmailVerificationFailed(
     claim: NotificationOutboxClaim,
