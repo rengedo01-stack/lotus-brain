@@ -10,5 +10,6 @@ export type GrantSystemAdminResult =
 
 export interface AuthorizationRepository {
   hasAllPermissions(userId: string, permissions: readonly PermissionCode[]): Promise<boolean>;
+  listEffectivePermissions(userId: string): Promise<PermissionCode[]>;
   grantSystemAdminByEmail(email: string): Promise<GrantSystemAdminResult>;
 }

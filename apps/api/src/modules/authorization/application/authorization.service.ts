@@ -17,6 +17,10 @@ export class AuthorizationService {
     return this.repository.hasAllPermissions(userId, permissions);
   }
 
+  listEffectivePermissions(userId: string): Promise<PermissionCode[]> {
+    return this.repository.listEffectivePermissions(userId);
+  }
+
   grantSystemAdminByEmail(email: string): Promise<GrantSystemAdminResult> {
     return this.repository.grantSystemAdminByEmail(email);
   }

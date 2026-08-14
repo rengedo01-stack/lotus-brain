@@ -24,6 +24,7 @@ import {
 import { AuthConflictError, AuthInvalidCredentialsError, AuthValidationError } from "../auth.errors";
 import { Public } from "../decorators/public.decorator";
 import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
+import { AuthorizationService } from "../../authorization/application/authorization.service";
 import { LoginDto } from "./dto/login.dto";
 import type { EnvironmentVariables } from "../../../config/environment";
 import { makeMfaPreauthCookieName, makeSessionCookieName } from "../auth.utils";
@@ -38,6 +39,7 @@ export class AuthController {
     private readonly loginUseCase: LoginUseCase,
     private readonly changePasswordUseCase: ChangePasswordUseCase,
     private readonly getCurrentUserUseCase: GetCurrentUserUseCase,
+    private readonly authorizationService: AuthorizationService,
     private readonly rotateCsrfTokenUseCase: RotateCsrfTokenUseCase,
     private readonly logoutUseCase: LogoutUseCase,
   ) {}
@@ -131,6 +133,19 @@ export class AuthController {
   async me(@Req() request: AuthenticatedRequest) {
     if (request.authUser === undefined) throw new UnauthorizedException("Authentication required.");
     return { user: await this.getCurrentUserUseCase.execute(request.authUser.id) };
+  }
+
+  @Get("me/permissions")
+  @AuthenticatedOnly()
+  @ApiOperation({ summary: "Get the current authenticated user's effective permissions" })
+  @ApiCookieAuth()
+  async permissions(
+    @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    if (request.authUser === undefined) throw new UnauthorizedException("Authentication required.");
+    response.setHeader("Cache-Control", "no-store");
+    return { permissions: await this.authorizationService.listEffectivePermissions(request.authUser.id) };
   }
 
   @Get("csrf")

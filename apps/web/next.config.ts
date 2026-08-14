@@ -1,5 +1,10 @@
 import type { NextConfig } from "next";
 
+const publicApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+if (process.env.NODE_ENV === "production" && (typeof publicApiBaseUrl !== "string" || publicApiBaseUrl.length === 0)) {
+  throw new Error("NEXT_PUBLIC_API_BASE_URL must be configured for a production web build.");
+}
+
 const nextConfig: NextConfig = {
   async headers() {
     return [

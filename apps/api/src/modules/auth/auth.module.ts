@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { PrismaModule } from "../../prisma/prisma.module";
+import { AuthorizationModule } from "../authorization/authorization.module";
 import {
   LoginUseCase,
   LogoutUseCase,
@@ -23,7 +24,7 @@ import { PrismaPasskeyMfaRepository } from "./infrastructure/prisma-passkey-mfa.
 import { PasskeyMfaController, PasskeyMfaLoginController } from "./presentation/passkey-mfa.controller";
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, AuthorizationModule],
   controllers: [AuthController, PasskeyController, PasskeyMfaController, PasskeyMfaLoginController],
   providers: [
     LoginUseCase,

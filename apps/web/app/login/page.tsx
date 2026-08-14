@@ -1,9 +1,8 @@
 "use client";
 
 import { startAuthentication } from "@simplewebauthn/browser";
-import { FormEvent, useState } from "react";
-
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api/v1";
+import { FormEvent, useMemo, useState } from "react";
+import { createApiClient } from "@/lib/api-client";
 
 type LoginState = "ready" | "password" | "passkey" | "error";
 
@@ -23,6 +22,7 @@ function isMfaRequired(value: unknown): value is MfaRequiredLoginResponse {
 }
 
 export default function LoginPage() {
+  const api = useMemo(() => createApiClient(), []);
   const [state, setState] = useState<LoginState>("ready");
   const [message, setMessage] = useState<string | null>(null);
 
@@ -36,15 +36,11 @@ export default function LoginPage() {
     setState("password");
     setMessage(null);
     try {
-      const loginResponse = await fetch(`${apiBaseUrl}/auth/login`, {
+      const payload = await api.request<unknown>("/auth/login", {
         method: "POST",
-        credentials: "include",
-        cache: "no-store",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: { email, password },
+        csrf: "none",
       });
-      if (!loginResponse.ok) throw new Error("Invalid credentials.");
-      const payload = await loginResponse.json() as unknown;
       if (!isMfaRequired(payload)) {
         const authenticated = payload as AuthenticatedLoginResponse;
         if (typeof authenticated.csrfToken !== "string" || typeof authenticated.user?.email !== "string") {
@@ -58,19 +54,20 @@ export default function LoginPage() {
       // issued only a short-lived pre-auth cookie at this point.
       setState("passkey");
       const assertion = await startAuthentication({ optionsJSON: payload.options });
-      const verifyResponse = await fetch(`${apiBaseUrl}/auth/login/passkey/verify`, {
+      const authenticated = await api.request<unknown>("/auth/login/passkey/verify", {
         method: "POST",
-        credentials: "include",
-        cache: "no-store",
         headers: {
-          "content-type": "application/json",
           "x-csrf-token": payload.preAuthCsrfToken,
         },
-        body: JSON.stringify({ response: assertion }),
+        body: { response: assertion },
+        csrf: "none",
       });
-      if (!verifyResponse.ok) throw new Error("Passkey verification failed.");
-      const authenticated = await verifyResponse.json() as AuthenticatedLoginResponse;
-      if (typeof authenticated.csrfToken !== "string" || typeof authenticated.user?.email !== "string") {
+      if (
+        typeof authenticated !== "object" ||
+        authenticated === null ||
+        typeof (authenticated as AuthenticatedLoginResponse).csrfToken !== "string" ||
+        typeof (authenticated as AuthenticatedLoginResponse).user?.email !== "string"
+      ) {
         throw new Error("Invalid login response.");
       }
       window.location.assign("/");

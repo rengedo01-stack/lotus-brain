@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api/v1";
+import { createApiClient } from "@/lib/api-client";
 
 type VerificationState = "checking" | "verified" | "invalid";
 
 export default function VerifyEmailPage() {
+  const [api] = useState(createApiClient);
   const [state, setState] = useState<VerificationState>("checking");
   const hasStarted = useRef(false);
 
@@ -21,16 +21,15 @@ export default function VerifyEmailPage() {
       return;
     }
 
-    void fetch(`${apiBaseUrl}/auth/email/verification/confirm`, {
+    void api.request<unknown>("/auth/email/verification/confirm", {
       method: "POST",
-      headers: { "content-type": "application/json" },
       credentials: "omit",
-      cache: "no-store",
-      body: JSON.stringify({ token }),
+      body: { token },
+      csrf: "none",
     })
-      .then((response) => setState(response.ok ? "verified" : "invalid"))
+      .then(() => setState("verified"))
       .catch(() => setState("invalid"));
-  }, []);
+  }, [api]);
 
   return (
     <main className="min-h-screen bg-gray-100 p-8">
