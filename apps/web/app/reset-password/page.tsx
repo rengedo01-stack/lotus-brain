@@ -1,12 +1,12 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api/v1";
+import { ApiError, createApiClient } from "@/lib/api-client";
 
 type ResetState = "ready" | "submitting" | "complete" | "invalid" | "mismatch" | "policy";
 
 export default function ResetPasswordPage() {
+  const [api] = useState(createApiClient);
   const [token, setToken] = useState<string | null>(null);
   const [state, setState] = useState<ResetState>("ready");
   const hasReadFragment = useRef(false);
@@ -40,25 +40,22 @@ export default function ResetPasswordPage() {
 
     setState("submitting");
     try {
-      const response = await fetch(`${apiBaseUrl}/auth/password/recovery/reset`, {
+      await api.request<unknown>("/auth/password/recovery/reset", {
         method: "POST",
-        headers: { "content-type": "application/json" },
         credentials: "omit",
-        cache: "no-store",
-        body: JSON.stringify({ token, newPassword }),
+        body: { token, newPassword },
+        csrf: "none",
       });
-      if (response.ok) {
-        setToken(null);
-        event.currentTarget.reset();
-        setState("complete");
-      } else if (response.status === 422) {
+      setToken(null);
+      event.currentTarget.reset();
+      setState("complete");
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.kind === "validation") {
         setState("policy");
       } else {
         setToken(null);
         setState("invalid");
       }
-    } catch {
-      setState("invalid");
     }
   }
 

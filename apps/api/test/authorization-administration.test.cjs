@@ -138,6 +138,31 @@ test("permission reads expose only known registry entries with delegation metada
   assert.equal(ALL_PERMISSION_DEFINITIONS.find((item) => item.code === Permissions.AUTHORIZATION_MANAGE).customRoleAssignable, false);
 });
 
+test("effective permission reads query active role assignments for only the current user", async () => {
+  const calls = [];
+  const repository = new PrismaAuthorizationRepository({
+    permission: {
+      async findMany(input) {
+        calls.push(input);
+        return [{ code: Permissions.MASTER_READ }, { code: Permissions.PURCHASE_READ }];
+      },
+    },
+  });
+
+  const permissions = await repository.listEffectivePermissions("current-user");
+
+  assert.deepEqual(permissions, [Permissions.MASTER_READ, Permissions.PURCHASE_READ]);
+  assert.deepEqual(calls[0].where.rolePermissions, {
+    some: {
+      role: {
+        status: "ACTIVE",
+        userRoles: { some: { userId: "current-user" } },
+      },
+    },
+  });
+  assert.deepEqual(calls[0].orderBy, { code: "asc" });
+});
+
 test("administration routes use authorization permissions and actor identity comes only from the request", async () => {
   const calls = [];
   const controller = new AuthorizationAdministrationController({

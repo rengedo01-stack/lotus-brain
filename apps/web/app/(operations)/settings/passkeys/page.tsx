@@ -1,9 +1,8 @@
 "use client";
 
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
-import { FormEvent, useEffect, useState } from "react";
-
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api/v1";
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import { useOperationalApp } from "../../_components/operational-app";
 
 type Passkey = {
   backedUp: boolean | null;
@@ -25,39 +24,16 @@ type MfaStatus = {
 type PageState = "ready" | "loading" | "registering" | "mfa" | "complete" | "error";
 
 export default function PasskeysSettingsPage() {
+  const { api } = useOperationalApp();
   const [passkeys, setPasskeys] = useState<Passkey[]>([]);
   const [state, setState] = useState<PageState>("loading");
   const [message, setMessage] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
   const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
 
-  useEffect(() => {
-    void refreshPasskeys();
-    void refreshMfaStatus();
-  }, []);
-
-  async function csrfToken(): Promise<string> {
-    const response = await fetch(`${apiBaseUrl}/auth/csrf`, {
-      credentials: "include",
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error("Could not establish an authenticated session.");
-    const payload = await response.json() as { csrfToken?: unknown };
-    if (typeof payload.csrfToken !== "string" || payload.csrfToken.length === 0) {
-      throw new Error("Could not establish an authenticated session.");
-    }
-    return payload.csrfToken;
-  }
-
-  async function refreshPasskeys() {
-    setState("loading");
+  const loadPasskeys = useCallback(async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/auth/passkeys`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error("Passkeys could not be loaded.");
-      const payload = await response.json() as unknown;
+      const payload = await api.request<unknown>("/auth/passkeys");
       if (!Array.isArray(payload)) throw new Error("Passkeys could not be loaded.");
       setPasskeys(payload as Passkey[]);
       setState("ready");
@@ -65,16 +41,16 @@ export default function PasskeysSettingsPage() {
       setMessage("パスキーを読み込めませんでした。ログイン状態を確認してください。");
       setState("error");
     }
+  }, [api, setMessage, setPasskeys, setState]);
+
+  async function refreshPasskeys() {
+    setState("loading");
+    await loadPasskeys();
   }
 
-  async function refreshMfaStatus() {
+  const refreshMfaStatus = useCallback(async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/auth/mfa/passkey`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error("MFA status could not be loaded.");
-      const payload = await response.json() as MfaStatus;
+      const payload = await api.request<MfaStatus>("/auth/mfa/passkey");
       if (
         typeof payload.enabled !== "boolean" ||
         typeof payload.activePasskeyCount !== "number" ||
@@ -86,7 +62,14 @@ export default function PasskeysSettingsPage() {
     } catch {
       setMfaStatus(null);
     }
-  }
+  }, [api, setMfaStatus]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      void loadPasskeys();
+      void refreshMfaStatus();
+    });
+  }, [loadPasskeys, refreshMfaStatus]);
 
   async function addPasskey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -97,25 +80,15 @@ export default function PasskeysSettingsPage() {
     setMessage(null);
     setState("registering");
     try {
-      const csrf = await csrfToken();
-      const optionsResponse = await fetch(`${apiBaseUrl}/auth/passkeys/registration/options`, {
+      const optionsJSON = await api.request<Parameters<typeof startRegistration>[0]["optionsJSON"]>("/auth/passkeys/registration/options", {
         method: "POST",
-        credentials: "include",
-        cache: "no-store",
-        headers: { "content-type": "application/json", "x-csrf-token": csrf },
-        body: JSON.stringify({ currentPassword }),
+        body: { currentPassword },
       });
-      if (!optionsResponse.ok) throw new Error("Passkey registration could not be started.");
-      const optionsJSON = await optionsResponse.json();
       const response = await startRegistration({ optionsJSON });
-      const verificationResponse = await fetch(`${apiBaseUrl}/auth/passkeys/registration/verify`, {
+      await api.request<unknown>("/auth/passkeys/registration/verify", {
         method: "POST",
-        credentials: "include",
-        cache: "no-store",
-        headers: { "content-type": "application/json", "x-csrf-token": csrf },
-        body: JSON.stringify({ response }),
+        body: { response },
       });
-      if (!verificationResponse.ok) throw new Error("Passkey registration could not be verified.");
       formElement.reset();
       await refreshPasskeys();
       setMessage("パスキーを登録しました。パスワードログインは従来どおり利用できます。");
@@ -132,15 +105,10 @@ export default function PasskeysSettingsPage() {
     if (typeof displayName !== "string") return;
     setMessage(null);
     try {
-      const csrf = await csrfToken();
-      const response = await fetch(`${apiBaseUrl}/auth/passkeys/${encodeURIComponent(passkeyId)}`, {
+      await api.request<unknown>(`/auth/passkeys/${encodeURIComponent(passkeyId)}`, {
         method: "PATCH",
-        credentials: "include",
-        cache: "no-store",
-        headers: { "content-type": "application/json", "x-csrf-token": csrf },
-        body: JSON.stringify({ displayName }),
+        body: { displayName },
       });
-      if (!response.ok) throw new Error("Passkey could not be renamed.");
       await refreshPasskeys();
       setMessage("パスキー名を更新しました。");
     } catch {
@@ -155,15 +123,10 @@ export default function PasskeysSettingsPage() {
     if (typeof currentPassword !== "string" || currentPassword.length === 0) return;
     setMessage(null);
     try {
-      const csrf = await csrfToken();
-      const response = await fetch(`${apiBaseUrl}/auth/passkeys/${encodeURIComponent(passkeyId)}/revoke`, {
+      await api.request<unknown>(`/auth/passkeys/${encodeURIComponent(passkeyId)}/revoke`, {
         method: "POST",
-        credentials: "include",
-        cache: "no-store",
-        headers: { "content-type": "application/json", "x-csrf-token": csrf },
-        body: JSON.stringify({ currentPassword }),
+        body: { currentPassword },
       });
-      if (!response.ok) throw new Error("Passkey could not be revoked.");
       setRevokeTarget(null);
       await refreshPasskeys();
       setMessage("パスキーを無効化しました。パスワードログインは引き続き利用できます。");
@@ -180,25 +143,15 @@ export default function PasskeysSettingsPage() {
     setMessage(null);
     setState("mfa");
     try {
-      const csrf = await csrfToken();
-      const optionsResponse = await fetch(`${apiBaseUrl}/auth/mfa/passkey/${action}/options`, {
+      const optionsJSON = await api.request<Parameters<typeof startAuthentication>[0]["optionsJSON"]>(`/auth/mfa/passkey/${action}/options`, {
         method: "POST",
-        credentials: "include",
-        cache: "no-store",
-        headers: { "content-type": "application/json", "x-csrf-token": csrf },
-        body: JSON.stringify({ currentPassword }),
+        body: { currentPassword },
       });
-      if (!optionsResponse.ok) throw new Error("MFA change could not be started.");
-      const optionsJSON = await optionsResponse.json();
       const assertion = await startAuthentication({ optionsJSON });
-      const verifyResponse = await fetch(`${apiBaseUrl}/auth/mfa/passkey/${action}/verify`, {
+      await api.request<unknown>(`/auth/mfa/passkey/${action}/verify`, {
         method: "POST",
-        credentials: "include",
-        cache: "no-store",
-        headers: { "content-type": "application/json", "x-csrf-token": csrf },
-        body: JSON.stringify({ response: assertion }),
+        body: { response: assertion },
       });
-      if (!verifyResponse.ok) throw new Error("MFA change could not be verified.");
       setState("complete");
       setMessage(action === "enable"
         ? "パスキーMFAを有効にしました。すべてのセッションが終了したため、もう一度ログインしてください。"

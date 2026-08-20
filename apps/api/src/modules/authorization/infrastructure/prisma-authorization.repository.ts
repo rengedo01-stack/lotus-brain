@@ -75,6 +75,28 @@ export class PrismaAuthorizationRepository
     return grantedPermissions.length === permissions.length;
   }
 
+  async listEffectivePermissions(userId: string): Promise<PermissionCode[]> {
+    const permissions = await this.prisma.permission.findMany({
+      where: {
+        code: { in: [...ALL_PERMISSION_CODES] },
+        rolePermissions: {
+          some: {
+            role: {
+              status: "ACTIVE",
+              userRoles: { some: { userId } },
+            },
+          },
+        },
+      },
+      select: { code: true },
+      orderBy: { code: "asc" },
+    });
+
+    return permissions.flatMap((permission) => (
+      isKnownPermissionCode(permission.code) ? [permission.code] : []
+    ));
+  }
+
   async grantSystemAdminByEmail(inputEmail: string): Promise<GrantSystemAdminResult> {
     const email = normalizeEmail(inputEmail);
 

@@ -477,7 +477,29 @@ test("every existing business endpoint has the exact required permission", () =>
     );
   }
 
-  for (const methodName of ["me", "csrf", "logout"]) {
+  for (const methodName of ["me", "permissions", "csrf", "logout"]) {
     assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, AuthController.prototype[methodName]), true);
   }
+});
+
+test("current permission bootstrap derives permissions only from the authenticated session user", async () => {
+  const calls = [];
+  const controller = new AuthController(
+    { get: () => "development" },
+    {},
+    {},
+    {},
+    { async listEffectivePermissions(userId) { calls.push(userId); return [Permissions.MASTER_READ]; } },
+    {},
+    {},
+  );
+  const headers = [];
+  const response = { setHeader(name, value) { headers.push([name, value]); } };
+
+  const result = await controller.permissions({ authUser: { id: "user-from-session" } }, response);
+
+  assert.deepEqual(result, { permissions: [Permissions.MASTER_READ] });
+  assert.deepEqual(calls, ["user-from-session"]);
+  assert.deepEqual(headers, [["Cache-Control", "no-store"]]);
+  assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, AuthController.prototype.permissions), true);
 });
