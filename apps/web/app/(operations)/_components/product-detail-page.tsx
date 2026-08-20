@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api-client";
 import { formatOperationalDate, isProduct, productStatusLabel, type Product } from "@/lib/products";
+import { MasterNavigation } from "./master-ui";
 import { useOperationalApp } from "./operational-app";
 
 type DetailState =
@@ -13,7 +14,7 @@ type DetailState =
   | { status: "error"; message: string };
 
 export function ProductDetailPage({ productId }: Readonly<{ productId: string }>) {
-  const { api, refreshAuthentication } = useOperationalApp();
+  const { api, permissions, refreshAuthentication } = useOperationalApp();
   const [retryKey, setRetryKey] = useState(0);
   const [state, setState] = useState<DetailState>({ status: "loading" });
 
@@ -81,6 +82,7 @@ export function ProductDetailPage({ productId }: Readonly<{ productId: string }>
   const { product } = state;
   return (
     <section aria-labelledby="product-detail-title" className="max-w-3xl">
+      <MasterNavigation />
       <Link className="text-sm font-medium text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href="/master/products">← 商品一覧</Link>
       <div className="mt-5 rounded-xl bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -91,6 +93,16 @@ export function ProductDetailPage({ productId }: Readonly<{ productId: string }>
           <span className={product.status === "ACTIVE" ? "rounded-full bg-emerald-100 px-3 py-1 text-sm font-medium text-emerald-800" : "rounded-full bg-slate-200 px-3 py-1 text-sm font-medium text-slate-700"}>
             {productStatusLabel(product.status)}
           </span>
+        </div>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <Link className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/master/products/${encodeURIComponent(product.id)}/unit-conversions`}>
+            単位換算
+          </Link>
+          {permissions.has("master.write") && (
+            <Link className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/master/products/${encodeURIComponent(product.id)}/edit`}>
+              商品を編集
+            </Link>
+          )}
         </div>
         <dl className="mt-8 grid gap-x-8 gap-y-6 border-t border-slate-200 pt-6 sm:grid-cols-2">
           <DetailItem label="説明" value={product.description ?? "—"} />
