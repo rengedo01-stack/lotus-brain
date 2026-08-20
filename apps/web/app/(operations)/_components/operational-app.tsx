@@ -4,16 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { ApiError, type ApiClient, createApiClient, subscribeToApiSessionEvents } from "@/lib/api-client";
-
-type CurrentUser = {
-  createdAt: string;
-  displayName: string;
-  email: string;
-  id: string;
-  lastLoginAt: string | null;
-  status: string;
-  updatedAt: string;
-};
+import {
+  AuthenticationBootstrapCoordinator,
+  bootstrapOperationalAuthentication,
+  isBfcacheRestore,
+  type CurrentUser,
+} from "@/lib/operational-authentication";
 
 type OperationalContextValue = {
   api: ApiClient;
@@ -29,33 +25,6 @@ type BootstrapState =
 
 const OperationalContext = createContext<OperationalContextValue | null>(null);
 
-function isCurrentUser(value: unknown): value is CurrentUser {
-  if (typeof value !== "object" || value === null) return false;
-  const user = value as Record<string, unknown>;
-  return (
-    typeof user.id === "string" &&
-    typeof user.email === "string" &&
-    typeof user.displayName === "string" &&
-    typeof user.status === "string" &&
-    (typeof user.lastLoginAt === "string" || user.lastLoginAt === null) &&
-    typeof user.createdAt === "string" &&
-    typeof user.updatedAt === "string"
-  );
-}
-
-function isMeResponse(value: unknown): value is { user: CurrentUser } {
-  return typeof value === "object" && value !== null && isCurrentUser((value as { user?: unknown }).user);
-}
-
-function isPermissionsResponse(value: unknown): value is { permissions: string[] } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Array.isArray((value as { permissions?: unknown }).permissions) &&
-    (value as { permissions: unknown[] }).permissions.every((permission) => typeof permission === "string")
-  );
-}
-
 export function useOperationalApp(): OperationalContextValue {
   const context = useContext(OperationalContext);
   if (context === null) throw new Error("Operational application context is unavailable.");
@@ -65,39 +34,48 @@ export function useOperationalApp(): OperationalContextValue {
 export function OperationalApp({ children }: Readonly<{ children: React.ReactNode }>) {
   const router = useRouter();
   const [api] = useState(createApiClient);
+  const [bootstrapCoordinator] = useState(() => new AuthenticationBootstrapCoordinator());
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>({ status: "loading" });
   const [reloadKey, setReloadKey] = useState(0);
   const [logoutError, setLogoutError] = useState<string | null>(null);
 
-  const refreshAuthentication = useCallback(() => {
+  const resetProtectedState = useCallback(() => {
+    bootstrapCoordinator.invalidate();
+    api.clearCsrfToken();
     setBootstrapState({ status: "loading" });
+  }, [api, bootstrapCoordinator]);
+
+  const refreshAuthentication = useCallback(() => {
+    resetProtectedState();
     setReloadKey((current) => current + 1);
-  }, [setBootstrapState, setReloadKey]);
+  }, [resetProtectedState]);
 
   useEffect(() => subscribeToApiSessionEvents((event) => {
     if (event !== "unauthorized") return;
-    api.clearCsrfToken();
-    setBootstrapState({ status: "loading" });
+    resetProtectedState();
     router.replace("/login");
-  }), [api, router]);
+  }), [resetProtectedState, router]);
+
+  useEffect(() => {
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (isBfcacheRestore(event)) refreshAuthentication();
+    };
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, [refreshAuthentication]);
 
   useEffect(() => {
     let active = true;
-    void Promise.all([
-      api.request<unknown>("/auth/me"),
-      api.request<unknown>("/auth/me/permissions"),
-    ]).then(([meResponse, permissionsResponse]) => {
-      if (!isMeResponse(meResponse) || !isPermissionsResponse(permissionsResponse)) {
-        throw new ApiError("server");
-      }
-      if (!active) return;
+    const generation = bootstrapCoordinator.begin();
+    void bootstrapOperationalAuthentication(api, bootstrapCoordinator, generation).then((authentication) => {
+      if (!active || authentication === null) return;
       setBootstrapState({
         status: "ready",
-        user: meResponse.user,
-        permissions: new Set(permissionsResponse.permissions),
+        user: authentication.user,
+        permissions: authentication.permissions,
       });
     }).catch((error: unknown) => {
-      if (!active || (error instanceof ApiError && error.kind === "unauthorized")) return;
+      if (!active || !bootstrapCoordinator.isCurrent(generation) || (error instanceof ApiError && error.kind === "unauthorized")) return;
       setBootstrapState({
         status: "error",
         message: error instanceof ApiError ? error.message : "アプリケーションを開始できませんでした。",
@@ -106,14 +84,13 @@ export function OperationalApp({ children }: Readonly<{ children: React.ReactNod
     return () => {
       active = false;
     };
-  }, [api, reloadKey]);
+  }, [api, bootstrapCoordinator, reloadKey]);
 
   async function logout() {
     setLogoutError(null);
     try {
       await api.request<{ status: "ok" }>("/auth/logout", { method: "POST" });
-      api.clearCsrfToken();
-      setBootstrapState({ status: "loading" });
+      resetProtectedState();
       router.replace("/login");
     } catch (error: unknown) {
       if (error instanceof ApiError && error.kind === "unauthorized") return;
