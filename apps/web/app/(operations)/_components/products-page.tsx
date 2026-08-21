@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api-client";
 import { formatOperationalDate, isProductList, productStatusLabel, type Product } from "@/lib/products";
+import { MasterNavigation } from "./master-ui";
 import { useOperationalApp } from "./operational-app";
 
 const PAGE_SIZE = 100;
@@ -14,7 +15,7 @@ type ListState =
   | { status: "error"; message: string };
 
 export function ProductsPage() {
-  const { api, refreshAuthentication } = useOperationalApp();
+  const { api, permissions, refreshAuthentication } = useOperationalApp();
   const [offset, setOffset] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
   const [state, setState] = useState<ListState>({ status: "loading" });
@@ -58,12 +59,21 @@ export function ProductsPage() {
 
   return (
     <section aria-labelledby="products-title">
+      <MasterNavigation />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-blue-700">マスター</p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950" id="products-title">商品</h1>
           <p className="mt-2 text-sm text-slate-700">登録済みの商品情報を参照できます。</p>
         </div>
+        {permissions.has("master.write") && (
+          <Link
+            className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700"
+            href="/master/products/new"
+          >
+            新規作成
+          </Link>
+        )}
       </div>
 
       {state.status === "loading" && <p className="mt-8 text-sm text-slate-700" role="status">商品を読み込んでいます…</p>}
@@ -110,9 +120,16 @@ export function ProductsPage() {
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatOperationalDate(product.updatedAt)}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-right">
-                      <Link className="font-medium text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/master/products/${encodeURIComponent(product.id)}`}>
-                        詳細
-                      </Link>
+                      <div className="flex justify-end gap-3">
+                        <Link className="font-medium text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/master/products/${encodeURIComponent(product.id)}`}>
+                          詳細
+                        </Link>
+                        {permissions.has("master.write") && (
+                          <Link className="font-medium text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/master/products/${encodeURIComponent(product.id)}/edit`}>
+                            編集
+                          </Link>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
