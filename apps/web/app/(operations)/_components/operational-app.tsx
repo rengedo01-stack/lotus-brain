@@ -177,7 +177,6 @@ function SafeLoadingState() {
 function Navigation({ permissions }: Readonly<{ permissions: ReadonlySet<string> }>) {
   const hasPermission = (permission: string) => permissions.has(permission);
   const plannedItems = [
-    { label: "仕入（準備中）", permission: "purchase.read" },
     { label: "棚卸（準備中）", permission: "stocktake.read" },
     { label: "生産（準備中）", permission: "production.post" },
   ];
@@ -186,6 +185,7 @@ function Navigation({ permissions }: Readonly<{ permissions: ReadonlySet<string>
     <nav aria-label="業務ナビゲーション" className="flex gap-1 overflow-x-auto px-3 pb-4 md:flex-col md:overflow-visible">
       <NavigationLink href="/" label="ホーム" />
       {hasPermission("master.read") && <NavigationLink href="/master/products" label="マスター" />}
+      {hasPermission("purchase.read") && <NavigationLink href="/purchases" label="仕入" />}
       {plannedItems.filter((item) => hasPermission(item.permission)).map((item) => (
         <span className="whitespace-nowrap rounded-md px-3 py-2 text-sm text-slate-400" key={item.permission}>{item.label}</span>
       ))}
