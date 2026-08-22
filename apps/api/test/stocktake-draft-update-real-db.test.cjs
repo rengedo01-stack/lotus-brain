@@ -13,9 +13,9 @@ if (databaseUrl === undefined) {
     });
   } else {
     const { PrismaPg } = require("@prisma/adapter-pg");
-    const { PrismaClient } = require("../dist/generated/prisma/client.js");
+    const { Prisma, PrismaClient } = require("../dist/generated/prisma/client.js");
     const { PostStocktakeUseCase } = require("../dist/modules/stocktake/application/stocktake.use-cases.js");
-    const { InvalidStocktakeError } = require("../dist/modules/stocktake/application/stocktake.errors.js");
+    const { InvalidStocktakeError, StocktakeConflictError } = require("../dist/modules/stocktake/application/stocktake.errors.js");
     const { PrismaStocktakeRepository } = require("../dist/modules/stocktake/infrastructure/prisma-stocktake.repository.js");
 
     test("stocktake draft updates preserve line identity, unique products, atomicity, and posting effects in PostgreSQL", async () => {
@@ -161,6 +161,46 @@ if (databaseUrl === undefined) {
         assert.equal(concurrentItems.length, 1);
         assert.equal(concurrentItems[0].productId, productA.product.id);
         assert.ok(["2", "3"].includes(concurrentItems[0].countedQuantity.toString()));
+
+        const postRaceDraft = await repository.create({
+          items: [{ productId: productA.product.id, countedQuantity: "1.000000000" }],
+        });
+        const lockClient = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
+        let releaseHeaderLock;
+        const headerLockReleased = new Promise((resolve) => { releaseHeaderLock = resolve; });
+        let headerLockAcquired;
+        const headerLocked = new Promise((resolve) => { headerLockAcquired = resolve; });
+        const headerLockTransaction = lockClient.$transaction(async (client) => {
+          await client.$queryRaw(Prisma.sql`
+            SELECT "id" FROM "Stocktake" WHERE "id" = ${postRaceDraft.id} FOR UPDATE
+          `);
+          headerLockAcquired();
+          await headerLockReleased;
+        });
+        try {
+          await headerLocked;
+          const patch = repository.updateDraft(postRaceDraft.id, {
+            note: "concurrent patch",
+            items: [{ productId: productA.product.id, countedQuantity: "2.000000000" }],
+          });
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          const postAttempt = post.execute(postRaceDraft.id);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          releaseHeaderLock();
+
+          const [patchResult, postResult] = await Promise.allSettled([patch, postAttempt]);
+          assert.equal(patchResult.status, "fulfilled");
+          assert.equal(postResult.status, "rejected");
+          assert.ok(postResult.reason instanceof StocktakeConflictError);
+          const afterPostRace = await repository.get(postRaceDraft.id);
+          assert.equal(afterPostRace.status, "DRAFT");
+          assert.equal(afterPostRace.items.length, 1);
+          assert.equal(afterPostRace.items[0].countedQuantity, "2");
+        } finally {
+          releaseHeaderLock?.();
+          await headerLockTransaction;
+          await lockClient.$disconnect();
+        }
       } finally {
         await prisma.$disconnect();
       }

@@ -61,15 +61,12 @@ export class PrismaStocktakeRepository implements StocktakeRepository {
 
   async updateDraft(id: string, input: StocktakeInput): Promise<StocktakeView | "NOT_FOUND" | "CONFLICT"> {
     return this.prisma.$transaction(async (client) => {
+      const existingItems = await this.lockStocktakeItemsForDraftUpdate(client, id);
       const current = await this.lockStocktakeForDraftUpdate(client, id);
       if (current === null) return "NOT_FOUND";
       if (current.status !== "DRAFT") return "CONFLICT";
 
       const normalizedItems = await this.prepareItems(client, input.items);
-      const existingItems = await client.stocktakeItem.findMany({
-        where: { stocktakeId: id },
-        select: { productId: true },
-      });
       const incomingProductIds = new Set(normalizedItems.map((item) => item.productId));
       const removedProductIds = existingItems
         .map((item) => item.productId)
@@ -114,6 +111,19 @@ export class PrismaStocktakeRepository implements StocktakeRepository {
       }
       return this.getOrThrow(client, id, updated);
     });
+  }
+
+  private lockStocktakeItemsForDraftUpdate(
+    client: TransactionClient,
+    stocktakeId: string,
+  ): Promise<Array<{ productId: string }>> {
+    return client.$queryRaw<Array<{ productId: string }>>(Prisma.sql`
+      SELECT "productId"
+      FROM "StocktakeItem"
+      WHERE "stocktakeId" = ${stocktakeId}
+      ORDER BY "id"
+      FOR NO KEY UPDATE
+    `);
   }
 
   private async lockStocktakeForDraftUpdate(
