@@ -61,30 +61,47 @@ export class PrismaStocktakeRepository implements StocktakeRepository {
 
   async updateDraft(id: string, input: StocktakeInput): Promise<StocktakeView | "NOT_FOUND" | "CONFLICT"> {
     return this.prisma.$transaction(async (client) => {
-      const current = await client.stocktake.findUnique({
-        where: { id },
-        select: { id: true, status: true, startedAt: true, completedAt: true, note: true, createdAt: true, updatedAt: true },
-      });
+      const existingItems = await this.lockStocktakeItemsForDraftUpdate(client, id);
+      const current = await this.lockStocktakeForDraftUpdate(client, id);
       if (current === null) return "NOT_FOUND";
       if (current.status !== "DRAFT") return "CONFLICT";
 
       const normalizedItems = await this.prepareItems(client, input.items);
-      await client.stocktakeItem.deleteMany({ where: { stocktakeId: id } });
+      const incomingProductIds = new Set(normalizedItems.map((item) => item.productId));
+      const removedProductIds = existingItems
+        .map((item) => item.productId)
+        .filter((productId) => !incomingProductIds.has(productId));
+
+      for (const productId of removedProductIds) {
+        await client.stocktakeItem.delete({
+          where: { stocktakeId_productId: { stocktakeId: id, productId } },
+        });
+      }
       await client.stocktake.update({
         where: { id },
         data: { note: input.note ?? null },
       });
-      await client.stocktakeItem.createMany({
-        data: normalizedItems.map((item) => ({
-          stocktakeId: id,
-          productId: item.productId,
+
+      const existingProductIds = new Set(existingItems.map((item) => item.productId));
+      for (const item of normalizedItems) {
+        const data = {
           inventoryUnitId: item.inventoryUnitId,
           systemQuantitySnapshot: item.systemQuantitySnapshot,
           countedQuantity: item.countedQuantity,
           differenceQuantity: item.differenceQuantity,
           note: item.note,
-        })),
-      });
+        };
+        if (existingProductIds.has(item.productId)) {
+          await client.stocktakeItem.update({
+            where: { stocktakeId_productId: { stocktakeId: id, productId: item.productId } },
+            data,
+          });
+          continue;
+        }
+        await client.stocktakeItem.create({
+          data: { stocktakeId: id, productId: item.productId, ...data },
+        });
+      }
       const updated = await client.stocktake.findUnique({
         where: { id },
         select: { id: true, status: true, startedAt: true, completedAt: true, note: true, createdAt: true, updatedAt: true },
@@ -94,6 +111,32 @@ export class PrismaStocktakeRepository implements StocktakeRepository {
       }
       return this.getOrThrow(client, id, updated);
     });
+  }
+
+  private lockStocktakeItemsForDraftUpdate(
+    client: TransactionClient,
+    stocktakeId: string,
+  ): Promise<Array<{ productId: string }>> {
+    return client.$queryRaw<Array<{ productId: string }>>(Prisma.sql`
+      SELECT "productId"
+      FROM "StocktakeItem"
+      WHERE "stocktakeId" = ${stocktakeId}
+      ORDER BY "id"
+      FOR NO KEY UPDATE
+    `);
+  }
+
+  private async lockStocktakeForDraftUpdate(
+    client: TransactionClient,
+    id: string,
+  ): Promise<StocktakeRow | null> {
+    const rows = await client.$queryRaw<StocktakeRow[]>(Prisma.sql`
+      SELECT "id", "status", "startedAt", "completedAt", "note", "createdAt", "updatedAt"
+      FROM "Stocktake"
+      WHERE "id" = ${id}
+      FOR UPDATE
+    `);
+    return rows[0] ?? null;
   }
 
   async confirm(id: string): Promise<StocktakeView | "NOT_FOUND" | "CONFLICT"> {
