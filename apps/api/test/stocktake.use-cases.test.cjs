@@ -13,6 +13,9 @@ const {
   StocktakeConflictError,
   StocktakeNotFoundError,
 } = require("../dist/modules/stocktake/application/stocktake.errors.js");
+const { StocktakeController } = require("../dist/modules/stocktake/presentation/stocktake.controller.js");
+const { REQUIRED_PERMISSIONS_KEY } = require("../dist/modules/authorization/authorization.constants.js");
+const { Permissions } = require("../dist/modules/authorization/permission.registry.js");
 
 const makeStocktake = (overrides = {}) => ({
   id: "stocktake-1",
@@ -167,4 +170,20 @@ test("rejects posting a stocktake without counted quantities", async () => {
   }));
   await assert.rejects(() => new PostStocktakeUseCase(repository).execute("stocktake-1"), InvalidStocktakeError);
   assert.deepEqual(repository.events, []);
+});
+
+test("stocktake API routes bind every read or mutation to the existing permission registry", () => {
+  const assertions = [
+    ["create", Permissions.STOCKTAKE_WRITE],
+    ["get", Permissions.STOCKTAKE_READ],
+    ["update", Permissions.STOCKTAKE_WRITE],
+    ["confirm", Permissions.STOCKTAKE_CONFIRM],
+    ["post", Permissions.STOCKTAKE_POST],
+  ];
+  for (const [methodName, permission] of assertions) {
+    assert.deepEqual(
+      Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, StocktakeController.prototype[methodName]),
+      [permission],
+    );
+  }
 });
