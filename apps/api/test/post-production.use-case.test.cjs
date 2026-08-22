@@ -5,7 +5,7 @@ const { PostProductionUseCase } = require("../dist/modules/production/applicatio
 const { InvalidProductionPostingError, ProductionPostingConflictError } = require("../dist/modules/production/application/production-posting.errors.js");
 
 const production = {
-  id: "production-1", status: "CONFIRMED", outputProductIdSnapshot: "finished", outputUnitIdSnapshot: "kg", yieldQuantitySnapshot: "4",
+  id: "production-1", status: "CONFIRMED", outputProductIdSnapshot: "finished", outputUnitIdSnapshot: "kg", outputConversionFactorSnapshot: "1", yieldQuantitySnapshot: "4",
   consumptions: [{ id: "consumption-1", productId: "material", recipeQuantitySnapshot: "2", recipeUnitId: "kg", inventoryUnitId: "kg", conversionFactorSnapshot: "1" }],
 };
 
@@ -20,7 +20,6 @@ class FakeRepository {
         { id: "material-inventory", productId: "material", quantity: "10", averageUnitCost: "600", inventoryUnitId: "kg" },
       ],
       lockProductionStatus: async () => (this.options.status ?? "CONFIRMED"),
-      factorToInventory: async () => "1",
       updateConsumptionCost: async (id, recipeQuantity, inventoryQuantity, unitCost, amount) => {
         pending.push("snapshot");
         this.calls.push(["snapshot", id, recipeQuantity, inventoryQuantity, unitCost, amount]);
@@ -86,6 +85,7 @@ test("accumulates repeated product updates before the output receipt", async () 
       status: "CONFIRMED",
       outputProductIdSnapshot: "material",
       outputUnitIdSnapshot: "kg",
+      outputConversionFactorSnapshot: "1",
       yieldQuantitySnapshot: "2",
       consumptions: [
         { id: "consumption-a", productId: "material", recipeQuantitySnapshot: "1", recipeUnitId: "kg", inventoryUnitId: "kg", conversionFactorSnapshot: "1" },

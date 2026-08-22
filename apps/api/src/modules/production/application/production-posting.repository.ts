@@ -14,6 +14,7 @@ export type ProductionForPosting = {
   status: ProductionPostingStatus;
   outputProductIdSnapshot: string;
   outputUnitIdSnapshot: string;
+  outputConversionFactorSnapshot: string;
   yieldQuantitySnapshot: string;
   consumptions: ProductionConsumptionForPosting[];
 };
@@ -30,7 +31,6 @@ export interface ProductionPostingTransaction {
   lockProduction(id: string): Promise<ProductionForPosting | null>;
   lockInventories(productIds: string[]): Promise<LockedInventory[]>;
   lockProductionStatus(id: string): Promise<ProductionPostingStatus | null>;
-  factorToInventory(productId: string, unitId: string): Promise<string>;
   updateConsumptionCost(id: string, recipeQuantity: string, inventoryQuantity: string, unitCost: string, amount: string): Promise<void>;
   markProductionPosted(id: string, actualQuantity: string, postedAt: Date): Promise<void>;
   updateInventory(id: string, quantity: string, averageUnitCost: string | null): Promise<void>;
