@@ -393,7 +393,8 @@ test("permission registry is fixed and RequirePermissions rejects unknown codes"
     "authorization.read", "authorization.manage",
     "identity.read", "identity.manage",
     "master.read", "master.write", "purchase.read", "purchase.write", "purchase.confirm", "purchase.post",
-    "production.post", "stocktake.read", "stocktake.write", "stocktake.confirm", "stocktake.post",
+    "production.read", "production.write", "production.confirm", "production.post",
+    "stocktake.read", "stocktake.write", "stocktake.confirm", "stocktake.post",
   ]);
   assert.throws(() => RequirePermissions("purchase.typo"), /known permission/i);
   assert.throws(() => RequirePermissions(), /one or more/i);
@@ -463,6 +464,10 @@ test("every existing business endpoint has the exact required permission", () =>
     [PurchaseController, "updatePurchase", Permissions.PURCHASE_WRITE],
     [PurchaseController, "confirmPurchase", Permissions.PURCHASE_CONFIRM],
     [PurchaseController, "postPurchase", Permissions.PURCHASE_POST],
+    [ProductionController, "createProduction", Permissions.PRODUCTION_WRITE],
+    [ProductionController, "getProduction", Permissions.PRODUCTION_READ],
+    [ProductionController, "updateProduction", Permissions.PRODUCTION_WRITE],
+    [ProductionController, "confirmProduction", Permissions.PRODUCTION_CONFIRM],
     [ProductionController, "postProduction", Permissions.PRODUCTION_POST],
     [RecipeController, "createRecipe", Permissions.MASTER_WRITE],
     [RecipeController, "listRecipes", Permissions.MASTER_READ],

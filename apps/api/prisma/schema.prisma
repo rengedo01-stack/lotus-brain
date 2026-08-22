@@ -792,24 +792,27 @@ model RecipeItem {
 }
 
 model Production {
-  id                      String           @id @default(cuid())
-  recipeId                String
-  productionDate          DateTime
-  plannedQuantity         Decimal          @db.Decimal(24, 9)
+  id                             String           @id @default(cuid())
+  recipeId                       String
+  productionDate                 DateTime
+  plannedQuantity                Decimal          @db.Decimal(24, 9)
   // Actual finished output, expressed in outputUnitIdSnapshot. It is required
   // only when the Production is POSTED.
-  actualQuantity          Decimal?         @db.Decimal(24, 9)
+  actualQuantity                 Decimal?         @db.Decimal(24, 9)
   // The database copies the output definition from Recipe when this Production
   // is created. These snapshots never follow later Recipe changes.
-  outputProductIdSnapshot String
-  yieldQuantitySnapshot   Decimal          @db.Decimal(24, 9)
-  outputUnitIdSnapshot    String
-  status                  ProductionStatus @default(DRAFT)
-  note                    String?
-  postedAt                DateTime?
-  cancelledAt             DateTime?
-  createdAt               DateTime         @default(now())
-  updatedAt               DateTime         @updatedAt
+  outputProductIdSnapshot        String
+  yieldQuantitySnapshot          Decimal          @db.Decimal(24, 9)
+  outputUnitIdSnapshot           String
+  // The output-unit to inventory-unit factor is fixed at draft creation. POST
+  // must never follow a later ProductUnitConversion master-data change.
+  outputConversionFactorSnapshot Decimal          @default(1) @db.Decimal(30, 12)
+  status                         ProductionStatus @default(DRAFT)
+  note                           String?
+  postedAt                       DateTime?
+  cancelledAt                    DateTime?
+  createdAt                      DateTime         @default(now())
+  updatedAt                      DateTime         @updatedAt
 
   recipe                 Recipe                  @relation(fields: [recipeId], references: [id], onDelete: Restrict)
   outputProductSnapshot  Product                 @relation("ProductionOutputProductSnapshot", fields: [outputProductIdSnapshot], references: [id], onDelete: Restrict)

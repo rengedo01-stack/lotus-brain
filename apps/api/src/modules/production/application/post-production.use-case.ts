@@ -80,7 +80,7 @@ export class PostProductionUseCase {
         consumptionEffects.push({ id: consumption.id, inventory, quantity: inventoryQuantity, quantityAfter: state.quantity });
       }
 
-      const outputFactor = new Prisma.Decimal(await transaction.factorToInventory(production.outputProductIdSnapshot, production.outputUnitIdSnapshot));
+      const outputFactor = new Prisma.Decimal(production.outputConversionFactorSnapshot);
       const finishedQuantity = actualQuantity.mul(outputFactor).toDecimalPlaces(9);
       if (finishedQuantity.lte(0)) throw new InvalidProductionPostingError("Finished inventory quantity must be positive.");
       const productionUnitCost = materialCost.div(finishedQuantity).toDecimalPlaces(6);

@@ -30,9 +30,9 @@ class PrismaProductionPostingTransaction implements ProductionPostingTransaction
     `);
     const rows = await this.prisma.$queryRaw<Array<{
       id: string; status: "DRAFT" | "CONFIRMED" | "POSTED" | "CANCELLED";
-      outputProductIdSnapshot: string; outputUnitIdSnapshot: string; yieldQuantitySnapshot: Prisma.Decimal;
+      outputProductIdSnapshot: string; outputUnitIdSnapshot: string; outputConversionFactorSnapshot: Prisma.Decimal; yieldQuantitySnapshot: Prisma.Decimal;
     }>>(Prisma.sql`
-      SELECT "id", "status", "outputProductIdSnapshot", "outputUnitIdSnapshot", "yieldQuantitySnapshot"
+      SELECT "id", "status", "outputProductIdSnapshot", "outputUnitIdSnapshot", "outputConversionFactorSnapshot", "yieldQuantitySnapshot"
       FROM "Production" WHERE "id" = ${id}
     `);
     const production = rows[0];
@@ -41,7 +41,7 @@ class PrismaProductionPostingTransaction implements ProductionPostingTransaction
       where: { productionId: id }, orderBy: { id: "asc" },
       select: { id: true, productId: true, recipeQuantitySnapshot: true, recipeUnitId: true, inventoryUnitId: true, conversionFactorSnapshot: true },
     });
-    return { ...production, yieldQuantitySnapshot: production.yieldQuantitySnapshot.toString(), consumptions: consumptions.map((item) => ({
+    return { ...production, yieldQuantitySnapshot: production.yieldQuantitySnapshot.toString(), outputConversionFactorSnapshot: production.outputConversionFactorSnapshot.toString(), consumptions: consumptions.map((item) => ({
       ...item,
       recipeQuantitySnapshot: item.recipeQuantitySnapshot.toString(),
       conversionFactorSnapshot: item.conversionFactorSnapshot.toString(),
@@ -66,15 +66,6 @@ class PrismaProductionPostingTransaction implements ProductionPostingTransaction
       SELECT "status" FROM "Production" WHERE "id" = ${id} FOR UPDATE
     `);
     return rows[0]?.status ?? null;
-  }
-
-  async factorToInventory(productId: string, unitId: string): Promise<string> {
-    const rows = await this.prisma.$queryRaw<Array<{ factor: Prisma.Decimal }>>(Prisma.sql`
-      SELECT "product_unit_factor_to_inventory"(${productId}, ${unitId}) AS factor
-    `);
-    const factor = rows[0]?.factor;
-    if (factor === undefined) throw new Error(`No output conversion is available for Product ${productId}.`);
-    return factor.toString();
   }
 
   async updateConsumptionCost(id: string, recipeQuantity: string, inventoryQuantity: string, unitCost: string, amount: string): Promise<void> {
