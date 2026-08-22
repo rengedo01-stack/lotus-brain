@@ -60,6 +60,10 @@ Production `actualQuantity` is the finished output expressed in immutable `outpu
 
 `POST /api/v1/productions/:id/post` posts a `CONFIRMED` Production with an `actualQuantity` decimal string expressed in its output snapshot unit. In one transaction it scales and prices material consumptions, records stock consumption, converts the finished quantity to the output Product inventory unit, updates its weighted-average inventory cost, writes the unique production receipt, and appends a Production lifecycle log. The shared lock order is ProductionConsumption (ID order), Inventory (Product ID order), then Production.
 
+### Recipe/BOM foundation
+
+`/api/v1/recipes` exposes Recipe/BOM master data under `master.read` and `master.write`. Recipes are created as `DRAFT`, can be structurally replaced only while they remain unreferenced DRAFTs, and require active Products, Units, and Product-specific conversions with positive decimal string quantities. A DRAFT with at least one item can become `ACTIVE`; an ACTIVE Recipe can be archived. `POST /api/v1/recipes/:id/revisions` clones an ACTIVE or ARCHIVED Recipe into the next DRAFT revision for the same output Product. The list endpoint is bounded and may be filtered by status. Database triggers remain the final safeguard: a Production reference freezes a Recipe's output definition, revision, and item composition.
+
 ### Purchase posting
 
 `POST /api/v1/purchases/:id/post` posts an existing `DRAFT` or `CONFIRMED` purchase. The application use case owns an interactive Prisma transaction: it locks `PurchaseItem` rows by stable ID order and then the parent Purchase, matching the source-history trigger lock order. It validates every item against the Product inventory unit, writes price and inventory effects in stable Product order, appends the processing log, and commits all changes together. To satisfy the database receipt trigger, it sets the Purchase to `POSTED` before creating receipt histories; a later failure rolls that state transition and every prior effect back. Reposting a `POSTED` or `CANCELLED` purchase returns `409 Conflict`.

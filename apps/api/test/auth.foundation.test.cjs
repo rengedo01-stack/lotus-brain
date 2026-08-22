@@ -17,6 +17,7 @@ const { ForbiddenException, ServiceUnavailableException, UnauthorizedException }
 const { MasterController } = require("../dist/modules/master/presentation/master.controller.js");
 const { PurchaseController } = require("../dist/modules/purchase/presentation/purchase.controller.js");
 const { ProductionController } = require("../dist/modules/production/presentation/production.controller.js");
+const { RecipeController } = require("../dist/modules/recipe/presentation/recipe.controller.js");
 const { StocktakeController } = require("../dist/modules/stocktake/presentation/stocktake.controller.js");
 const { AuthController } = require("../dist/modules/auth/presentation/auth.controller.js");
 const {
@@ -463,6 +464,13 @@ test("every existing business endpoint has the exact required permission", () =>
     [PurchaseController, "confirmPurchase", Permissions.PURCHASE_CONFIRM],
     [PurchaseController, "postPurchase", Permissions.PURCHASE_POST],
     [ProductionController, "postProduction", Permissions.PRODUCTION_POST],
+    [RecipeController, "createRecipe", Permissions.MASTER_WRITE],
+    [RecipeController, "listRecipes", Permissions.MASTER_READ],
+    [RecipeController, "getRecipe", Permissions.MASTER_READ],
+    [RecipeController, "updateRecipe", Permissions.MASTER_WRITE],
+    [RecipeController, "activateRecipe", Permissions.MASTER_WRITE],
+    [RecipeController, "archiveRecipe", Permissions.MASTER_WRITE],
+    [RecipeController, "createRevision", Permissions.MASTER_WRITE],
     [StocktakeController, "create", Permissions.STOCKTAKE_WRITE],
     [StocktakeController, "get", Permissions.STOCKTAKE_READ],
     [StocktakeController, "update", Permissions.STOCKTAKE_WRITE],
