@@ -23,6 +23,10 @@ const nextConfig: NextConfig = {
         headers: operationalNoStoreHeaders,
       },
       {
+        source: "/purchases/:path*",
+        headers: operationalNoStoreHeaders,
+      },
+      {
         source: "/upload",
         headers: operationalNoStoreHeaders,
       },
