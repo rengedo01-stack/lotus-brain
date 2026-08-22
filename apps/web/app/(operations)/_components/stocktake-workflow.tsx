@@ -358,8 +358,9 @@ export function StocktakeDetailPage({ stocktakeId }: Readonly<{ stocktakeId: str
       if (latest.status !== "CONFIRMED") return;
       const posted = await api.request<unknown>(`/stocktakes/${encodeURIComponent(stocktakeId)}/post`, { method: "POST" });
       if (!isPostedStocktakeResult(posted, stocktakeId)) throw new ApiError("server");
-      const refreshed = await requestStocktake(api, stocktakeId);
-      setState({ status: "ready", stocktake: refreshed });
+      // POST is the lifecycle authority. Avoid a follow-up GET: a rate limit
+      // after a successful post must not make the UI look retryable.
+      setState({ status: "ready", stocktake: { ...latest, status: "POSTED", completedAt: posted.completedAt } });
     } catch (error: unknown) {
       if (!protectedStocktakeError(error, refreshAuthentication)) setActionError(stocktakeErrorMessage(error));
     } finally {
