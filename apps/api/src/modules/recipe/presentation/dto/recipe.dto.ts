@@ -14,7 +14,7 @@ import {
 } from "class-validator";
 import { RecipeStatus } from "../../../../generated/prisma/client";
 
-const DECIMAL = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+const DECIMAL = /^(?:0|[1-9]\d{0,14})(?:\.\d{1,9})?$/;
 
 export class RecipeItemDto {
   @IsString()

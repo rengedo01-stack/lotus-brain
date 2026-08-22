@@ -22,6 +22,7 @@ export type RecipeItemView = RecipeItemInput & {
 
 export type RecipeView = {
   id: string;
+  rootRecipeId: string;
   name: string;
   outputProductId: string;
   yieldQuantity: string;

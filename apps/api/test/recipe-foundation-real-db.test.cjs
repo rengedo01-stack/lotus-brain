@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { randomUUID } = require("node:crypto");
 
 const databaseUrl = process.env.RECIPE_DATABASE_URL;
 
@@ -64,6 +65,7 @@ if (databaseUrl === undefined) {
         const draft = await repository.createDraft(input);
         assert.equal(draft.status, "DRAFT");
         assert.equal(draft.revision, 1);
+        assert.equal(draft.rootRecipeId, draft.id);
         assert.equal(draft.yieldQuantity, "4");
         assert.equal(draft.items[0].quantity, "1.25");
 
@@ -73,16 +75,73 @@ if (databaseUrl === undefined) {
         );
         assert.equal(await prisma.recipe.count({ where: { outputProductId: output.id } }), 1);
 
+        await assert.rejects(
+          () => repository.createDraft({ ...input, yieldQuantity: "1.1234567891" }),
+          RecipeValidationError,
+        );
+        await assert.rejects(
+          () => repository.createDraft({
+            ...input,
+            items: [
+              input.items[0],
+              { productId: material.id, unitId: materialUnit.id, quantity: "2" },
+            ],
+          }),
+          RecipeValidationError,
+        );
+        assert.equal(await prisma.recipe.count({ where: { outputProductId: output.id } }), 1);
+
+        const directActiveRecipeId = randomUUID();
+        await assert.rejects(() => prisma.recipe.create({
+          data: {
+            id: directActiveRecipeId,
+            rootRecipeId: directActiveRecipeId,
+            name: "must start as draft",
+            outputProductId: output.id,
+            yieldQuantity: "1.000000000",
+            yieldUnitId: outputUnit.id,
+            status: "ACTIVE",
+            revision: 1,
+          },
+        }));
+
         const activated = await repository.activate(draft.id);
         assert.equal(typeof activated, "object");
         assert.equal(activated.status, "ACTIVE");
         assert.equal(await repository.updateDraft(draft.id, input), "CONFLICT");
+        await assert.rejects(() => prisma.recipe.update({
+          where: { id: draft.id },
+          data: { yieldQuantity: "5.000000000" },
+        }));
+        await assert.rejects(() => prisma.recipe.update({
+          where: { id: draft.id },
+          data: { status: "DRAFT" },
+        }));
+        const activeItem = await prisma.recipeItem.findFirstOrThrow({ where: { recipeId: draft.id } });
+        await assert.rejects(() => prisma.recipeItem.update({
+          where: { id: activeItem.id },
+          data: { quantity: "2.000000000" },
+        }));
 
         const revision = await repository.createRevision(draft.id);
         assert.equal(typeof revision, "object");
         assert.equal(revision.status, "DRAFT");
         assert.equal(revision.revision, 2);
+        assert.equal(revision.rootRecipeId, draft.rootRecipeId);
         assert.equal(revision.items[0].quantity, "1.25");
+        assert.equal((await repository.get(draft.id)).revision, 1);
+        assert.equal(await repository.updateDraft(revision.id, {
+          ...input,
+          outputProductId: material.id,
+        }), "CONFLICT");
+        await assert.rejects(() => prisma.recipe.update({
+          where: { id: revision.id },
+          data: { outputProductId: material.id },
+        }));
+        await assert.rejects(() => prisma.recipe.update({
+          where: { id: revision.id },
+          data: { revision: 99 },
+        }));
 
         const revisedDraft = await repository.updateDraft(revision.id, {
           ...input,
@@ -141,6 +200,15 @@ if (databaseUrl === undefined) {
           await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${triggerName}" ON "RecipeItem";`);
           await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${functionName}"();`);
         }
+        await assert.rejects(() => prisma.recipeItem.create({
+          data: {
+            recipeId: rollbackDraft.id,
+            productId: material.id,
+            unitId: materialUnit.id,
+            quantity: "2.000000000",
+            sortOrder: 1,
+          },
+        }));
       } finally {
         await prisma.$disconnect();
       }

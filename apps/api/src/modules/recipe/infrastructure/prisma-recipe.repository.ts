@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { Prisma, PrismaClient, RecipeStatus as PrismaRecipeStatus } from "../../../generated/prisma/client";
 import type { TransactionClient } from "../../../generated/prisma/internal/prismaNamespace";
 import { PrismaService } from "../../../prisma/prisma.service";
@@ -15,6 +16,7 @@ type RecipeClient = PrismaClient | TransactionClient;
 
 type RecipeRow = {
   id: string;
+  rootRecipeId: string;
   name: string;
   outputProductId: string;
   yieldQuantity: Prisma.Decimal;
@@ -39,7 +41,7 @@ type ProductReference = {
   inventoryUnitId: string;
 };
 
-const DECIMAL = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+const DECIMAL = /^(?:0|[1-9]\d{0,14})(?:\.\d{1,9})?$/;
 
 @Injectable()
 export class PrismaRecipeRepository implements RecipeRepository {
@@ -49,8 +51,8 @@ export class PrismaRecipeRepository implements RecipeRepository {
     return this.prisma.$transaction(async (client) => {
       const outputProduct = await this.lockActiveOutputProduct(client, input.outputProductId);
       const draft = await this.normalizeDraft(client, input, outputProduct);
-      const revision = await this.nextRevision(client, outputProduct.id);
-      return this.writeDraft(client, draft, revision);
+      const id = randomUUID();
+      return this.writeDraft(client, draft, { id, rootRecipeId: id, revision: 1 });
     });
   }
 
@@ -74,7 +76,11 @@ export class PrismaRecipeRepository implements RecipeRepository {
     return this.prisma.$transaction(async (client) => {
       const current = await this.lockRecipe(client, id);
       if (current === null) return "NOT_FOUND";
-      if (current.status !== "DRAFT" || await this.hasProductionReference(client, id)) return "CONFLICT";
+      if (
+        current.status !== "DRAFT"
+        || current.outputProductId !== input.outputProductId
+        || await this.hasProductionReference(client, id)
+      ) return "CONFLICT";
 
       const draft = await this.normalizeDraft(client, input);
       await client.recipeItem.deleteMany({ where: { recipeId: id } });
@@ -82,7 +88,6 @@ export class PrismaRecipeRepository implements RecipeRepository {
         where: { id },
         data: {
           name: draft.name,
-          outputProductId: draft.outputProductId,
           yieldQuantity: draft.yieldQuantity,
           yieldUnitId: draft.yieldUnitId,
           note: draft.note,
@@ -160,24 +165,26 @@ export class PrismaRecipeRepository implements RecipeRepository {
           quantity: item.quantity.toString(),
         })),
       }, outputProduct);
-      const revision = await this.nextRevision(client, outputProduct.id);
-      return this.writeDraft(client, draft, revision);
+      const revision = await this.nextRevision(client, source.rootRecipeId);
+      return this.writeDraft(client, draft, { rootRecipeId: source.rootRecipeId, revision });
     });
   }
 
   private async writeDraft(
     client: TransactionClient,
     draft: { name: string; outputProductId: string; yieldQuantity: Prisma.Decimal; yieldUnitId: string; note: string | null; items: Array<{ productId: string; unitId: string; quantity: Prisma.Decimal; sortOrder: number }> },
-    revision: number,
+    identity: { id?: string; rootRecipeId: string; revision: number },
   ): Promise<RecipeView> {
     const recipe = await client.recipe.create({
       data: {
+        id: identity.id,
+        rootRecipeId: identity.rootRecipeId,
         name: draft.name,
         outputProductId: draft.outputProductId,
         yieldQuantity: draft.yieldQuantity,
         yieldUnitId: draft.yieldUnitId,
         status: "DRAFT",
-        revision,
+        revision: identity.revision,
         note: draft.note,
         items: { create: draft.items },
       },
@@ -196,6 +203,11 @@ export class PrismaRecipeRepository implements RecipeRepository {
     const yieldQuantity = this.positiveDecimal(input.yieldQuantity, "yieldQuantity");
     const outputProduct = lockedOutputProduct ?? await this.findActiveProduct(client, input.outputProductId);
     await this.ensureCompatibleActiveUnit(client, outputProduct, input.yieldUnitId, "Recipe output unit");
+
+    const itemProductIds = input.items.map((item) => item.productId);
+    if (new Set(itemProductIds).size !== itemProductIds.length) {
+      throw new RecipeValidationError("A Recipe can contain each Product only once.");
+    }
 
     const items = await Promise.all(input.items.map(async (item, index) => {
       const product = await this.findActiveProduct(client, item.productId);
@@ -269,17 +281,17 @@ export class PrismaRecipeRepository implements RecipeRepository {
     }
   }
 
-  private async nextRevision(client: TransactionClient, outputProductId: string): Promise<number> {
+  private async nextRevision(client: TransactionClient, rootRecipeId: string): Promise<number> {
     const current = await client.recipe.aggregate({
-      where: { outputProductId },
+      where: { rootRecipeId },
       _max: { revision: true },
     });
     return (current._max.revision ?? 0) + 1;
   }
 
-  private async lockRecipe(client: TransactionClient, id: string): Promise<{ id: string; status: RecipeStatus } | null> {
-    const rows = await client.$queryRaw<Array<{ id: string; status: RecipeStatus }>>(Prisma.sql`
-      SELECT "id", "status" FROM "Recipe" WHERE "id" = ${id} FOR UPDATE
+  private async lockRecipe(client: TransactionClient, id: string): Promise<{ id: string; status: RecipeStatus; outputProductId: string } | null> {
+    const rows = await client.$queryRaw<Array<{ id: string; status: RecipeStatus; outputProductId: string }>>(Prisma.sql`
+      SELECT "id", "status", "outputProductId" FROM "Recipe" WHERE "id" = ${id} FOR UPDATE
     `);
     return rows[0] ?? null;
   }
@@ -299,6 +311,7 @@ export class PrismaRecipeRepository implements RecipeRepository {
   private view(recipe: RecipeRow): RecipeView {
     return {
       id: recipe.id,
+      rootRecipeId: recipe.rootRecipeId,
       name: recipe.name,
       outputProductId: recipe.outputProductId,
       yieldQuantity: recipe.yieldQuantity.toString(),

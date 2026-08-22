@@ -28,6 +28,7 @@ const recipeInput = {
 
 const makeRecipe = (overrides = {}) => ({
   id: "recipe-1",
+  rootRecipeId: "recipe-1",
   name: "Bread",
   outputProductId: "product-bread",
   yieldQuantity: "4",
