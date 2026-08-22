@@ -739,6 +739,9 @@ model PurchaseLog {
 
 model Recipe {
   id              String       @id @default(cuid())
+  // Every Recipe belongs to a durable lineage. The first Recipe in a lineage
+  // points to itself; later revisions retain that same rootRecipeId.
+  rootRecipeId    String
   name            String
   outputProductId String
   // Yield is expressed in yieldUnitId. The database verifies that this unit is
@@ -753,13 +756,16 @@ model Recipe {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
+  rootRecipe    Recipe       @relation("RecipeRevisionLineage", fields: [rootRecipeId], references: [id], onDelete: Restrict)
+  revisions     Recipe[]     @relation("RecipeRevisionLineage")
   outputProduct Product      @relation("RecipeOutputProduct", fields: [outputProductId], references: [id], onDelete: Restrict)
   yieldUnit     Unit         @relation("RecipeYieldUnit", fields: [yieldUnitId], references: [id], onDelete: Restrict)
   items         RecipeItem[]
   productions   Production[]
 
-  @@unique([outputProductId, revision])
+  @@unique([rootRecipeId, revision])
   @@index([status, outputProductId])
+  @@index([rootRecipeId])
   @@index([yieldUnitId])
 }
 
@@ -780,6 +786,7 @@ model RecipeItem {
   unit    Unit    @relation("RecipeItemUnit", fields: [unitId], references: [id], onDelete: Restrict)
 
   @@unique([recipeId, sortOrder])
+  @@unique([recipeId, productId])
   @@index([productId])
   @@index([unitId])
 }
