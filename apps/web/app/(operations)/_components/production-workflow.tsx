@@ -10,6 +10,7 @@ import {
   isActiveRecipeList,
   isPostedProductionResult,
   isProduction,
+  mergePostedProductionResult,
   productionCreatePayload,
   productionFormFromProduction,
   productionStatusLabel,
@@ -252,6 +253,7 @@ export function ProductionDetailPage({ productionId }: Readonly<{ productionId: 
   const [actualQuantity, setActualQuantity] = useState("");
   const [actualQuantityError, setActualQuantityError] = useState<string | null>(null);
   const [reloadRequired, setReloadRequired] = useState(false);
+  const [postedDetailsPendingReload, setPostedDetailsPendingReload] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -262,6 +264,7 @@ export function ProductionDetailPage({ productionId }: Readonly<{ productionId: 
       setActionError(null);
       setActualQuantityError(null);
       setReloadRequired(false);
+      setPostedDetailsPendingReload(false);
     }).catch((error: unknown) => {
       if (!active) return;
       const kind = handleProductionError(error, refreshAuthentication);
@@ -318,7 +321,8 @@ export function ProductionDetailPage({ productionId }: Readonly<{ productionId: 
       // POST intentionally returns only lifecycle fields. Merge its validated
       // authority into the already-rendered immutable detail, without a GET
       // that could fail after the database transaction has committed.
-      setState({ status: "ready", production: { ...production, status: "POSTED", postedAt: posted.postedAt, actualQuantity: posted.actualQuantity } });
+      setState({ status: "ready", production: mergePostedProductionResult(production, posted) });
+      setPostedDetailsPendingReload(true);
     } catch (error: unknown) {
       recordActionFailure(error);
     } finally {
@@ -362,7 +366,7 @@ export function ProductionDetailPage({ productionId }: Readonly<{ productionId: 
           <DetailItem label="作成日時" value={formatProductionTimestamp(production.createdAt)} />
         </dl>
         <section aria-labelledby="production-recipe-title" className="mt-8 border-t border-slate-200 pt-6"><h2 className="text-xl font-bold text-slate-950" id="production-recipe-title">レシピ系譜と出力スナップショット</h2><p className="mt-1 text-sm text-slate-700">現在のレシピ状態に関係なく、作成時に固定された系譜・出力を表示します。</p><dl className="mt-4 grid gap-x-8 gap-y-5 text-sm sm:grid-cols-2 lg:grid-cols-3"><DetailItem label="レシピID" value={production.recipe.id} /><DetailItem label="ルートレシピID" value={production.recipe.rootRecipeId} /><DetailItem label="リビジョン" value={String(production.recipe.revision)} /><DetailItem label="出力商品ID" value={production.output.productId} /><DetailItem label="レシピ歩留まり" value={production.output.yieldQuantity} /><DetailItem label="出力単位ID" value={production.output.unitId} /><DetailItem label="出力換算係数（スナップショット）" value={production.output.conversionFactor} /></dl></section>
-        <section aria-labelledby="production-consumptions-title" className="mt-8 border-t border-slate-200 pt-6"><h2 className="text-xl font-bold text-slate-950" id="production-consumptions-title">材料消費スナップショット</h2><p className="mt-1 text-sm text-slate-700">表示値はサーバーが保持する作成時点のスナップショットです。ブラウザーでは予定量への展開や在庫・原価計算を行いません。</p><div className="mt-4 overflow-x-auto rounded-lg border border-slate-200"><table className="min-w-full divide-y divide-slate-200 text-sm"><thead className="bg-slate-50 text-left text-slate-700"><tr><th className="px-4 py-3 font-semibold">行</th><th className="px-4 py-3 font-semibold">商品ID</th><th className="px-4 py-3 text-right font-semibold">レシピ量</th><th className="px-4 py-3 font-semibold">レシピ単位ID</th><th className="px-4 py-3 text-right font-semibold">在庫量</th><th className="px-4 py-3 font-semibold">在庫単位ID</th><th className="px-4 py-3 text-right font-semibold">換算係数</th><th className="px-4 py-3 text-right font-semibold">計上原価</th></tr></thead><tbody className="divide-y divide-slate-100">{production.consumptions.map((consumption) => <tr key={consumption.id}><td className="px-4 py-3 text-slate-950">{consumption.lineNumber}</td><td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{consumption.productId}</td><td className="px-4 py-3 text-right text-slate-950">{consumption.recipeQuantitySnapshot}</td><td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{consumption.recipeUnitId}</td><td className="px-4 py-3 text-right text-slate-950">{consumption.inventoryQuantity}</td><td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{consumption.inventoryUnitId}</td><td className="px-4 py-3 text-right text-slate-950">{consumption.conversionFactorSnapshot}</td><td className="px-4 py-3 text-right text-slate-950">{consumption.amountSnapshot} {consumption.currency}</td></tr>)}</tbody></table></div></section>
+        <section aria-labelledby="production-consumptions-title" className="mt-8 border-t border-slate-200 pt-6"><h2 className="text-xl font-bold text-slate-950" id="production-consumptions-title">材料消費スナップショット</h2><p className="mt-1 text-sm text-slate-700">表示値はサーバーが保持する作成時点のスナップショットです。ブラウザーでは予定量への展開や在庫・原価計算を行いません。</p>{postedDetailsPendingReload ? <section className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4"><p className="text-sm text-emerald-950" role="status">計上は完了しています。計上応答には材料消費・原価の詳細が含まれないため、古い値を確定値として表示していません。</p><button className="mt-3 rounded-md border border-emerald-300 px-3 py-2 text-sm font-medium text-emerald-950 hover:bg-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700" onClick={reloadLatest} type="button">計上済み詳細を再読み込み</button></section> : <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200"><table className="min-w-full divide-y divide-slate-200 text-sm"><thead className="bg-slate-50 text-left text-slate-700"><tr><th className="px-4 py-3 font-semibold">行</th><th className="px-4 py-3 font-semibold">商品ID</th><th className="px-4 py-3 text-right font-semibold">レシピ量</th><th className="px-4 py-3 font-semibold">レシピ単位ID</th><th className="px-4 py-3 text-right font-semibold">在庫量</th><th className="px-4 py-3 font-semibold">在庫単位ID</th><th className="px-4 py-3 text-right font-semibold">換算係数</th><th className="px-4 py-3 text-right font-semibold">単位原価</th><th className="px-4 py-3 text-right font-semibold">計上原価</th></tr></thead><tbody className="divide-y divide-slate-100">{production.consumptions.map((consumption) => <tr key={consumption.id}><td className="px-4 py-3 text-slate-950">{consumption.lineNumber}</td><td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{consumption.productId}</td><td className="px-4 py-3 text-right text-slate-950">{consumption.recipeQuantitySnapshot}</td><td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{consumption.recipeUnitId}</td><td className="px-4 py-3 text-right text-slate-950">{consumption.inventoryQuantity}</td><td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{consumption.inventoryUnitId}</td><td className="px-4 py-3 text-right text-slate-950">{consumption.conversionFactorSnapshot}</td><td className="px-4 py-3 text-right text-slate-950">{consumption.unitCostSnapshot} {consumption.currency}</td><td className="px-4 py-3 text-right text-slate-950">{consumption.amountSnapshot} {consumption.currency}</td></tr>)}</tbody></table></div>}</section>
       </div>
     </section>
   );

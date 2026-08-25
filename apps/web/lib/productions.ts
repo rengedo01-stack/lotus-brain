@@ -37,6 +37,13 @@ export type Production = {
   updatedAt: string;
 };
 
+export type PostedProductionResult = {
+  actualQuantity: string;
+  id: string;
+  postedAt: string;
+  status: "POSTED";
+};
+
 export type ActiveRecipe = {
   id: string;
   items: Array<{ id: string; productId: string; quantity: string; sortOrder: number; unitId: string }>;
@@ -145,8 +152,14 @@ export function isActiveRecipeList(value: unknown): value is ActiveRecipe[] {
   return Array.isArray(value) && value.every(isActiveRecipe);
 }
 
-export function isPostedProductionResult(value: unknown, productionId: string): value is { actualQuantity: string; id: string; postedAt: string; status: "POSTED" } {
+export function isPostedProductionResult(value: unknown, productionId: string): value is PostedProductionResult {
   return isRecord(value) && value.id === productionId && value.status === "POSTED" && isString(value.postedAt) && isDecimalString(value.actualQuantity);
+}
+
+// The post endpoint intentionally returns only these authoritative lifecycle
+// fields. Callers must not manufacture changed consumption or costing details.
+export function mergePostedProductionResult(production: Production, posted: PostedProductionResult): Production {
+  return { ...production, actualQuantity: posted.actualQuantity, postedAt: posted.postedAt, status: posted.status };
 }
 
 function isPositiveDecimal(value: string, pattern: RegExp): boolean {

@@ -4,6 +4,7 @@ import {
   isActiveRecipeList,
   isPostedProductionResult,
   isProduction,
+  mergePostedProductionResult,
   productionCreatePayload,
   productionFormFromProduction,
   productionUpdatePayload,
@@ -87,6 +88,20 @@ test("production and lifecycle response guards require string decimals and safe 
   assert.equal(isPostedProductionResult({ id: "production-1", status: "POSTED", postedAt: "2026-08-23T01:00:00.000Z", actualQuantity: "3.000000000" }, "production-1"), true);
   assert.equal(isPostedProductionResult({ id: "production-1", status: "POSTED", postedAt: "2026-08-23T01:00:00.000Z", actualQuantity: 3 }, "production-1"), false);
   assert.equal(isPostedProductionResult({ id: "production-1", status: "POSTED", postedAt: "2026-08-23T01:00:00.000Z", actualQuantity: "not-a-decimal" }, "production-1"), false);
+});
+
+test("a partial post response updates only authoritative lifecycle fields", () => {
+  const merged = mergePostedProductionResult(production, {
+    id: production.id,
+    status: "POSTED",
+    postedAt: "2026-08-23T01:00:00.000Z",
+    actualQuantity: "3.000000000",
+  });
+  assert.equal(merged.status, "POSTED");
+  assert.equal(merged.actualQuantity, "3.000000000");
+  assert.equal(merged.postedAt, "2026-08-23T01:00:00.000Z");
+  assert.equal(merged.consumptions, production.consumptions);
+  assert.equal(merged.output, production.output);
 });
 
 test("only active recipe responses are selectable for production creation", () => {
