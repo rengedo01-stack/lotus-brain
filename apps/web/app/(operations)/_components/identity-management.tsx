@@ -123,7 +123,7 @@ export function IdentityWorkspacePage() {
           <h1 className="text-3xl font-bold tracking-tight text-slate-950" id="identity-workspace-title">ユーザー管理</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-700">既存のIdentity Administration APIが返すユーザー状態を確認します。作成、復元、認証情報やロール割当の操作はこの画面には含めません。</p>
         </div>
-        {canManage && <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-950">ライフサイクル管理可</span>}
+        <div className="flex flex-wrap items-center gap-3">{canManage && <><span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-950">ライフサイクル管理可</span><Link className="text-sm font-medium text-blue-700 underline-offset-2 hover:underline" href="/identity/invitations">招待管理を開く</Link></>}</div>
       </div>
 
       <form className="mt-8 grid gap-4 rounded-xl bg-white p-5 shadow-sm md:grid-cols-4" noValidate onSubmit={submitFilters}>
