@@ -14,13 +14,11 @@ import {
   isAuthorizationPermissionList,
   isAuthorizationRole,
   isAuthorizationRoleList,
-  isIdentityUserList,
   type AuthorizationPermission,
   type AuthorizationRole,
   type AuthorizationFieldErrors,
   type CustomRoleFormValues,
   type CustomRoleUpdateValues,
-  type IdentityUser,
   type RoleStatus,
   revokePermissionLocally,
   revokeRoleLocally,
@@ -28,6 +26,7 @@ import {
   validateCustomRoleCreate,
   validateCustomRoleUpdate,
 } from "@/lib/authorization";
+import { isIdentityUserList, type IdentityUser } from "@/lib/identity";
 import { useOperationalApp } from "./operational-app";
 
 type WorkspaceState =
