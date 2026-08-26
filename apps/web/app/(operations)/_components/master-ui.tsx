@@ -10,6 +10,7 @@ export function MasterNavigation() {
   return (
     <nav aria-label="マスター管理" className="mb-6 flex flex-wrap gap-x-4 gap-y-2 text-sm">
       <Link className="font-medium text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href="/master/products">商品</Link>
+      <Link className="font-medium text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href="/master/recipes">レシピ／BOM</Link>
       <Link className="font-medium text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href="/master/units">単位</Link>
       <Link className="font-medium text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href="/master/suppliers">仕入先</Link>
     </nav>

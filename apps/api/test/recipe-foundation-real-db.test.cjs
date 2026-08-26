@@ -152,6 +152,9 @@ if (databaseUrl === undefined) {
         assert.equal(typeof revisedDraft, "object");
         assert.equal(revisedDraft.yieldQuantity, "5.5");
         assert.equal(revisedDraft.items[0].quantity, "2.75");
+        const activatedRevision = await repository.activate(revision.id);
+        assert.equal(typeof activatedRevision, "object");
+        assert.equal(activatedRevision.status, "ACTIVE");
 
         const archived = await repository.archive(draft.id);
         assert.equal(typeof archived, "object");
