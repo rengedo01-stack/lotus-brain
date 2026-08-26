@@ -184,6 +184,7 @@ function Navigation({ permissions }: Readonly<{ permissions: ReadonlySet<string>
       {hasPermission("purchase.read") && <NavigationLink href="/purchases" label="仕入" />}
       {hasPermission("stocktake.read") && <NavigationLink href="/stocktakes" label="棚卸" />}
       {hasPermission("production.read") && <NavigationLink href="/productions" label="生産" />}
+      {hasPermission("authorization.read") && <NavigationLink href="/authorization" label="認可管理" />}
       <NavigationLink href="/settings/passkeys" label="設定" />
     </nav>
   );

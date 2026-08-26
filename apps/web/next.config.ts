@@ -35,6 +35,14 @@ const nextConfig: NextConfig = {
         headers: operationalNoStoreHeaders,
       },
       {
+        source: "/authorization",
+        headers: operationalNoStoreHeaders,
+      },
+      {
+        source: "/authorization/:path*",
+        headers: operationalNoStoreHeaders,
+      },
+      {
         source: "/upload",
         headers: operationalNoStoreHeaders,
       },
