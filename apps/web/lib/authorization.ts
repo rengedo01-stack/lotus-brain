@@ -20,16 +20,6 @@ export type AuthorizationPermission = {
   id: string;
 };
 
-export type IdentityUser = {
-  createdAt: string;
-  deletedAt: string | null;
-  email: string;
-  id: string;
-  lastLoginAt: string | null;
-  status: string;
-  updatedAt: string;
-};
-
 export type CustomRoleFormValues = {
   code: string;
   description: string;
@@ -90,23 +80,6 @@ export function isAuthorizationPermission(value: unknown): value is Authorizatio
 
 export function isAuthorizationPermissionList(value: unknown): value is AuthorizationPermission[] {
   return Array.isArray(value) && value.every(isAuthorizationPermission);
-}
-
-export function isIdentityUser(value: unknown): value is IdentityUser {
-  if (!isRecord(value)) return false;
-  return (
-    isString(value.id)
-    && isString(value.email)
-    && isString(value.status)
-    && isString(value.createdAt)
-    && isString(value.updatedAt)
-    && isNullableString(value.lastLoginAt)
-    && isNullableString(value.deletedAt)
-  );
-}
-
-export function isIdentityUserList(value: unknown): value is IdentityUser[] {
-  return Array.isArray(value) && value.every(isIdentityUser);
 }
 
 export function initialCustomRoleFormValues(): CustomRoleFormValues {
