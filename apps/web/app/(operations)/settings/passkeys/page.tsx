@@ -1,6 +1,7 @@
 "use client";
 
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
+import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useOperationalApp } from "../../_components/operational-app";
 
@@ -168,6 +169,11 @@ export default function PasskeysSettingsPage() {
         <h1 className="text-2xl font-bold">パスキー</h1>
         <p className="mt-2 text-sm text-gray-700">
           パスキーの登録と管理、およびパスワード＋パスキーMFAの設定を行えます。
+        </p>
+        <p className="mt-3 text-sm">
+          <Link className="font-medium text-blue-700 underline-offset-2 hover:underline" href="/settings/password">
+            パスワードを変更
+          </Link>
         </p>
 
         <form className="mt-6 space-y-3 border-t pt-6" onSubmit={addPasskey}>
