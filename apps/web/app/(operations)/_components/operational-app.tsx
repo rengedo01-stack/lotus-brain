@@ -146,7 +146,7 @@ export function OperationalApp({ children }: Readonly<{ children: React.ReactNod
               <p className="text-xs text-slate-600">{bootstrapState.user.email}</p>
             </div>
             <div className="flex items-center gap-3">
-              <Link className="text-sm font-medium text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href="/settings/passkeys">
+              <Link className="text-sm font-medium text-blue-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href="/settings/password">
                 設定
               </Link>
               <button
@@ -187,7 +187,7 @@ function Navigation({ permissions }: Readonly<{ permissions: ReadonlySet<string>
       {hasPermission("authorization.read") && <NavigationLink href="/authorization" label="認可管理" />}
       {hasPermission("identity.read") && <NavigationLink href="/identity" label="ユーザー管理" />}
       {hasPermission("identity.manage") && <NavigationLink href="/identity/invitations" label="招待管理" />}
-      <NavigationLink href="/settings/passkeys" label="設定" />
+      <NavigationLink href="/settings/password" label="設定" />
     </nav>
   );
 }
