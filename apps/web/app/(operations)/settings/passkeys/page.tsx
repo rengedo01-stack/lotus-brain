@@ -2,24 +2,24 @@
 
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api-client";
 import {
   emailVerificationRequestPath,
   isEmailVerificationRequestAccepted,
 } from "@/lib/email-verification";
+import {
+  addPasskeyFromResponse,
+  isCurrentPasskeyListResponse,
+  isPasskeyList,
+  isPasskeyMutationResponse,
+  passkeyPaths,
+  passkeyRenamePath,
+  passkeyRevokePath,
+  replacePasskeyFromResponse,
+  type PasskeyView,
+} from "@/lib/passkey-management";
 import { useOperationalApp } from "../../_components/operational-app";
-
-type Passkey = {
-  backedUp: boolean | null;
-  createdAt: string;
-  deviceType: string | null;
-  displayName: string | null;
-  id: string;
-  lastUsedAt: string | null;
-  revokedAt: string | null;
-  transports: string[];
-};
 
 type MfaStatus = {
   activePasskeyCount: number;
@@ -37,32 +37,43 @@ function verificationRequestErrorMessage(error: unknown): string {
   return "確認メールをリクエストできませんでした。時間をおいて再試行してください。";
 }
 
+function passkeyErrorMessage(error: unknown, action: string): string {
+  if (error instanceof ApiError) {
+    if (error.kind === "conflict") return "パスキーの状態が更新されています。ページを再読み込みしてから再試行してください。";
+    if (error.kind === "forbidden") return "この操作は許可されていません。ログイン状態を確認してください。";
+    if (error.kind === "not_found") return "対象のパスキーは見つかりませんでした。ページを再読み込みしてください。";
+    if (error.kind === "validation") return "現在のパスワードまたはパスキーの入力内容を確認してください。";
+  }
+  return `パスキーを${action}できませんでした。時間をおいて再試行してください。`;
+}
+
 export default function PasskeysSettingsPage() {
   const { api } = useOperationalApp();
-  const [passkeys, setPasskeys] = useState<Passkey[]>([]);
+  const [passkeys, setPasskeys] = useState<PasskeyView[]>([]);
   const [state, setState] = useState<PageState>("loading");
   const [message, setMessage] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
+  const [pendingPasskeyId, setPendingPasskeyId] = useState<string | null>(null);
   const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
   const [verificationRequestError, setVerificationRequestError] = useState<string | null>(null);
   const [verificationRequestState, setVerificationRequestState] = useState<VerificationRequestState>("ready");
+  const passkeyListGeneration = useRef(0);
 
   const loadPasskeys = useCallback(async () => {
+    const generation = passkeyListGeneration.current;
     try {
-      const payload = await api.request<unknown>("/auth/passkeys");
-      if (!Array.isArray(payload)) throw new Error("Passkeys could not be loaded.");
-      setPasskeys(payload as Passkey[]);
+      const payload = await api.request<unknown>(passkeyPaths.list);
+      if (!isPasskeyList(payload)) throw new Error("Passkeys could not be loaded.");
+      if (!isCurrentPasskeyListResponse(generation, passkeyListGeneration.current)) return;
+      setPasskeys(payload);
       setState("ready");
-    } catch {
+    } catch (error: unknown) {
+      if (!isCurrentPasskeyListResponse(generation, passkeyListGeneration.current)) return;
+      if (error instanceof ApiError && error.kind === "unauthorized") return;
       setMessage("パスキーを読み込めませんでした。ログイン状態を確認してください。");
       setState("error");
     }
   }, [api, setMessage, setPasskeys, setState]);
-
-  async function refreshPasskeys() {
-    setState("loading");
-    await loadPasskeys();
-  }
 
   const refreshMfaStatus = useCallback(async () => {
     try {
@@ -89,6 +100,7 @@ export default function PasskeysSettingsPage() {
 
   async function addPasskey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (state === "registering") return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const currentPassword = form.get("currentPassword");
@@ -96,59 +108,78 @@ export default function PasskeysSettingsPage() {
     setMessage(null);
     setState("registering");
     try {
-      const optionsJSON = await api.request<Parameters<typeof startRegistration>[0]["optionsJSON"]>("/auth/passkeys/registration/options", {
+      const optionsJSON = await api.request<Parameters<typeof startRegistration>[0]["optionsJSON"]>(passkeyPaths.registrationOptions, {
         method: "POST",
         body: { currentPassword },
       });
       const response = await startRegistration({ optionsJSON });
-      await api.request<unknown>("/auth/passkeys/registration/verify", {
+      const verification = await api.request<unknown>(passkeyPaths.registrationVerify, {
         method: "POST",
         body: { response },
       });
+      if (!isPasskeyMutationResponse(verification)) throw new Error("Unexpected passkey registration response.");
+      passkeyListGeneration.current += 1;
+      setPasskeys((current) => addPasskeyFromResponse(current, verification.passkey));
+      void refreshMfaStatus();
       formElement.reset();
-      await refreshPasskeys();
       setMessage("パスキーを登録しました。パスワードログインは従来どおり利用できます。");
       setState("complete");
-    } catch {
-      setMessage("パスキーを登録できませんでした。もう一度新しい登録を開始してください。");
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.kind === "unauthorized") return;
+      setMessage(passkeyErrorMessage(error, "登録"));
       setState("error");
     }
   }
 
   async function renamePasskey(event: FormEvent<HTMLFormElement>, passkeyId: string) {
     event.preventDefault();
+    if (pendingPasskeyId !== null) return;
     const displayName = new FormData(event.currentTarget).get("displayName");
     if (typeof displayName !== "string") return;
     setMessage(null);
+    setPendingPasskeyId(passkeyId);
     try {
-      await api.request<unknown>(`/auth/passkeys/${encodeURIComponent(passkeyId)}`, {
+      const response = await api.request<unknown>(passkeyRenamePath(passkeyId), {
         method: "PATCH",
         body: { displayName },
       });
-      await refreshPasskeys();
+      if (!isPasskeyMutationResponse(response)) throw new Error("Unexpected passkey rename response.");
+      passkeyListGeneration.current += 1;
+      setPasskeys((current) => replacePasskeyFromResponse(current, response.passkey));
       setMessage("パスキー名を更新しました。");
-    } catch {
-      setMessage("パスキー名を更新できませんでした。");
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.kind === "unauthorized") return;
+      setMessage(passkeyErrorMessage(error, "名称変更"));
       setState("error");
+    } finally {
+      setPendingPasskeyId(null);
     }
   }
 
   async function revokePasskey(event: FormEvent<HTMLFormElement>, passkeyId: string) {
     event.preventDefault();
+    if (pendingPasskeyId !== null) return;
     const currentPassword = new FormData(event.currentTarget).get("currentPassword");
     if (typeof currentPassword !== "string" || currentPassword.length === 0) return;
     setMessage(null);
+    setPendingPasskeyId(passkeyId);
     try {
-      await api.request<unknown>(`/auth/passkeys/${encodeURIComponent(passkeyId)}/revoke`, {
+      const response = await api.request<unknown>(passkeyRevokePath(passkeyId), {
         method: "POST",
         body: { currentPassword },
       });
+      if (!isPasskeyMutationResponse(response)) throw new Error("Unexpected passkey revoke response.");
+      passkeyListGeneration.current += 1;
+      setPasskeys((current) => replacePasskeyFromResponse(current, response.passkey));
+      void refreshMfaStatus();
       setRevokeTarget(null);
-      await refreshPasskeys();
       setMessage("パスキーを無効化しました。パスワードログインは引き続き利用できます。");
-    } catch {
-      setMessage("パスキーを無効化できませんでした。");
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.kind === "unauthorized") return;
+      setMessage(passkeyErrorMessage(error, "無効化"));
       setState("error");
+    } finally {
+      setPendingPasskeyId(null);
     }
   }
 
@@ -321,16 +352,23 @@ export default function PasskeysSettingsPage() {
                   <p className="mt-1 text-xs text-gray-600">
                     状態: {passkey.revokedAt === null ? "有効" : "無効化済み"}
                   </p>
-                  <form className="mt-3 flex gap-2" onSubmit={(event) => void renamePasskey(event, passkey.id)}>
+                  <form
+                    className="mt-3 flex gap-2"
+                    key={`${passkey.id}:${passkey.updatedAt}`}
+                    onSubmit={(event) => void renamePasskey(event, passkey.id)}
+                  >
                     <input
                       aria-label="パスキー名"
                       className="min-w-0 flex-1 rounded border border-gray-300 px-3 py-2"
                       defaultValue={passkey.displayName ?? ""}
+                      disabled={pendingPasskeyId !== null}
                       maxLength={100}
                       name="displayName"
                       required
                     />
-                    <button className="rounded border border-gray-400 px-3 py-2 text-sm" type="submit">名前を変更</button>
+                    <button className="rounded border border-gray-400 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:text-gray-500" disabled={pendingPasskeyId !== null} type="submit">
+                      {pendingPasskeyId === passkey.id ? "更新中…" : "名前を変更"}
+                    </button>
                   </form>
                   {passkey.revokedAt === null && (revokeTarget === passkey.id ? (
                     <form className="mt-3 flex gap-2" onSubmit={(event) => void revokePasskey(event, passkey.id)}>
@@ -338,14 +376,17 @@ export default function PasskeysSettingsPage() {
                         aria-label="現在のパスワード"
                         autoComplete="current-password"
                         className="min-w-0 flex-1 rounded border border-gray-300 px-3 py-2"
+                        disabled={pendingPasskeyId !== null}
                         name="currentPassword"
                         required
                         type="password"
                       />
-                      <button className="rounded bg-red-700 px-3 py-2 text-sm text-white" type="submit">無効化を確定</button>
+                      <button className="rounded bg-red-700 px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:bg-gray-400" disabled={pendingPasskeyId !== null} type="submit">
+                        {pendingPasskeyId === passkey.id ? "無効化中…" : "無効化を確定"}
+                      </button>
                     </form>
                   ) : (
-                    <button className="mt-3 text-sm text-red-700" onClick={() => setRevokeTarget(passkey.id)} type="button">
+                    <button className="mt-3 text-sm text-red-700 disabled:cursor-not-allowed disabled:text-gray-500" disabled={pendingPasskeyId !== null} onClick={() => setRevokeTarget(passkey.id)} type="button">
                       このパスキーを無効化
                     </button>
                   ))}
