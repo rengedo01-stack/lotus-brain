@@ -3,6 +3,11 @@
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { ApiError } from "@/lib/api-client";
+import {
+  emailVerificationRequestPath,
+  isEmailVerificationRequestAccepted,
+} from "@/lib/email-verification";
 import { useOperationalApp } from "../../_components/operational-app";
 
 type Passkey = {
@@ -23,6 +28,14 @@ type MfaStatus = {
 };
 
 type PageState = "ready" | "loading" | "registering" | "mfa" | "complete" | "error";
+type VerificationRequestState = "ready" | "submitting" | "accepted" | "error";
+
+function verificationRequestErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.kind === "forbidden") {
+    return "確認メールをリクエストする権限がありません。ログイン状態を確認してください。";
+  }
+  return "確認メールをリクエストできませんでした。時間をおいて再試行してください。";
+}
 
 export default function PasskeysSettingsPage() {
   const { api } = useOperationalApp();
@@ -31,6 +44,8 @@ export default function PasskeysSettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
   const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
+  const [verificationRequestError, setVerificationRequestError] = useState<string | null>(null);
+  const [verificationRequestState, setVerificationRequestState] = useState<VerificationRequestState>("ready");
 
   const loadPasskeys = useCallback(async () => {
     try {
@@ -163,6 +178,21 @@ export default function PasskeysSettingsPage() {
     }
   }
 
+  async function requestEmailVerification() {
+    if (verificationRequestState === "submitting") return;
+    setVerificationRequestError(null);
+    setVerificationRequestState("submitting");
+    try {
+      const response = await api.request<unknown>(emailVerificationRequestPath, { method: "POST" });
+      if (!isEmailVerificationRequestAccepted(response)) throw new Error("Unexpected email verification response.");
+      setVerificationRequestState("accepted");
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.kind === "unauthorized") return;
+      setVerificationRequestError(verificationRequestErrorMessage(error));
+      setVerificationRequestState("error");
+    }
+  }
+
   return (
     <main className="min-h-screen bg-gray-100 p-8">
       <section className="mx-auto max-w-2xl rounded-xl bg-white p-8 shadow">
@@ -209,6 +239,32 @@ export default function PasskeysSettingsPage() {
               <p className="mt-3 text-sm text-gray-700">状態: {mfaStatus.enabled ? "有効" : "無効"}</p>
               <p className="mt-1 text-sm text-gray-700">有効なパスキー: {mfaStatus.activePasskeyCount} 件</p>
               <p className="mt-1 text-sm text-gray-700">復旧用メール: {mfaStatus.recoveryEmailVerified ? "確認済み" : "未確認"}</p>
+              {!mfaStatus.recoveryEmailVerified && (
+                <section aria-labelledby="email-verification-title" className="mt-4 rounded border border-gray-200 p-4">
+                  <h3 className="text-base font-semibold" id="email-verification-title">メールアドレスを確認</h3>
+                  <p className="mt-2 text-sm text-gray-700">
+                    パスキーMFAを有効にするには、ログイン中のメールアドレスの確認が必要です。
+                  </p>
+                  <button
+                    className="mt-3 rounded border border-blue-700 px-3 py-2 text-sm font-medium text-blue-700 disabled:cursor-not-allowed disabled:border-gray-400 disabled:text-gray-500"
+                    disabled={verificationRequestState === "submitting" || verificationRequestState === "accepted"}
+                    onClick={() => void requestEmailVerification()}
+                    type="button"
+                  >
+                    {verificationRequestState === "submitting" ? "リクエスト中…" : "確認メールをリクエスト"}
+                  </button>
+                  {verificationRequestState === "accepted" && (
+                    <p className="mt-3 text-sm text-gray-800" role="status">
+                      確認メールのリクエストを受け付けました。届いたリンクを開いた後、ページを更新して状態を確認してください。
+                    </p>
+                  )}
+                  {verificationRequestState === "error" && (
+                    <p className="mt-3 text-sm text-red-800" role="alert">
+                      {verificationRequestError ?? "確認メールをリクエストできませんでした。時間をおいて再試行してください。"}
+                    </p>
+                  )}
+                </section>
+              )}
               {!mfaStatus.enabled ? (
                 <form className="mt-4 space-y-3" onSubmit={(event) => void changeMfa(event, "enable")}>
                   <p className="text-sm text-gray-700">有効化には、確認済みの復旧用メール、1件以上の有効なパスキー、現在のパスワード、パスキー確認が必要です。</p>
