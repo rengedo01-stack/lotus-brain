@@ -1,6 +1,7 @@
 "use client";
 
 import { startAuthentication } from "@simplewebauthn/browser";
+import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
 import { createApiClient } from "@/lib/api-client";
 
@@ -99,6 +100,9 @@ export default function LoginPage() {
             {state === "passkey" ? "パスキーを確認中…" : state === "password" ? "パスワードを確認中…" : "ログイン"}
           </button>
         </form>
+        <Link className="mt-5 inline-block text-sm font-medium text-blue-700 underline-offset-2 hover:underline" href="/forgot-password">
+          パスワードをお忘れですか？
+        </Link>
         {message !== null && <p className="mt-4 text-sm text-red-800" role="alert">{message}</p>}
       </section>
     </main>
