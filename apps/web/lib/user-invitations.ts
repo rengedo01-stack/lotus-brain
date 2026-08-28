@@ -51,6 +51,10 @@ export function isUserInvitationResendAccepted(value: unknown): value is { statu
   return isRecord(value) && value.status === "accepted";
 }
 
+export function isUserInvitationAcceptanceComplete(value: unknown): value is { status: "ok" } {
+  return isRecord(value) && Object.keys(value).length === 1 && value.status === "ok";
+}
+
 export function userInvitationListPath(filters: UserInvitationFilters): string {
   const parameters = new URLSearchParams({ limit: "100", offset: "0" });
   if (filters.status.length > 0) parameters.set("status", filters.status);

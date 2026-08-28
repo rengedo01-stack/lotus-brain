@@ -2,8 +2,9 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ApiError, createApiClient } from "@/lib/api-client";
+import { isPasswordRecoveryResetComplete } from "@/lib/password-recovery";
 
-type ResetState = "ready" | "submitting" | "complete" | "invalid" | "mismatch" | "policy";
+type ResetState = "ready" | "submitting" | "complete" | "unconfirmed" | "invalid" | "mismatch" | "policy";
 
 export default function ResetPasswordPage() {
   const [api] = useState(createApiClient);
@@ -26,11 +27,12 @@ export default function ResetPasswordPage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     if (token === null) {
       setState("invalid");
       return;
     }
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
     const newPassword = form.get("newPassword");
     const confirmPassword = form.get("confirmPassword");
     if (typeof newPassword !== "string" || typeof confirmPassword !== "string" || newPassword !== confirmPassword) {
@@ -40,17 +42,21 @@ export default function ResetPasswordPage() {
 
     setState("submitting");
     try {
-      await api.request<unknown>("/auth/password/recovery/reset", {
+      const response = await api.request<unknown>("/auth/password/recovery/reset", {
         method: "POST",
         credentials: "omit",
         body: { token, newPassword },
         csrf: "none",
       });
       setToken(null);
-      event.currentTarget.reset();
+      formElement.reset();
+      if (!isPasswordRecoveryResetComplete(response)) {
+        setState("unconfirmed");
+        return;
+      }
       setState("complete");
     } catch (error: unknown) {
-      if (error instanceof ApiError && error.kind === "validation") {
+      if (error instanceof ApiError && error.status === 422) {
         setState("policy");
       } else {
         setToken(null);
@@ -65,6 +71,8 @@ export default function ResetPasswordPage() {
         <h1 className="text-2xl font-bold">Lotus BRAIN パスワード再設定</h1>
         {state === "complete" ? (
           <p className="mt-4">パスワードを再設定しました。新しいパスワードで通常どおりログインしてください。</p>
+        ) : state === "unconfirmed" ? (
+          <p className="mt-4" role="alert">パスワード再設定の結果を確認できませんでした。再試行せず、新しい再設定リンクをリクエストしてください。</p>
         ) : state === "invalid" ? (
           <p className="mt-4">再設定リンクは無効または期限切れです。新しいリンクをリクエストしてください。</p>
         ) : (

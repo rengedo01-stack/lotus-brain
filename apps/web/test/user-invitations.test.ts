@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isUserInvitationAcceptanceComplete,
   insertUserInvitation,
   isUserInvitation,
   isUserInvitationList,
@@ -26,6 +27,13 @@ test("invitation response guards accept only the documented administrative shape
   assert.equal(isUserInvitationList([{ ...invitation, email: null }]), false);
   assert.equal(isUserInvitationResendAccepted({ status: "accepted" }), true);
   assert.equal(isUserInvitationResendAccepted({ status: "ok" }), false);
+});
+
+test("invitation acceptance accepts only the documented exact completion response", () => {
+  assert.equal(isUserInvitationAcceptanceComplete({ status: "ok" }), true);
+  assert.equal(isUserInvitationAcceptanceComplete({ status: "accepted" }), false);
+  assert.equal(isUserInvitationAcceptanceComplete({ status: "ok", session: "not-allowed" }), false);
+  assert.equal(isUserInvitationAcceptanceComplete(null), false);
 });
 
 test("invitation directory request remains within the existing API contract", () => {

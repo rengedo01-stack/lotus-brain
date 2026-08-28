@@ -2,8 +2,9 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ApiError, createApiClient } from "@/lib/api-client";
+import { isUserInvitationAcceptanceComplete } from "@/lib/user-invitations";
 
-type AcceptanceState = "ready" | "submitting" | "complete" | "invalid" | "mismatch" | "policy";
+type AcceptanceState = "ready" | "submitting" | "complete" | "unconfirmed" | "invalid" | "mismatch" | "policy";
 
 export default function AcceptInvitationPage() {
   const [api] = useState(createApiClient);
@@ -26,11 +27,12 @@ export default function AcceptInvitationPage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     if (token === null) {
       setState("invalid");
       return;
     }
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
     const password = form.get("password");
     const confirmPassword = form.get("confirmPassword");
     if (typeof password !== "string" || typeof confirmPassword !== "string" || password !== confirmPassword) {
@@ -40,17 +42,21 @@ export default function AcceptInvitationPage() {
 
     setState("submitting");
     try {
-      await api.request<unknown>("/auth/invitations/accept", {
+      const response = await api.request<unknown>("/auth/invitations/accept", {
         method: "POST",
         credentials: "omit",
         body: { token, password },
         csrf: "none",
       });
       setToken(null);
-      event.currentTarget.reset();
+      formElement.reset();
+      if (!isUserInvitationAcceptanceComplete(response)) {
+        setState("unconfirmed");
+        return;
+      }
       setState("complete");
     } catch (error: unknown) {
-      if (error instanceof ApiError && error.kind === "validation") {
+      if (error instanceof ApiError && error.status === 422) {
         setState("policy");
       } else {
         setToken(null);
@@ -65,6 +71,8 @@ export default function AcceptInvitationPage() {
         <h1 className="text-2xl font-bold">Lotus BRAIN 招待の受諾</h1>
         {state === "complete" ? (
           <p className="mt-4">アカウントを作成しました。通常のログイン画面からログインしてください。</p>
+        ) : state === "unconfirmed" ? (
+          <p className="mt-4" role="alert">アカウント作成の結果を確認できませんでした。再試行せず、管理者にお問い合わせください。</p>
         ) : state === "invalid" ? (
           <p className="mt-4">招待リンクは無効または期限切れです。管理者に新しい招待を依頼してください。</p>
         ) : (
