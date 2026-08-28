@@ -19,15 +19,20 @@ import {
   replacePasskeyFromResponse,
   type PasskeyView,
 } from "@/lib/passkey-management";
+import {
+  isPasskeyAuthenticationOptions,
+  isPasskeyMfaMutationResponse,
+  isPasskeyMfaStatus,
+  passkeyMfaErrorMessage,
+  passkeyMfaOptionsPath,
+  passkeyMfaPaths,
+  passkeyMfaVerifyPath,
+  type PasskeyMfaAction,
+  type PasskeyMfaStatus,
+} from "@/lib/passkey-mfa";
 import { useOperationalApp } from "../../_components/operational-app";
 
-type MfaStatus = {
-  activePasskeyCount: number;
-  enabled: boolean;
-  recoveryEmailVerified: boolean;
-};
-
-type PageState = "ready" | "loading" | "registering" | "mfa" | "complete" | "error";
+type PageState = "ready" | "loading" | "registering" | "complete" | "error";
 type VerificationRequestState = "ready" | "submitting" | "accepted" | "error";
 
 function verificationRequestErrorMessage(error: unknown): string {
@@ -48,16 +53,22 @@ function passkeyErrorMessage(error: unknown, action: string): string {
 }
 
 export default function PasskeysSettingsPage() {
-  const { api } = useOperationalApp();
+  const { api, refreshAuthentication } = useOperationalApp();
   const [passkeys, setPasskeys] = useState<PasskeyView[]>([]);
   const [state, setState] = useState<PageState>("loading");
   const [message, setMessage] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
   const [pendingPasskeyId, setPendingPasskeyId] = useState<string | null>(null);
-  const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
+  const [mfaStatus, setMfaStatus] = useState<PasskeyMfaStatus | null>(null);
+  const [mfaOperation, setMfaOperation] = useState<PasskeyMfaAction | null>(null);
   const [verificationRequestError, setVerificationRequestError] = useState<string | null>(null);
   const [verificationRequestState, setVerificationRequestState] = useState<VerificationRequestState>("ready");
   const passkeyListGeneration = useRef(0);
+  const mutationPending =
+    state === "registering" ||
+    pendingPasskeyId !== null ||
+    mfaOperation !== null ||
+    verificationRequestState === "submitting";
 
   const loadPasskeys = useCallback(async () => {
     const generation = passkeyListGeneration.current;
@@ -77,14 +88,8 @@ export default function PasskeysSettingsPage() {
 
   const refreshMfaStatus = useCallback(async () => {
     try {
-      const payload = await api.request<MfaStatus>("/auth/mfa/passkey");
-      if (
-        typeof payload.enabled !== "boolean" ||
-        typeof payload.activePasskeyCount !== "number" ||
-        typeof payload.recoveryEmailVerified !== "boolean"
-      ) {
-        throw new Error("MFA status could not be loaded.");
-      }
+      const payload = await api.request<unknown>(passkeyMfaPaths.status);
+      if (!isPasskeyMfaStatus(payload)) throw new Error("MFA status could not be loaded.");
       setMfaStatus(payload);
     } catch {
       setMfaStatus(null);
@@ -100,7 +105,7 @@ export default function PasskeysSettingsPage() {
 
   async function addPasskey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (state === "registering") return;
+    if (mutationPending) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const currentPassword = form.get("currentPassword");
@@ -133,7 +138,7 @@ export default function PasskeysSettingsPage() {
 
   async function renamePasskey(event: FormEvent<HTMLFormElement>, passkeyId: string) {
     event.preventDefault();
-    if (pendingPasskeyId !== null) return;
+    if (mutationPending) return;
     const displayName = new FormData(event.currentTarget).get("displayName");
     if (typeof displayName !== "string") return;
     setMessage(null);
@@ -158,7 +163,7 @@ export default function PasskeysSettingsPage() {
 
   async function revokePasskey(event: FormEvent<HTMLFormElement>, passkeyId: string) {
     event.preventDefault();
-    if (pendingPasskeyId !== null) return;
+    if (mutationPending) return;
     const currentPassword = new FormData(event.currentTarget).get("currentPassword");
     if (typeof currentPassword !== "string" || currentPassword.length === 0) return;
     setMessage(null);
@@ -183,34 +188,40 @@ export default function PasskeysSettingsPage() {
     }
   }
 
-  async function changeMfa(event: FormEvent<HTMLFormElement>, action: "enable" | "disable") {
+  async function changeMfa(event: FormEvent<HTMLFormElement>, action: PasskeyMfaAction) {
     event.preventDefault();
+    if (mutationPending) return;
     const currentPassword = new FormData(event.currentTarget).get("currentPassword");
     if (typeof currentPassword !== "string" || currentPassword.length === 0) return;
     setMessage(null);
-    setState("mfa");
+    setMfaOperation(action);
     try {
-      const optionsJSON = await api.request<Parameters<typeof startAuthentication>[0]["optionsJSON"]>(`/auth/mfa/passkey/${action}/options`, {
+      const optionsJSON = await api.request<Parameters<typeof startAuthentication>[0]["optionsJSON"]>(passkeyMfaOptionsPath(action), {
         method: "POST",
         body: { currentPassword },
       });
+      if (!isPasskeyAuthenticationOptions(optionsJSON)) throw new Error("Unexpected MFA options response.");
       const assertion = await startAuthentication({ optionsJSON });
-      await api.request<unknown>(`/auth/mfa/passkey/${action}/verify`, {
+      const response = await api.request<unknown>(passkeyMfaVerifyPath(action), {
         method: "POST",
         body: { response: assertion },
       });
-      setState("complete");
-      setMessage(action === "enable"
-        ? "パスキーMFAを有効にしました。すべてのセッションが終了したため、もう一度ログインしてください。"
-        : "パスキーMFAを無効にしました。すべてのセッションが終了したため、もう一度ログインしてください。");
-    } catch {
-      setState("error");
-      setMessage("MFA設定を変更できませんでした。パスワードとパスキーを確認して再試行してください。");
+      if (!isPasskeyMfaMutationResponse(response)) throw new Error("Unexpected MFA mutation response.");
+
+      // The API has atomically invalidated every session and cleared this
+      // browser's session cookie. Rebootstrap immediately so an authenticated
+      // shell can never remain visible after a successful MFA policy change.
+      refreshAuthentication();
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.kind === "unauthorized") return;
+      setMessage(passkeyMfaErrorMessage(error));
+    } finally {
+      setMfaOperation(null);
     }
   }
 
   async function requestEmailVerification() {
-    if (verificationRequestState === "submitting") return;
+    if (mutationPending) return;
     setVerificationRequestError(null);
     setVerificationRequestState("submitting");
     try {
@@ -244,7 +255,7 @@ export default function PasskeysSettingsPage() {
             <input
               autoComplete="current-password"
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2"
-              disabled={state === "registering"}
+              disabled={mutationPending}
               name="currentPassword"
               required
               type="password"
@@ -252,7 +263,7 @@ export default function PasskeysSettingsPage() {
           </label>
           <button
             className="rounded bg-blue-700 px-4 py-2 font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-400"
-            disabled={state === "registering"}
+            disabled={mutationPending}
             type="submit"
           >
             {state === "registering" ? "登録中…" : "パスキーを登録"}
@@ -278,7 +289,7 @@ export default function PasskeysSettingsPage() {
                   </p>
                   <button
                     className="mt-3 rounded border border-blue-700 px-3 py-2 text-sm font-medium text-blue-700 disabled:cursor-not-allowed disabled:border-gray-400 disabled:text-gray-500"
-                    disabled={verificationRequestState === "submitting" || verificationRequestState === "accepted"}
+                    disabled={mutationPending || verificationRequestState === "accepted"}
                     onClick={() => void requestEmailVerification()}
                     type="button"
                   >
@@ -304,14 +315,14 @@ export default function PasskeysSettingsPage() {
                     <input
                       autoComplete="current-password"
                       className="mt-1 w-full rounded border border-gray-300 px-3 py-2"
-                      disabled={state === "mfa"}
+                      disabled={mutationPending}
                       name="currentPassword"
                       required
                       type="password"
                     />
                   </label>
-                  <button className="rounded bg-blue-700 px-4 py-2 font-medium text-white disabled:bg-gray-400" disabled={state === "mfa"} type="submit">
-                    {state === "mfa" ? "確認中…" : "パスキーMFAを有効化"}
+                  <button className="rounded bg-blue-700 px-4 py-2 font-medium text-white disabled:bg-gray-400" disabled={mutationPending} type="submit">
+                    {mfaOperation === "enable" ? "確認中…" : "パスキーMFAを有効化"}
                   </button>
                 </form>
               ) : (
@@ -322,14 +333,14 @@ export default function PasskeysSettingsPage() {
                     <input
                       autoComplete="current-password"
                       className="mt-1 w-full rounded border border-gray-300 px-3 py-2"
-                      disabled={state === "mfa"}
+                      disabled={mutationPending}
                       name="currentPassword"
                       required
                       type="password"
                     />
                   </label>
-                  <button className="rounded bg-red-700 px-4 py-2 font-medium text-white disabled:bg-gray-400" disabled={state === "mfa"} type="submit">
-                    {state === "mfa" ? "確認中…" : "パスキーMFAを無効化"}
+                  <button className="rounded bg-red-700 px-4 py-2 font-medium text-white disabled:bg-gray-400" disabled={mutationPending} type="submit">
+                    {mfaOperation === "disable" ? "確認中…" : "パスキーMFAを無効化"}
                   </button>
                 </form>
               )}
@@ -361,12 +372,12 @@ export default function PasskeysSettingsPage() {
                       aria-label="パスキー名"
                       className="min-w-0 flex-1 rounded border border-gray-300 px-3 py-2"
                       defaultValue={passkey.displayName ?? ""}
-                      disabled={pendingPasskeyId !== null}
+                      disabled={mutationPending}
                       maxLength={100}
                       name="displayName"
                       required
                     />
-                    <button className="rounded border border-gray-400 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:text-gray-500" disabled={pendingPasskeyId !== null} type="submit">
+                    <button className="rounded border border-gray-400 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:text-gray-500" disabled={mutationPending} type="submit">
                       {pendingPasskeyId === passkey.id ? "更新中…" : "名前を変更"}
                     </button>
                   </form>
@@ -376,17 +387,17 @@ export default function PasskeysSettingsPage() {
                         aria-label="現在のパスワード"
                         autoComplete="current-password"
                         className="min-w-0 flex-1 rounded border border-gray-300 px-3 py-2"
-                        disabled={pendingPasskeyId !== null}
+                        disabled={mutationPending}
                         name="currentPassword"
                         required
                         type="password"
                       />
-                      <button className="rounded bg-red-700 px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:bg-gray-400" disabled={pendingPasskeyId !== null} type="submit">
+                      <button className="rounded bg-red-700 px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:bg-gray-400" disabled={mutationPending} type="submit">
                         {pendingPasskeyId === passkey.id ? "無効化中…" : "無効化を確定"}
                       </button>
                     </form>
                   ) : (
-                    <button className="mt-3 text-sm text-red-700 disabled:cursor-not-allowed disabled:text-gray-500" disabled={pendingPasskeyId !== null} onClick={() => setRevokeTarget(passkey.id)} type="button">
+                    <button className="mt-3 text-sm text-red-700 disabled:cursor-not-allowed disabled:text-gray-500" disabled={mutationPending} onClick={() => setRevokeTarget(passkey.id)} type="button">
                       このパスキーを無効化
                     </button>
                   ))}
