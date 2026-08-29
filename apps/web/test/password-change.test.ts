@@ -9,7 +9,8 @@ import {
 test("password change accepts only the documented success response", () => {
   assert.equal(isPasswordChangeAccepted({ status: "ok" }), true);
   assert.equal(isPasswordChangeAccepted({ status: "accepted" }), false);
-  assert.equal(isPasswordChangeAccepted({ status: "ok", user: { id: "not-used" } }), true);
+  assert.equal(isPasswordChangeAccepted({ status: "ok", user: { id: "not-used" } }), false);
+  assert.equal(isPasswordChangeAccepted({ status: "ok", csrfToken: "not-used" }), false);
   assert.equal(isPasswordChangeAccepted(null), false);
 });
 

@@ -40,7 +40,12 @@ export function isPasskeyAuthenticationOptions(value: unknown): value is { chall
 }
 
 export function isPasskeyMfaMutationResponse(value: unknown): value is { status: "ok" } {
-  return typeof value === "object" && value !== null && (value as { status?: unknown }).status === "ok";
+  return (
+    typeof value === "object"
+    && value !== null
+    && Object.keys(value).length === 1
+    && (value as { status?: unknown }).status === "ok"
+  );
 }
 
 export function passkeyMfaErrorMessage(error: unknown): string {

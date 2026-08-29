@@ -24,5 +24,10 @@ export function passwordChangePayload(
 }
 
 export function isPasswordChangeAccepted(payload: unknown): payload is { status: "ok" } {
-  return typeof payload === "object" && payload !== null && (payload as { status?: unknown }).status === "ok";
+  return (
+    typeof payload === "object"
+    && payload !== null
+    && Object.keys(payload).length === 1
+    && (payload as { status?: unknown }).status === "ok"
+  );
 }

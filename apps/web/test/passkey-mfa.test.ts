@@ -24,6 +24,8 @@ test("passkey MFA settings accept only documented status and mutation responses"
   assert.equal(isPasskeyMfaStatus({ enabled: false, activePasskeyCount: 1.5, recoveryEmailVerified: true }), false);
   assert.equal(isPasskeyMfaMutationResponse({ status: "ok" }), true);
   assert.equal(isPasskeyMfaMutationResponse({ status: "updated" }), false);
+  assert.equal(isPasskeyMfaMutationResponse({ status: "ok", session: "not-used" }), false);
+  assert.equal(isPasskeyMfaMutationResponse(null), false);
 });
 
 test("passkey MFA settings require a usable assertion challenge before invoking WebAuthn", () => {
