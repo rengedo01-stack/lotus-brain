@@ -48,7 +48,14 @@ export default function PasswordSettingsPage() {
         method: "POST",
         body: payload,
       });
-      if (!isPasswordChangeAccepted(response)) throw new Error("Unexpected password change response.");
+      if (!isPasswordChangeAccepted(response)) {
+        // A contract violation can arrive after the server has atomically
+        // changed the credential and invalidated every session. Do not call a
+        // follow-up endpoint to guess the outcome or leave this shell visible.
+        api.clearCsrfToken();
+        window.location.replace("/login");
+        return;
+      }
 
       api.clearCsrfToken();
       formElement.reset();

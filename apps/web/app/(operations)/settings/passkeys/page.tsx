@@ -206,7 +206,14 @@ export default function PasskeysSettingsPage() {
         method: "POST",
         body: { response: assertion },
       });
-      if (!isPasskeyMfaMutationResponse(response)) throw new Error("Unexpected MFA mutation response.");
+      if (!isPasskeyMfaMutationResponse(response)) {
+        // The mutation may have committed and cleared every session before an
+        // unexpected 2xx body reached the client. Treat it as unconfirmed,
+        // not successful, and leave no authenticated shell or CSRF state.
+        api.clearCsrfToken();
+        window.location.replace("/login");
+        return;
+      }
 
       // The API has atomically invalidated every session and cleared this
       // browser's session cookie. Rebootstrap immediately so an authenticated
