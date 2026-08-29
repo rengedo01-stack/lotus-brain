@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createApiClient } from "@/lib/api-client";
+import { isEmailVerificationConfirmed } from "@/lib/email-verification";
 
-type VerificationState = "checking" | "verified" | "invalid";
+type VerificationState = "checking" | "verified" | "unconfirmed" | "invalid";
 
 export default function VerifyEmailPage() {
   const [api] = useState(createApiClient);
@@ -27,7 +28,7 @@ export default function VerifyEmailPage() {
       body: { token },
       csrf: "none",
     })
-      .then(() => setState("verified"))
+      .then((response) => setState(isEmailVerificationConfirmed(response) ? "verified" : "unconfirmed"))
       .catch(() => setState("invalid"));
   }, [api]);
 
@@ -37,6 +38,7 @@ export default function VerifyEmailPage() {
         <h1 className="text-2xl font-bold">Lotus BRAIN メールアドレス確認</h1>
         {state === "checking" && <p className="mt-4">確認しています…</p>}
         {state === "verified" && <p className="mt-4">メールアドレスを確認しました。</p>}
+        {state === "unconfirmed" && <p className="mt-4" role="alert">メールアドレス確認の結果を確認できませんでした。再試行せず、ログイン後に新しい確認メールをリクエストしてください。</p>}
         {state === "invalid" && <p className="mt-4">確認リンクは無効または期限切れです。ログイン後に新しい確認メールをリクエストしてください。</p>}
       </section>
     </main>
