@@ -7,22 +7,31 @@ import {
   Req,
   Res,
   UnauthorizedException,
+  ForbiddenException,
   Body,
   ConflictException,
   UnprocessableEntityException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { ApiBody, ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBody, ApiCookieAuth, ApiHeader, ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { Response } from "express";
 import {
   ChangePasswordUseCase,
+  ActivateSessionUseCase,
   LoginUseCase,
   LogoutUseCase,
   RotateCsrfTokenUseCase,
   GetCurrentUserUseCase,
 } from "../application/auth.use-cases";
-import { AuthConflictError, AuthInvalidCredentialsError, AuthValidationError } from "../auth.errors";
+import {
+  AuthConflictError,
+  AuthInvalidCredentialsError,
+  AuthSessionActivationCsrfError,
+  AuthSessionActivationUnauthorizedError,
+  AuthValidationError,
+} from "../auth.errors";
 import { Public } from "../decorators/public.decorator";
+import { PendingSessionActivation } from "../decorators/pending-session-activation.decorator";
 import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
 import { AuthorizationService } from "../../authorization/application/authorization.service";
 import { LoginDto } from "./dto/login.dto";
@@ -42,6 +51,7 @@ export class AuthController {
     private readonly authorizationService: AuthorizationService,
     private readonly rotateCsrfTokenUseCase: RotateCsrfTokenUseCase,
     private readonly logoutUseCase: LogoutUseCase,
+    private readonly activateSessionUseCase: ActivateSessionUseCase,
   ) {}
 
   @Public()
@@ -89,6 +99,30 @@ export class AuthController {
       return { user: result.user, csrfToken: result.csrfToken };
     } catch (error: unknown) {
       if (error instanceof AuthInvalidCredentialsError) throw new UnauthorizedException(error.message);
+      throw error;
+    }
+  }
+
+  @Post("session/activate")
+  @PendingSessionActivation()
+  @HttpCode(200)
+  @ApiOperation({ summary: "Activate the pending session bound to this login response" })
+  @ApiCookieAuth()
+  @ApiHeader({ name: "x-csrf-token", required: true, description: "The CSRF proof returned by the same login response." })
+  @ApiOkResponse({ description: "The pending session was activated." })
+  async activateSession(@Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {
+    const activation = request.pendingSessionActivation;
+    if (activation === undefined) throw new UnauthorizedException("Authentication required.");
+    try {
+      await this.activateSessionUseCase.execute({
+        tokenHash: activation.tokenHash,
+        csrfTokenHash: activation.csrfTokenHash,
+      });
+      response.setHeader("Cache-Control", "no-store");
+      return { status: "ok" as const };
+    } catch (error: unknown) {
+      if (error instanceof AuthSessionActivationCsrfError) throw new ForbiddenException(error.message);
+      if (error instanceof AuthSessionActivationUnauthorizedError) throw new UnauthorizedException(error.message);
       throw error;
     }
   }

@@ -33,6 +33,7 @@ type LockedUser = {
 };
 
 type LockedSession = {
+  activatedAt: Date | null;
   authenticationPolicyVersion: number;
   credentialVersion: number;
   expiresAt: Date;
@@ -110,6 +111,7 @@ export class PrismaPasskeyMfaRepository implements PasskeyMfaRepository {
           userId: true,
           credentialVersion: true,
           authenticationPolicyVersion: true,
+          activatedAt: true,
           revokedAt: true,
           expiresAt: true,
         },
@@ -119,6 +121,7 @@ export class PrismaPasskeyMfaRepository implements PasskeyMfaRepository {
       user === null ||
       session === null ||
       session.userId !== userId ||
+      session.activatedAt === null ||
       session.revokedAt !== null ||
       session.expiresAt <= new Date() ||
       session.credentialVersion !== user.credentialVersion ||
@@ -375,7 +378,7 @@ export class PrismaPasskeyMfaRepository implements PasskeyMfaRepository {
     ipAddress: string | null;
     newCounter: bigint;
     sessionCsrfTokenHash: string;
-    sessionExpiresAt: Date;
+    pendingSessionExpiresAt: Date;
     sessionTokenHash: string;
     transactionTokenHash: string;
     userAgent: string | null;
@@ -412,14 +415,14 @@ export class PrismaPasskeyMfaRepository implements PasskeyMfaRepository {
           csrfTokenHash: input.sessionCsrfTokenHash,
           credentialVersion: user.credentialVersion,
           authenticationPolicyVersion: user.authenticationPolicyVersion,
-          expiresAt: input.sessionExpiresAt,
+          expiresAt: input.pendingSessionExpiresAt,
+          activatedAt: null,
           userAgent: input.userAgent,
           ipAddress: input.ipAddress,
         },
       });
-      return transaction.user.update({
+      return transaction.user.findUniqueOrThrow({
         where: { id: user.id },
-        data: { lastLoginAt: now },
         select: {
           id: true,
           email: true,
@@ -449,7 +452,7 @@ export class PrismaPasskeyMfaRepository implements PasskeyMfaRepository {
 
   private async lockSession(transaction: TransactionClient, sessionId: string): Promise<LockedSession> {
     const sessions = await transaction.$queryRaw<LockedSession[]>(Prisma.sql`
-      SELECT "id", "userId", "credentialVersion", "authenticationPolicyVersion", "expiresAt", "revokedAt"
+      SELECT "id", "userId", "credentialVersion", "authenticationPolicyVersion", "expiresAt", "activatedAt", "revokedAt"
       FROM "IdentitySession"
       WHERE "id" = ${sessionId}
       FOR UPDATE
@@ -541,6 +544,7 @@ export class PrismaPasskeyMfaRepository implements PasskeyMfaRepository {
       user.credentialVersion !== expectedCredentialVersion ||
       user.authenticationPolicyVersion !== expectedAuthenticationPolicyVersion ||
       session.userId !== user.id ||
+      session.activatedAt === null ||
       session.revokedAt !== null ||
       session.expiresAt <= now ||
       session.credentialVersion !== user.credentialVersion ||

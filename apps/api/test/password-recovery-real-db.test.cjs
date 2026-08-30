@@ -54,7 +54,7 @@ if (databaseUrl === undefined) {
       return prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date() } });
     }
 
-    async function createSession(user) {
+    async function createSession(user, overrides = {}) {
       return prisma.identitySession.create({
         data: {
           userId: user.id,
@@ -62,6 +62,8 @@ if (databaseUrl === undefined) {
           csrfTokenHash: hashSecret(makeOpaqueToken()),
           credentialVersion: user.credentialVersion,
           expiresAt: new Date(Date.now() + 60_000),
+          activatedAt: new Date(),
+          ...overrides,
         },
       });
     }
@@ -131,6 +133,7 @@ if (databaseUrl === undefined) {
 
       await createSession(eligible);
       await createSession(eligible);
+      await createSession(eligible, { activatedAt: null });
       const sibling = await createRecoveryToken(eligible);
       const oldHash = (await prisma.user.findUniqueOrThrow({ where: { id: eligible.id } })).passwordHash;
       const newPassword = "first reset winner password is long enough";

@@ -10,6 +10,7 @@ import {
 } from "./config/environment";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CsrfGuard } from "./modules/auth/guards/csrf.guard";
+import { PendingSessionActivationGuard } from "./modules/auth/guards/pending-session-activation.guard";
 import { SessionAuthGuard } from "./modules/auth/guards/session-auth.guard";
 import { AuthorizationGuard } from "./modules/authorization/guards/authorization.guard";
 import { AuthorizationModule } from "./modules/authorization/authorization.module";
@@ -109,6 +110,10 @@ import { NotificationModule } from "./modules/notification/notification.module";
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: PendingSessionActivationGuard,
     },
     {
       provide: APP_GUARD,

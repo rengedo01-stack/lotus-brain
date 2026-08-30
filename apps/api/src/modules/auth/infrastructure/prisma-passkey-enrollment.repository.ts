@@ -30,6 +30,7 @@ type LockedUser = {
 };
 
 type LockedSession = {
+  activatedAt: Date | null;
   authenticationPolicyVersion: number;
   credentialVersion: number;
   expiresAt: Date;
@@ -83,13 +84,14 @@ export class PrismaPasskeyEnrollmentRepository implements PasskeyEnrollmentRepos
       }),
       this.prisma.identitySession.findUnique({
         where: { id: identitySessionId },
-        select: { userId: true, credentialVersion: true, authenticationPolicyVersion: true, revokedAt: true, expiresAt: true },
+        select: { userId: true, credentialVersion: true, authenticationPolicyVersion: true, activatedAt: true, revokedAt: true, expiresAt: true },
       }),
     ]);
     if (
       user === null ||
       session === null ||
       session.userId !== user.id ||
+      session.activatedAt === null ||
       session.revokedAt !== null ||
       session.expiresAt <= new Date() ||
       session.credentialVersion !== user.credentialVersion ||
@@ -357,7 +359,7 @@ export class PrismaPasskeyEnrollmentRepository implements PasskeyEnrollmentRepos
 
   private async lockSession(transaction: TransactionClient, sessionId: string): Promise<LockedSession> {
     const sessions = await transaction.$queryRaw<LockedSession[]>(Prisma.sql`
-      SELECT "id", "userId", "credentialVersion", "authenticationPolicyVersion", "expiresAt", "revokedAt"
+      SELECT "id", "userId", "credentialVersion", "authenticationPolicyVersion", "expiresAt", "activatedAt", "revokedAt"
       FROM "IdentitySession"
       WHERE "id" = ${sessionId}
       FOR UPDATE
@@ -394,6 +396,7 @@ export class PrismaPasskeyEnrollmentRepository implements PasskeyEnrollmentRepos
       user.deletedAt !== null ||
       user.credentialVersion !== expectedCredentialVersion ||
       session.userId !== user.id ||
+      session.activatedAt === null ||
       session.revokedAt !== null ||
       session.expiresAt <= now ||
       session.credentialVersion !== user.credentialVersion ||

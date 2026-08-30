@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { AUTH_PUBLIC_KEY } from "../../auth/auth.constants";
+import { AUTH_PENDING_SESSION_ACTIVATION_KEY, AUTH_PUBLIC_KEY } from "../../auth/auth.constants";
 import { isAuthInfrastructurePath } from "../../auth/auth.routes";
 import type { AuthenticatedRequest } from "../../auth/auth.types";
 import {
@@ -33,6 +33,11 @@ export class AuthorizationGuard implements CanActivate {
       context.getClass(),
     ]);
     if (isPublic === true) return true;
+    const isPendingActivation = this.reflector.getAllAndOverride<boolean>(AUTH_PENDING_SESSION_ACTIVATION_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPendingActivation === true) return true;
 
     if (request.authUser === undefined) {
       throw new UnauthorizedException("Authentication required.");

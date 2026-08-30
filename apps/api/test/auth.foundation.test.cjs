@@ -52,7 +52,7 @@ test("login use case returns safe user data and tokens", async () => {
         passwordHash,
       };
     },
-    async createSessionAndMarkUserLogin(input) {
+    async createPendingSession(input) {
       assert.equal(input.userId, "user-1");
       assert.equal(input.credentialVersion, 1);
       assert.ok(input.tokenHash.length > 0);
@@ -112,7 +112,7 @@ for (const status of ["DISABLED", "LOCKED"]) {
           passwordHash,
         };
       },
-      async createSessionAndMarkUserLogin() {
+      async createPendingSession() {
         throw new Error("session must not be created");
       },
     };
@@ -141,7 +141,7 @@ test("login rejects a soft-deleted user before every session side effect", async
         passwordHash,
       };
     },
-    async createSessionAndMarkUserLogin() {
+    async createPendingSession() {
       sessionsCreated += 1;
     },
   };
@@ -209,6 +209,7 @@ function makeSession(overrides = {}) {
     id: "session-1",
     userId: "user-1",
     expiresAt: new Date(Date.now() + 60_000),
+    activatedAt: new Date(),
     revokedAt: null,
     csrfTokenHash: hashSecret("csrf-token"),
     credentialVersion: 1,

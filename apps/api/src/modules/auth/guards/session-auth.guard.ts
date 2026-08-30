@@ -8,7 +8,12 @@ import {
 import { Reflector } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import { hashSecret } from "../auth.utils";
-import { AUTH_PUBLIC_KEY, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_INSECURE } from "../auth.constants";
+import {
+  AUTH_PENDING_SESSION_ACTIVATION_KEY,
+  AUTH_PUBLIC_KEY,
+  SESSION_COOKIE_NAME,
+  SESSION_COOKIE_NAME_INSECURE,
+} from "../auth.constants";
 import { isAuthInfrastructurePath } from "../auth.routes";
 import { AUTH_REPOSITORY, type AuthRepository } from "../application/auth.repository";
 import type { EnvironmentVariables } from "../../../config/environment";
@@ -29,6 +34,11 @@ export class SessionAuthGuard implements CanActivate {
       context.getClass(),
     ]);
     if (isPublic === true) return true;
+    const isPendingActivation = this.reflector.getAllAndOverride<boolean>(AUTH_PENDING_SESSION_ACTIVATION_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPendingActivation === true) return true;
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     if (isAuthInfrastructurePath(request.url)) return true;
@@ -40,6 +50,7 @@ export class SessionAuthGuard implements CanActivate {
     const session = await this.repository.findSessionByTokenHash(tokenHash);
     if (
       session === null ||
+      session.activatedAt === null ||
       session.revokedAt !== null ||
       session.expiresAt <= new Date() ||
       session.user === null ||

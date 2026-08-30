@@ -35,6 +35,7 @@ const sessionSelect = {
   id: true,
   userId: true,
   expiresAt: true,
+  activatedAt: true,
   revokedAt: true,
   csrfTokenHash: true,
   credentialVersion: true,
@@ -93,7 +94,7 @@ export class PrismaAuthRepository implements AuthRepository {
     });
   }
 
-  async createSessionAndMarkUserLogin(input: {
+  async createPendingSession(input: {
     userId: string;
     credentialVersion: number;
     authenticationPolicyVersion: number;
@@ -138,13 +139,86 @@ export class PrismaAuthRepository implements AuthRepository {
           credentialVersion: input.credentialVersion,
           authenticationPolicyVersion: input.authenticationPolicyVersion,
           expiresAt: input.expiresAt,
+          activatedAt: null,
           userAgent: input.userAgent ?? null,
           ipAddress: input.ipAddress ?? null,
         },
         select: sessionSelect,
       });
-      await transaction.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
       return session;
+    });
+  }
+
+  async activateSession(input: {
+    csrfTokenHash: string;
+    expiresAt: Date;
+    tokenHash: string;
+  }): Promise<"ACTIVATED" | "ALREADY_ACTIVATED" | "CSRF_INVALID" | "UNAUTHORIZED"> {
+    // User -> session is the common write-lock order for password changes and
+    // MFA policy transitions. It guarantees that activation can never revive a
+    // session after a concurrent invalidation has committed.
+    const reference = await this.prisma.identitySession.findUnique({
+      where: { tokenHash: input.tokenHash },
+      select: { userId: true },
+    });
+    if (reference === null) return "UNAUTHORIZED";
+
+    return this.prisma.$transaction(async (transaction) => {
+      const users = await transaction.$queryRaw<Array<{
+        id: string;
+        credentialVersion: number;
+        authenticationPolicyVersion: number;
+        status: "ACTIVE" | "DISABLED" | "LOCKED";
+        deletedAt: Date | null;
+      }>>(Prisma.sql`
+        SELECT "id", "credentialVersion", "authenticationPolicyVersion", "status", "deletedAt"
+        FROM "User"
+        WHERE "id" = ${reference.userId}
+        FOR UPDATE
+      `);
+      const user = users[0] ?? null;
+      if (user === null) return "UNAUTHORIZED";
+
+      const sessions = await transaction.$queryRaw<Array<{
+        id: string;
+        userId: string;
+        credentialVersion: number;
+        authenticationPolicyVersion: number;
+        csrfTokenHash: string;
+        expiresAt: Date;
+        activatedAt: Date | null;
+        revokedAt: Date | null;
+      }>>(Prisma.sql`
+        SELECT
+          "id", "userId", "credentialVersion", "authenticationPolicyVersion", "csrfTokenHash",
+          "expiresAt", "activatedAt", "revokedAt"
+        FROM "IdentitySession"
+        WHERE "tokenHash" = ${input.tokenHash}
+        FOR UPDATE
+      `);
+      const session = sessions[0] ?? null;
+      const now = new Date();
+      if (
+        session === null ||
+        session.userId !== user.id ||
+        session.revokedAt !== null ||
+        session.expiresAt <= now ||
+        user.status !== "ACTIVE" ||
+        user.deletedAt !== null ||
+        session.credentialVersion !== user.credentialVersion ||
+        session.authenticationPolicyVersion !== user.authenticationPolicyVersion
+      ) {
+        return "UNAUTHORIZED";
+      }
+      if (session.csrfTokenHash !== input.csrfTokenHash) return "CSRF_INVALID";
+      if (session.activatedAt !== null) return "ALREADY_ACTIVATED";
+
+      await transaction.identitySession.update({
+        where: { id: session.id },
+        data: { activatedAt: now, expiresAt: input.expiresAt },
+      });
+      await transaction.user.update({ where: { id: user.id }, data: { lastLoginAt: now } });
+      return "ACTIVATED";
     });
   }
 
@@ -192,7 +266,7 @@ export class PrismaAuthRepository implements AuthRepository {
 
   async rotateSessionCsrfToken(sessionId: string, csrfTokenHash: string): Promise<AuthSessionView | null> {
     const result = await this.prisma.identitySession.updateMany({
-      where: { id: sessionId, revokedAt: null },
+      where: { id: sessionId, revokedAt: null, activatedAt: { not: null } },
       data: {
         csrfTokenHash,
         lastSeenAt: new Date(),
@@ -215,7 +289,7 @@ export class PrismaAuthRepository implements AuthRepository {
 
   async touchSession(sessionId: string, lastSeenAt: Date): Promise<void> {
     await this.prisma.identitySession.updateMany({
-      where: { id: sessionId, revokedAt: null },
+      where: { id: sessionId, revokedAt: null, activatedAt: { not: null } },
       data: { lastSeenAt },
     });
   }
