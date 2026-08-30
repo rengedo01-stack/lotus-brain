@@ -6,6 +6,10 @@ if (process.env.NODE_ENV === "production" && (typeof publicApiBaseUrl !== "strin
 }
 
 const operationalNoStoreHeaders = [{ key: "Cache-Control", value: "private, no-store" }];
+const publicCredentialHeaders = [
+  { key: "Cache-Control", value: "no-store" },
+  { key: "Referrer-Policy", value: "no-referrer" },
+];
 
 const nextConfig: NextConfig = {
   async headers() {
@@ -55,32 +59,24 @@ const nextConfig: NextConfig = {
         headers: operationalNoStoreHeaders,
       },
       {
+        source: "/login",
+        headers: publicCredentialHeaders,
+      },
+      {
         source: "/verify-email",
-        headers: [
-          { key: "Cache-Control", value: "no-store" },
-          { key: "Referrer-Policy", value: "no-referrer" },
-        ],
+        headers: publicCredentialHeaders,
       },
       {
         source: "/reset-password",
-        headers: [
-          { key: "Cache-Control", value: "no-store" },
-          { key: "Referrer-Policy", value: "no-referrer" },
-        ],
+        headers: publicCredentialHeaders,
       },
       {
         source: "/forgot-password",
-        headers: [
-          { key: "Cache-Control", value: "no-store" },
-          { key: "Referrer-Policy", value: "no-referrer" },
-        ],
+        headers: publicCredentialHeaders,
       },
       {
         source: "/accept-invitation",
-        headers: [
-          { key: "Cache-Control", value: "no-store" },
-          { key: "Referrer-Policy", value: "no-referrer" },
-        ],
+        headers: publicCredentialHeaders,
       },
       {
         source: "/settings/passkeys",
