@@ -2,9 +2,9 @@ import { Inject, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { verify } from "argon2";
 import type { EnvironmentVariables } from "../../../config/environment";
-import { AUTH_SESSION_TTL_DAYS } from "../auth.constants";
+import { PENDING_SESSION_TTL_MS } from "../auth.constants";
 import { AuthInvalidCredentialsError } from "../auth.errors";
-import { hashSecret, makeOpaqueToken, secondsFromDays } from "../auth.utils";
+import { hashSecret, makeOpaqueToken } from "../auth.utils";
 import {
   PASSKEY_MFA_REPOSITORY,
   type MfaLoginUserView,
@@ -29,7 +29,6 @@ export type MfaRequiredLogin = {
 
 export type MfaLoginSuccess = {
   csrfToken: string;
-  sessionExpiresAt: Date;
   sessionToken: string;
   user: MfaLoginUserView;
 };
@@ -117,7 +116,7 @@ export class PasskeyMfaService {
 
     const sessionToken = makeOpaqueToken();
     const csrfToken = makeOpaqueToken();
-    const sessionExpiresAt = new Date(Date.now() + secondsFromDays(AUTH_SESSION_TTL_DAYS) * 1_000);
+    const pendingSessionExpiresAt = new Date(Date.now() + PENDING_SESSION_TTL_MS);
     const user = await this.repository.completeMfaLogin({
       challengeId: claim.ceremonyId,
       credentialId: claim.credential.id,
@@ -127,11 +126,11 @@ export class PasskeyMfaService {
       csrfTokenHash,
       sessionTokenHash: hashSecret(sessionToken),
       sessionCsrfTokenHash: hashSecret(csrfToken),
-      sessionExpiresAt,
+      pendingSessionExpiresAt,
       userAgent: input.userAgent,
       ipAddress: input.ipAddress,
     });
-    return { user, sessionToken, csrfToken, sessionExpiresAt };
+    return { user, sessionToken, csrfToken };
   }
 
   private async beginStepUp(input: {

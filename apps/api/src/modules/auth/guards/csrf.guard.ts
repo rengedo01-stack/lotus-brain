@@ -7,7 +7,12 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { createHash } from "node:crypto";
-import { AUTH_CSRF_EXEMPT_KEY, AUTH_PUBLIC_KEY, CSRF_HEADER_NAME } from "../auth.constants";
+import {
+  AUTH_CSRF_EXEMPT_KEY,
+  AUTH_PENDING_SESSION_ACTIVATION_KEY,
+  AUTH_PUBLIC_KEY,
+  CSRF_HEADER_NAME,
+} from "../auth.constants";
 import { isAuthInfrastructurePath } from "../auth.routes";
 import type { AuthenticatedRequest } from "../auth.types";
 
@@ -27,7 +32,11 @@ export class CsrfGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (isPublic === true || isCsrfExempt === true || isAuthInfrastructurePath(request.url)) return true;
+    const isPendingActivation = this.reflector.getAllAndOverride<boolean>(AUTH_PENDING_SESSION_ACTIVATION_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic === true || isCsrfExempt === true || isPendingActivation === true || isAuthInfrastructurePath(request.url)) return true;
 
     const session = request.authSession;
     if (session === undefined) throw new UnauthorizedException("Authentication required.");

@@ -8,12 +8,21 @@ export type AuthenticatedRequestUser = Pick<
 
 export type AuthenticatedRequestSession = Pick<
   IdentitySession,
-  "id" | "userId" | "credentialVersion" | "authenticationPolicyVersion" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
+  "id" | "userId" | "credentialVersion" | "authenticationPolicyVersion" | "expiresAt" | "activatedAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
 >;
+
+export type PendingSessionActivation = Pick<
+  IdentitySession,
+  "id" | "userId" | "credentialVersion" | "authenticationPolicyVersion"
+> & {
+  csrfTokenHash: string;
+  tokenHash: string;
+};
 
 export type AuthenticatedRequest = Request & {
   authUser?: AuthenticatedRequestUser;
   authSession?: AuthenticatedRequestSession;
+  pendingSessionActivation?: PendingSessionActivation;
 };
 
 export type LoginResponse = {

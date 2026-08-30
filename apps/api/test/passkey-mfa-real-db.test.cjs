@@ -55,6 +55,7 @@ if (databaseUrl === undefined) {
           credentialVersion: current.credentialVersion,
           authenticationPolicyVersion: current.authenticationPolicyVersion,
           expiresAt: new Date(Date.now() + 60_000),
+          activatedAt: new Date(),
           ...overrides,
         },
       });
@@ -64,6 +65,7 @@ if (databaseUrl === undefined) {
       const user = await createUser("mfa");
       const credential = await createCredential(user, "mfa");
       const oldSession = await createSession(user, "old");
+      const pendingBeforeEnable = await createSession(user, "pending-before-enable", { activatedAt: null });
 
       const stepUpHash = hashSecret(makeOpaqueToken());
       await mfa.beginStepUp({
@@ -94,6 +96,7 @@ if (databaseUrl === undefined) {
       assert.ok(enabled.passkeyMfaEnabledAt);
       assert.equal(enabled.authenticationPolicyVersion, 2);
       assert.ok((await prisma.identitySession.findUniqueOrThrow({ where: { id: oldSession.id } })).revokedAt);
+      assert.ok((await prisma.identitySession.findUniqueOrThrow({ where: { id: pendingBeforeEnable.id } })).revokedAt);
       assert.equal(await prisma.identityAuditLog.count({ where: { action: "PASSKEY_MFA_ENABLED", targetUserId: user.id } }), 1);
       assert.equal(await prisma.notificationOutbox.count({ where: { kind: "PASSKEY_MFA_ENABLED", userId: user.id } }), 1);
 
@@ -164,11 +167,17 @@ if (databaseUrl === undefined) {
         csrfTokenHash: hashSecret(loginCsrf),
         sessionTokenHash: hashSecret(makeOpaqueToken()),
         sessionCsrfTokenHash: hashSecret(makeOpaqueToken()),
-        sessionExpiresAt: new Date(Date.now() + 60_000),
+        pendingSessionExpiresAt: new Date(Date.now() + 60_000),
         ipAddress: null,
         userAgent: "real-db-test",
       });
       assert.equal(await prisma.identitySession.count({ where: { userId: user.id, revokedAt: null } }), 1);
+      const mfaPendingSession = await prisma.identitySession.findFirstOrThrow({
+        where: { userId: user.id, revokedAt: null },
+        orderBy: { createdAt: "desc" },
+      });
+      assert.equal(mfaPendingSession.activatedAt, null);
+      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).lastLoginAt, null);
       await assert.rejects(
         () => mfa.claimMfaLogin({
           transactionTokenHash: hashSecret(loginToken), csrfTokenHash: hashSecret(loginCsrf),
@@ -176,23 +185,64 @@ if (databaseUrl === undefined) {
         }),
       );
 
+      const disableSession = await createSession(enabled, "disable-active");
+      const pendingBeforeDisable = await createSession(enabled, "pending-before-disable", { activatedAt: null });
+      const disableHash = hashSecret(makeOpaqueToken());
+      await mfa.beginStepUp({
+        userId: user.id,
+        identitySessionId: disableSession.id,
+        purpose: "DISABLE_MFA",
+        expectedCredentialVersion: enabled.credentialVersion,
+        expectedAuthenticationPolicyVersion: enabled.authenticationPolicyVersion,
+        challengeHash: disableHash,
+      });
+      const disableClaim = await mfa.claimStepUp({
+        userId: user.id,
+        identitySessionId: disableSession.id,
+        purpose: "DISABLE_MFA",
+        challengeHash: disableHash,
+        credentialId: credential.credentialId,
+      });
+      await mfa.completeStepUp({
+        userId: user.id,
+        identitySessionId: disableSession.id,
+        purpose: "DISABLE_MFA",
+        challengeId: disableClaim.ceremonyId,
+        credentialId: disableClaim.credential.id,
+        expectedCounter: disableClaim.credential.counter,
+        newCounter: 0n,
+      });
+      const disabledMfa = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      assert.equal(disabledMfa.passkeyMfaEnabledAt, null);
+      assert.equal(disabledMfa.authenticationPolicyVersion, 3);
+      assert.ok((await prisma.identitySession.findUniqueOrThrow({ where: { id: disableSession.id } })).revokedAt);
+      assert.ok((await prisma.identitySession.findUniqueOrThrow({ where: { id: pendingBeforeDisable.id } })).revokedAt);
+      assert.equal(await prisma.identityAuditLog.count({ where: { action: "PASSKEY_MFA_DISABLED", targetUserId: user.id } }), 1);
+      assert.equal(await prisma.notificationOutbox.count({ where: { kind: "PASSKEY_MFA_DISABLED", userId: user.id } }), 1);
+
+      const staleUser = await createUser("stale-mfa");
+      const staleCredential = await createCredential(staleUser, "stale-mfa");
+      await prisma.user.update({
+        where: { id: staleUser.id },
+        data: { passkeyMfaEnabledAt: new Date(), authenticationPolicyVersion: { increment: 1 } },
+      });
       const staleToken = makeOpaqueToken();
       const staleCsrf = makeOpaqueToken();
       const staleChallenge = makeOpaqueToken();
       await mfa.beginMfaLogin({
-        userId: user.id,
-        credentialVersion: enabled.credentialVersion,
-        authenticationPolicyVersion: enabled.authenticationPolicyVersion,
+        userId: staleUser.id,
+        credentialVersion: staleUser.credentialVersion,
+        authenticationPolicyVersion: staleUser.authenticationPolicyVersion + 1,
         transactionTokenHash: hashSecret(staleToken), csrfTokenHash: hashSecret(staleCsrf), challengeHash: hashSecret(staleChallenge),
       });
       await prisma.user.update({
-        where: { id: user.id },
+        where: { id: staleUser.id },
         data: { passkeyMfaEnabledAt: null, authenticationPolicyVersion: { increment: 1 } },
       });
       await assert.rejects(
         () => mfa.claimMfaLogin({
           transactionTokenHash: hashSecret(staleToken), csrfTokenHash: hashSecret(staleCsrf),
-          challengeHash: hashSecret(staleChallenge), credentialId: credential.credentialId,
+          challengeHash: hashSecret(staleChallenge), credentialId: staleCredential.credentialId,
         }),
       );
 

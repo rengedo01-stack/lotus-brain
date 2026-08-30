@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { PrismaModule } from "../../prisma/prisma.module";
 import { AuthorizationModule } from "../authorization/authorization.module";
 import {
+  ActivateSessionUseCase,
   LoginUseCase,
   LogoutUseCase,
   RotateCsrfTokenUseCase,
@@ -27,6 +28,7 @@ import { PasskeyMfaController, PasskeyMfaLoginController } from "./presentation/
   imports: [PrismaModule, AuthorizationModule],
   controllers: [AuthController, PasskeyController, PasskeyMfaController, PasskeyMfaLoginController],
   providers: [
+    ActivateSessionUseCase,
     LoginUseCase,
     ChangePasswordUseCase,
     GetCurrentUserUseCase,
@@ -45,6 +47,7 @@ import { PasskeyMfaController, PasskeyMfaLoginController } from "./presentation/
   ],
   exports: [
     AUTH_REPOSITORY,
+    ActivateSessionUseCase,
     LoginUseCase,
     ChangePasswordUseCase,
     GetCurrentUserUseCase,

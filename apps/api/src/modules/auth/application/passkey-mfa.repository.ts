@@ -97,7 +97,7 @@ export interface PasskeyMfaRepository {
     ipAddress: string | null;
     newCounter: bigint;
     sessionCsrfTokenHash: string;
-    sessionExpiresAt: Date;
+    pendingSessionExpiresAt: Date;
     sessionTokenHash: string;
     transactionTokenHash: string;
     userAgent: string | null;

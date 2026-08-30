@@ -100,7 +100,7 @@ test("MFA-enabled password login creates no IdentitySession and exposes MFA_REQU
   const mfaCalls = [];
   const repository = {
     async findUserByEmail() { return { ...activeUser(), passwordHash }; },
-    async createSessionAndMarkUserLogin() { sessionCreates += 1; },
+    async createPendingSession() { sessionCreates += 1; },
   };
   const mfa = {
     async beginMfaLogin(input) {
@@ -166,6 +166,8 @@ test("MFA login verification requires the pre-auth cookie, pre-auth CSRF, exact 
   assert.notEqual(result.csrfToken, "raw-pre-auth-csrf");
   assert.match(completion.sessionTokenHash, /^[a-f0-9]{64}$/);
   assert.match(completion.sessionCsrfTokenHash, /^[a-f0-9]{64}$/);
+  assert.ok(completion.pendingSessionExpiresAt.getTime() <= Date.now() + (5 * 60 * 1_000) + 1_000);
+  assert.equal(Object.hasOwn(completion, "sessionExpiresAt"), false);
   assert.equal(completion.credentialId, "credential-row");
 });
 
@@ -201,6 +203,7 @@ test("SessionAuthGuard rejects stale authentication policy versions and prevents
     authenticationPolicyVersion: 8,
     csrfTokenHash: "csrf",
     expiresAt: new Date(Date.now() + 60_000),
+    activatedAt: new Date(),
     revokedAt: null,
     lastSeenAt: null,
     user: activeUser({ authenticationPolicyVersion: 9, passkeyMfaEnabledAt: null }),

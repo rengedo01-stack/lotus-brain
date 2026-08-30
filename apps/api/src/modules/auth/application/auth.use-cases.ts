@@ -3,6 +3,8 @@ import {
   AuthForbiddenError,
   AuthInvalidCredentialsError,
   AuthNotFoundError,
+  AuthSessionActivationCsrfError,
+  AuthSessionActivationUnauthorizedError,
 } from "../auth.errors";
 import {
   AUTH_REPOSITORY,
@@ -12,7 +14,7 @@ import {
   type LoginInput,
 } from "./auth.repository";
 import { hashSecret, makeOpaqueToken, normalizeEmail, secondsFromDays } from "../auth.utils";
-import { AUTH_SESSION_TTL_DAYS } from "../auth.constants";
+import { AUTH_SESSION_TTL_DAYS, PENDING_SESSION_TTL_MS } from "../auth.constants";
 import { PasswordPolicy } from "../password.policy";
 import { PasskeyMfaService, type MfaRequiredLogin } from "./passkey-mfa.service";
 
@@ -21,7 +23,6 @@ export type PasswordLoginResult = {
   user: AuthUserView;
   csrfToken: string;
   sessionToken: string;
-  sessionExpiresAt: Date;
 } | ({ status: "MFA_REQUIRED" } & MfaRequiredLogin);
 
 @Injectable()
@@ -56,13 +57,13 @@ export class LoginUseCase {
     const csrfToken = makeOpaqueToken();
     const sessionTokenHash = hashSecret(sessionToken);
     const csrfTokenHash = hashSecret(csrfToken);
-    const sessionExpiresAt = new Date(Date.now() + secondsFromDays(AUTH_SESSION_TTL_DAYS) * 1000);
+    const pendingSessionExpiresAt = new Date(Date.now() + PENDING_SESSION_TTL_MS);
 
-    await this.repository.createSessionAndMarkUserLogin({
+    await this.repository.createPendingSession({
       csrfTokenHash,
       credentialVersion: user.credentialVersion,
       authenticationPolicyVersion: user.authenticationPolicyVersion,
-      expiresAt: sessionExpiresAt,
+      expiresAt: pendingSessionExpiresAt,
       ipAddress: input.ipAddress ?? null,
       tokenHash: sessionTokenHash,
       userAgent: input.userAgent ?? null,
@@ -74,7 +75,21 @@ export class LoginUseCase {
     void credentialVersion;
     void authenticationPolicyVersion;
     void passkeyMfaEnabledAt;
-    return { status: "AUTHENTICATED", user: safeUser, csrfToken, sessionToken, sessionExpiresAt };
+    return { status: "AUTHENTICATED", user: safeUser, csrfToken, sessionToken };
+  }
+}
+
+@Injectable()
+export class ActivateSessionUseCase {
+  constructor(@Inject(AUTH_REPOSITORY) private readonly repository: AuthRepository) {}
+
+  async execute(input: { csrfTokenHash: string; tokenHash: string }): Promise<void> {
+    const result = await this.repository.activateSession({
+      ...input,
+      expiresAt: new Date(Date.now() + secondsFromDays(AUTH_SESSION_TTL_DAYS) * 1_000),
+    });
+    if (result === "CSRF_INVALID") throw new AuthSessionActivationCsrfError("CSRF token is invalid.");
+    if (result === "UNAUTHORIZED") throw new AuthSessionActivationUnauthorizedError("Authentication required.");
   }
 }
 

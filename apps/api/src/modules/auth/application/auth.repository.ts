@@ -19,7 +19,7 @@ export type AuthPasswordCredentialView = Pick<
 
 export type AuthSessionView = Pick<
   IdentitySession,
-  "id" | "userId" | "credentialVersion" | "authenticationPolicyVersion" | "expiresAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
+  "id" | "userId" | "credentialVersion" | "authenticationPolicyVersion" | "expiresAt" | "activatedAt" | "revokedAt" | "csrfTokenHash" | "lastSeenAt"
 >;
 
 export type LoginInput = {
@@ -48,7 +48,7 @@ export interface AuthRepository {
   findSessionByTokenHash(tokenHash: string): Promise<
     (AuthSessionView & { user: AuthSessionUserView | null }) | null
   >;
-  createSessionAndMarkUserLogin(input: {
+  createPendingSession(input: {
     userId: string;
     credentialVersion: number;
     authenticationPolicyVersion: number;
@@ -58,6 +58,11 @@ export interface AuthRepository {
     userAgent?: string | null;
     ipAddress?: string | null;
   }): Promise<AuthSessionView>;
+  activateSession(input: {
+    csrfTokenHash: string;
+    expiresAt: Date;
+    tokenHash: string;
+  }): Promise<"ACTIVATED" | "ALREADY_ACTIVATED" | "CSRF_INVALID" | "UNAUTHORIZED">;
   changePassword(input: ChangePasswordInput): Promise<void>;
   rotateSessionCsrfToken(sessionId: string, csrfTokenHash: string): Promise<AuthSessionView | null>;
   revokeSession(sessionId: string): Promise<boolean>;

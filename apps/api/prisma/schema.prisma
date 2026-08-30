@@ -291,6 +291,9 @@ model IdentitySession {
   credentialVersion           Int
   authenticationPolicyVersion Int       @default(1)
   expiresAt                   DateTime
+  // A freshly verified login remains non-authenticating until the client has
+  // validated the login response and explicitly activates this exact session.
+  activatedAt                 DateTime?
   revokedAt                   DateTime?
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
