@@ -4,23 +4,13 @@ import { startAuthentication } from "@simplewebauthn/browser";
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
 import { createApiClient } from "@/lib/api-client";
+import {
+  completeLoginResponse,
+  isMfaRequiredLoginResponse,
+  SessionActivationAmbiguityError,
+} from "@/lib/login-authentication";
 
 type LoginState = "ready" | "password" | "passkey" | "error";
-
-type AuthenticatedLoginResponse = {
-  csrfToken: string;
-  user: { email: string };
-};
-
-type MfaRequiredLoginResponse = {
-  options: Parameters<typeof startAuthentication>[0]["optionsJSON"];
-  preAuthCsrfToken: string;
-  status: "MFA_REQUIRED";
-};
-
-function isMfaRequired(value: unknown): value is MfaRequiredLoginResponse {
-  return typeof value === "object" && value !== null && (value as { status?: unknown }).status === "MFA_REQUIRED";
-}
 
 export default function LoginPage() {
   const api = useMemo(() => createApiClient(), []);
@@ -42,37 +32,21 @@ export default function LoginPage() {
         body: { email, password },
         csrf: "none",
       });
-      if (!isMfaRequired(payload)) {
-        const authenticated = payload as AuthenticatedLoginResponse;
-        if (typeof authenticated.csrfToken !== "string" || typeof authenticated.user?.email !== "string") {
-          throw new Error("Invalid login response.");
-        }
-        window.location.assign("/");
+      if (isMfaRequiredLoginResponse(payload)) setState("passkey");
+      await completeLoginResponse(
+        api,
+        payload,
+        async (options) => startAuthentication({ optionsJSON: options }),
+      );
+      window.location.assign("/");
+    } catch (error: unknown) {
+      api.clearCsrfToken();
+      if (error instanceof SessionActivationAmbiguityError) {
+        // Activation may have committed before a malformed or missing response
+        // reached the client. Never retain a shell or infer success with GET.
+        window.location.replace("/login");
         return;
       }
-
-      // Password verification alone is not a completed login.  The API has
-      // issued only a short-lived pre-auth cookie at this point.
-      setState("passkey");
-      const assertion = await startAuthentication({ optionsJSON: payload.options });
-      const authenticated = await api.request<unknown>("/auth/login/passkey/verify", {
-        method: "POST",
-        headers: {
-          "x-csrf-token": payload.preAuthCsrfToken,
-        },
-        body: { response: assertion },
-        csrf: "none",
-      });
-      if (
-        typeof authenticated !== "object" ||
-        authenticated === null ||
-        typeof (authenticated as AuthenticatedLoginResponse).csrfToken !== "string" ||
-        typeof (authenticated as AuthenticatedLoginResponse).user?.email !== "string"
-      ) {
-        throw new Error("Invalid login response.");
-      }
-      window.location.assign("/");
-    } catch {
       setState("error");
       setMessage("ログインを完了できませんでした。メールアドレスとパスワード、またはパスキーを確認して再試行してください。");
     }
