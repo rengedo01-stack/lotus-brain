@@ -15,7 +15,7 @@ export type AuthenticatedLoginUser = {
   id: string;
   email: string;
   displayName: string;
-  status: "ACTIVE" | "DISABLED" | "LOCKED";
+  status: "ACTIVE";
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -75,7 +75,7 @@ function isAuthenticatedLoginUser(value: unknown): value is AuthenticatedLoginUs
     isNonEmptyString(value.id) &&
     isNonEmptyString(value.email) &&
     isNonEmptyString(value.displayName) &&
-    (value.status === "ACTIVE" || value.status === "DISABLED" || value.status === "LOCKED") &&
+    value.status === "ACTIVE" &&
     (value.lastLoginAt === null || isIsoTimestamp(value.lastLoginAt)) &&
     isIsoTimestamp(value.createdAt) &&
     isIsoTimestamp(value.updatedAt)

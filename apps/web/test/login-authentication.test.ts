@@ -33,10 +33,30 @@ const mfaRequiredLogin = {
 test("accepts only the exact authenticated login response contract", () => {
   assert.equal(isAuthenticatedLoginResponse(authenticatedLogin), true);
   assert.equal(isAuthenticatedLoginResponse({ ...authenticatedLogin, status: "AUTHENTICATED" }), false);
+  assert.equal(isAuthenticatedLoginResponse({
+    ...authenticatedLogin,
+    user: { ...authenticatedLogin.user, status: "DISABLED" },
+  }), false);
+  assert.equal(isAuthenticatedLoginResponse({
+    ...authenticatedLogin,
+    user: { ...authenticatedLogin.user, status: "LOCKED" },
+  }), false);
   assert.equal(isAuthenticatedLoginResponse({ user: authenticatedLogin.user }), false);
   assert.equal(isAuthenticatedLoginResponse({
     ...authenticatedLogin,
     user: { ...authenticatedLogin.user, passwordHash: "must-not-be-accepted" },
+  }), false);
+  assert.equal(isAuthenticatedLoginResponse({
+    ...authenticatedLogin,
+    user: { ...authenticatedLogin.user, displayName: 42 },
+  }), false);
+  assert.equal(isAuthenticatedLoginResponse({
+    ...authenticatedLogin,
+    user: { ...authenticatedLogin.user, updatedAt: "2026-08-30" },
+  }), false);
+  assert.equal(isAuthenticatedLoginResponse({
+    ...authenticatedLogin,
+    user: { id: authenticatedLogin.user.id, email: authenticatedLogin.user.email },
   }), false);
   assert.equal(isAuthenticatedLoginResponse({ ...authenticatedLogin, csrfToken: "" }), false);
   assert.equal(isAuthenticatedLoginResponse(null), false);
@@ -181,6 +201,23 @@ test("a malformed normal login response cannot activate a pending cookie", async
   assert.equal(requests, 0);
 });
 
+test("a non-ACTIVE normal login response cannot activate a pending cookie", async () => {
+  let requests = 0;
+  await assert.rejects(
+    () => completeLoginResponse({
+      async request<T>(): Promise<T> {
+        requests += 1;
+        throw new Error("A non-ACTIVE login response must stop before activation.");
+      },
+    }, {
+      ...authenticatedLogin,
+      user: { ...authenticatedLogin.user, status: "DISABLED" },
+    }, async () => ({ id: "assertion" })),
+    LoginResponseContractError,
+  );
+  assert.equal(requests, 0);
+});
+
 test("MFA verification is strictly validated before the pending session is activated", async () => {
   const calls: Array<{ path: string; options: unknown }> = [];
   let passkeyOptions: unknown;
@@ -226,6 +263,25 @@ test("a malformed MFA verify response cannot activate the pending session", asyn
     async request<T>(path: string): Promise<T> {
       calls.push(path);
       return { user: authenticatedLogin.user, csrfToken: "csrf-token", extra: "unexpected" } as T;
+    },
+  };
+
+  await assert.rejects(
+    () => completeLoginResponse(api, mfaRequiredLogin, async () => ({ id: "assertion" })),
+    LoginResponseContractError,
+  );
+  assert.deepEqual(calls, ["/auth/login/passkey/verify"]);
+});
+
+test("a non-ACTIVE MFA verify response cannot activate the pending session", async () => {
+  const calls: string[] = [];
+  const api = {
+    async request<T>(path: string): Promise<T> {
+      calls.push(path);
+      return {
+        ...authenticatedLogin,
+        user: { ...authenticatedLogin.user, status: "LOCKED" },
+      } as T;
     },
   };
 

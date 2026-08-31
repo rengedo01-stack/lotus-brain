@@ -49,29 +49,18 @@ import type { EnvironmentVariables } from "../../../config/environment";
 import { makeMfaPreauthCookieName, makeSessionCookieName } from "../auth.utils";
 import type { AuthenticatedRequest, LoginResponse } from "../auth.types";
 import { ChangePasswordDto } from "./dto/change-password.dto";
-
-const authenticatedUserResponseSchema = {
-  type: "object" as const,
-  additionalProperties: false,
-  required: ["id", "email", "displayName", "status", "lastLoginAt", "createdAt", "updatedAt"],
-  properties: {
-    id: { type: "string" as const },
-    email: { type: "string" as const },
-    displayName: { type: "string" as const },
-    // SessionAuthGuard admits only active, non-deleted users to this endpoint.
-    // Document the reachable successful response rather than the wider UserStatus enum.
-    status: { type: "string" as const, enum: ["ACTIVE"] },
-    lastLoginAt: { type: "string" as const, format: "date-time", nullable: true },
-    createdAt: { type: "string" as const, format: "date-time" },
-    updatedAt: { type: "string" as const, format: "date-time" },
-  },
-};
+import {
+  authenticatedLoginUserResponseSchema,
+  csrfTokenResponseSchema,
+  loginResponseSchema,
+  sessionActivationResponseSchema,
+} from "./auth-response.schemas";
 
 const currentUserResponseSchema = {
   type: "object" as const,
   additionalProperties: false,
   required: ["user"],
-  properties: { user: authenticatedUserResponseSchema },
+  properties: { user: authenticatedLoginUserResponseSchema },
 };
 
 const currentPermissionsResponseSchema = {
@@ -87,15 +76,6 @@ const currentPermissionsResponseSchema = {
         enum: [...ALL_PERMISSION_CODES],
       },
     },
-  },
-};
-
-const sessionTerminationResponseSchema = {
-  type: "object" as const,
-  additionalProperties: false,
-  required: ["status"],
-  properties: {
-    status: { type: "string" as const, enum: ["ok"] },
   },
 };
 
@@ -118,7 +98,10 @@ export class AuthController {
   @HttpCode(200)
   @ApiOperation({ summary: "Log in with email and password" })
   @ApiBody({ type: LoginDto })
-  @ApiOkResponse({ description: "The login succeeded." })
+  @ApiHeader({ name: "origin", required: false, description: "Optional browser origin. Required by the runtime only when the configured origin policy requires it." })
+  @ApiHeader({ name: "referer", required: false, description: "Optional browser referrer used when Origin is absent." })
+  @ApiOkResponse({ description: "The login either produced a pending session or requires passkey MFA.", schema: loginResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The credentials, user status, or login origin are invalid." })
   async login(
     @Body() dto: LoginDto,
     @Req() request: AuthenticatedRequest,
@@ -168,7 +151,7 @@ export class AuthController {
   @ApiOperation({ summary: "Activate the pending session bound to this login response" })
   @ApiCookieAuth()
   @ApiHeader({ name: "x-csrf-token", required: true, description: "The CSRF proof returned by the same login response." })
-  @ApiOkResponse({ description: "The pending session was activated." })
+  @ApiOkResponse({ description: "The pending session was activated.", schema: sessionActivationResponseSchema })
   async activateSession(@Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {
     const activation = request.pendingSessionActivation;
     if (activation === undefined) throw new UnauthorizedException("Authentication required.");
@@ -247,7 +230,7 @@ export class AuthController {
   @Get("csrf")
   @AuthenticatedOnly()
   @ApiOperation({ summary: "Rotate and return a CSRF token for the current session" })
-  @ApiOkResponse({ description: "A CSRF token was issued." })
+  @ApiOkResponse({ description: "A CSRF token was issued.", schema: csrfTokenResponseSchema })
   @ApiCookieAuth()
   async csrf(@Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {
     const session = request.authSession;
@@ -263,7 +246,7 @@ export class AuthController {
   @ApiOperation({ summary: "Log out the current authenticated user" })
   @ApiCookieAuth()
   @ApiHeader({ name: "x-csrf-token", required: true, description: "The CSRF token issued for the current activated session." })
-  @ApiOkResponse({ description: "The current session was revoked and the session cookie was cleared.", schema: sessionTerminationResponseSchema })
+  @ApiOkResponse({ description: "The current session was revoked and the session cookie was cleared.", schema: sessionActivationResponseSchema })
   @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise no longer authenticated." })
   @ApiForbiddenResponse({ description: "The CSRF token is missing or invalid." })
   async logout(@Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {
