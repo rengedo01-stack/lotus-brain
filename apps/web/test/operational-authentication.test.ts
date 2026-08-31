@@ -62,6 +62,44 @@ test("protected state reset invalidates an older bootstrap before it can become 
   assert.equal(await pending, null);
 });
 
+test("session termination prevents a stale logout-time bootstrap from restoring the shell", async () => {
+  const coordinator = new AuthenticationBootstrapCoordinator();
+  let resolveMe: ((value: unknown) => void) | undefined;
+  const api: AuthenticationApi = {
+    request<T>(path: string): Promise<T> {
+      if (path === "/auth/me") {
+        return new Promise((resolve) => {
+          resolveMe = resolve;
+        }) as Promise<T>;
+      }
+      return Promise.resolve({ permissions: ["master.read"] } as T);
+    },
+  };
+  const generation = coordinator.begin();
+  const pending = bootstrapOperationalAuthentication(api, coordinator, generation);
+
+  // This is the ordering used when a user starts logout while a current-user
+  // response, including a BFCache rebootstrap response, is still in flight.
+  coordinator.beginSessionTermination();
+  resolveMe?.({ user: currentUser });
+
+  assert.equal(await pending, null);
+  assert.equal(coordinator.isSessionTerminationInProgress(), true);
+  assert.equal(coordinator.isCurrent(generation), false);
+});
+
+test("a termination latch refuses a later BFCache bootstrap generation", async () => {
+  const coordinator = new AuthenticationBootstrapCoordinator();
+  coordinator.beginSessionTermination();
+
+  const result = await bootstrapOperationalAuthentication(apiWithResponses({
+    "/auth/me": { user: currentUser },
+    "/auth/me/permissions": { permissions: ["master.read"] },
+  }), coordinator, coordinator.begin());
+
+  assert.equal(result, null);
+});
+
 test("a valid BFCache rebootstrap returns only the current user and effective permissions", async () => {
   const coordinator = new AuthenticationBootstrapCoordinator();
   const generation = coordinator.begin();

@@ -4,10 +4,13 @@ import Link from "next/link";
 import { type FormEvent, useState } from "react";
 import { ApiError } from "@/lib/api-client";
 import {
-  isPasswordChangeAccepted,
   passwordChangePath,
   passwordChangePayload,
 } from "@/lib/password-change";
+import {
+  isAmbiguousSessionTerminationError,
+  isConfirmedSessionTerminationResponse,
+} from "@/lib/session-termination";
 import { useOperationalApp } from "../../_components/operational-app";
 
 type SubmissionState = "ready" | "submitting";
@@ -23,7 +26,7 @@ function messageFor(error: unknown): string {
 }
 
 export default function PasswordSettingsPage() {
-  const { api } = useOperationalApp();
+  const { api, terminateSession } = useOperationalApp();
   const [state, setState] = useState<SubmissionState>("ready");
   const [message, setMessage] = useState<string | null>(null);
 
@@ -47,21 +50,27 @@ export default function PasswordSettingsPage() {
       const response = await api.request<unknown>(passwordChangePath, {
         method: "POST",
         body: payload,
+        expectedStatus: 200,
       });
-      if (!isPasswordChangeAccepted(response)) {
+      if (!isConfirmedSessionTerminationResponse(response)) {
         // A contract violation can arrive after the server has atomically
         // changed the credential and invalidated every session. Do not call a
         // follow-up endpoint to guess the outcome or leave this shell visible.
-        api.clearCsrfToken();
-        window.location.replace("/login");
+        terminateSession("unconfirmed");
         return;
       }
 
-      api.clearCsrfToken();
       formElement.reset();
-      window.location.replace("/login");
+      terminateSession("confirmed");
     } catch (error: unknown) {
       if (error instanceof ApiError && error.kind === "unauthorized") return;
+      if (isAmbiguousSessionTerminationError(error)) {
+        // A response can be lost after the server has committed the credential
+        // change and revoked every session. The outcome is not confirmed, but
+        // this protected document must still terminate locally.
+        terminateSession("unconfirmed");
+        return;
+      }
       setMessage(messageFor(error));
       setState("ready");
     }

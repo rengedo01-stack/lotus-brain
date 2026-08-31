@@ -10,16 +10,23 @@ import {
   isBfcacheRestore,
   type CurrentUser,
 } from "@/lib/operational-authentication";
+import {
+  isConfirmedSessionTerminationResponse,
+  sessionTerminationLoginHref,
+  type SessionTerminationOutcome,
+} from "@/lib/session-termination";
 
 type OperationalContextValue = {
   api: ApiClient;
   permissions: ReadonlySet<string>;
   refreshAuthentication(): void;
+  terminateSession(outcome: SessionTerminationOutcome): void;
   user: CurrentUser;
 };
 
 type BootstrapState =
   | { status: "loading" }
+  | { status: "terminating" }
   | { status: "ready"; user: CurrentUser; permissions: ReadonlySet<string> }
   | { status: "error"; message: string };
 
@@ -37,7 +44,6 @@ export function OperationalApp({ children }: Readonly<{ children: React.ReactNod
   const [bootstrapCoordinator] = useState(() => new AuthenticationBootstrapCoordinator());
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>({ status: "loading" });
   const [reloadKey, setReloadKey] = useState(0);
-  const [logoutError, setLogoutError] = useState<string | null>(null);
 
   const resetProtectedState = useCallback(() => {
     bootstrapCoordinator.invalidate();
@@ -46,15 +52,26 @@ export function OperationalApp({ children }: Readonly<{ children: React.ReactNod
   }, [api, bootstrapCoordinator]);
 
   const refreshAuthentication = useCallback(() => {
+    if (bootstrapCoordinator.isSessionTerminationInProgress()) return;
     resetProtectedState();
     setReloadKey((current) => current + 1);
-  }, [resetProtectedState]);
+  }, [bootstrapCoordinator, resetProtectedState]);
+
+  const beginSessionTermination = useCallback(() => {
+    bootstrapCoordinator.beginSessionTermination();
+    api.clearCsrfToken();
+    setBootstrapState({ status: "terminating" });
+  }, [api, bootstrapCoordinator]);
+
+  const terminateSession = useCallback((outcome: SessionTerminationOutcome) => {
+    beginSessionTermination();
+    router.replace(sessionTerminationLoginHref(outcome));
+  }, [beginSessionTermination, router]);
 
   useEffect(() => subscribeToApiSessionEvents((event) => {
     if (event !== "unauthorized") return;
-    resetProtectedState();
-    router.replace("/login");
-  }), [resetProtectedState, router]);
+    terminateSession("already-ended");
+  }), [terminateSession]);
 
   useEffect(() => {
     const handlePageShow = (event: PageTransitionEvent) => {
@@ -65,6 +82,7 @@ export function OperationalApp({ children }: Readonly<{ children: React.ReactNod
   }, [refreshAuthentication]);
 
   useEffect(() => {
+    if (bootstrapCoordinator.isSessionTerminationInProgress()) return;
     let active = true;
     const generation = bootstrapCoordinator.begin();
     void bootstrapOperationalAuthentication(api, bootstrapCoordinator, generation).then((authentication) => {
@@ -87,19 +105,36 @@ export function OperationalApp({ children }: Readonly<{ children: React.ReactNod
   }, [api, bootstrapCoordinator, reloadKey]);
 
   async function logout() {
-    setLogoutError(null);
+    // This transition intentionally happens before even fetching a CSRF token.
+    // A delayed, malformed, or lost server response must not retain this
+    // document's authenticated shell.
+    beginSessionTermination();
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
     try {
-      await api.request<{ status: "ok" }>("/auth/logout", { method: "POST" });
-      resetProtectedState();
-      router.replace("/login");
+      const response = await api.request<unknown>("/auth/logout", {
+        method: "POST",
+        expectedStatus: 200,
+        signal: controller.signal,
+      });
+      terminateSession(isConfirmedSessionTerminationResponse(response) ? "confirmed" : "unconfirmed");
     } catch (error: unknown) {
+      // ApiClient synchronously routes 401 through the shared termination
+      // handler. It is not a confirmed explicit-logout response, but it is
+      // safe to converge on the login state.
       if (error instanceof ApiError && error.kind === "unauthorized") return;
-      setLogoutError(error instanceof ApiError ? error.message : "ログアウトを完了できませんでした。");
+      terminateSession("unconfirmed");
+    } finally {
+      window.clearTimeout(timeout);
     }
   }
 
   if (bootstrapState.status === "loading") {
     return <SafeLoadingState />;
+  }
+
+  if (bootstrapState.status === "terminating") {
+    return <SafeTerminationState />;
   }
 
   if (bootstrapState.status === "error") {
@@ -124,6 +159,7 @@ export function OperationalApp({ children }: Readonly<{ children: React.ReactNod
     api,
     permissions: bootstrapState.permissions,
     refreshAuthentication,
+    terminateSession,
     user: bootstrapState.user,
   };
 
@@ -157,7 +193,6 @@ export function OperationalApp({ children }: Readonly<{ children: React.ReactNod
                 ログアウト
               </button>
             </div>
-            {logoutError !== null && <p className="w-full text-sm text-red-800" role="alert">{logoutError}</p>}
           </header>
           <main className="min-w-0 flex-1 p-5 md:p-8">{children}</main>
         </div>
@@ -170,6 +205,14 @@ function SafeLoadingState() {
   return (
     <main aria-busy="true" className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
       <p className="text-sm text-slate-700" role="status">ログイン状態を確認しています…</p>
+    </main>
+  );
+}
+
+function SafeTerminationState() {
+  return (
+    <main aria-busy="true" className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+      <p className="text-sm text-slate-700" role="status">認証済み画面を終了しています…</p>
     </main>
   );
 }
