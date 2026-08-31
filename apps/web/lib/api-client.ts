@@ -39,6 +39,12 @@ export class ApiError extends Error {
 export type ApiRequestOptions = Omit<RequestInit, "body" | "headers"> & {
   body?: unknown;
   csrf?: "auto" | "none";
+  /**
+   * Some contracts intentionally accept one exact success status rather than
+   * the broad HTTP 2xx family. Callers opt into this narrowly where the
+   * response is an authentication trust boundary.
+   */
+  expectedStatus?: number;
   headers?: HeadersInit;
 };
 
@@ -113,16 +119,23 @@ export function createApiClient(): ApiClient {
   };
 
   const request = async <T>(path: string, options: ApiRequestOptions = {}): Promise<T> => {
-    const method = options.method?.toUpperCase() ?? "GET";
-    const headers = new Headers(options.headers);
+    const {
+      body: requestBody,
+      csrf,
+      expectedStatus,
+      headers: requestHeaders,
+      ...fetchOptions
+    } = options;
+    const method = fetchOptions.method?.toUpperCase() ?? "GET";
+    const headers = new Headers(requestHeaders);
     let body: BodyInit | undefined;
-    if (options.body !== undefined) {
+    if (requestBody !== undefined) {
       headers.set("content-type", "application/json");
-      body = JSON.stringify(options.body);
+      body = JSON.stringify(requestBody);
     }
 
     try {
-      if (!isSafeMethod(method) && options.csrf !== "none") {
+      if (!isSafeMethod(method) && csrf !== "none") {
         if (csrfToken === null) {
           const csrfPayload = await request<{ csrfToken?: unknown }>("/auth/csrf", { method: "GET" });
           if (typeof csrfPayload.csrfToken !== "string" || csrfPayload.csrfToken.length === 0) {
@@ -134,19 +147,22 @@ export function createApiClient(): ApiClient {
       }
 
       const response = await fetch(endpointUrl(path), {
-        ...options,
+        ...fetchOptions,
         body,
-        cache: options.cache ?? "no-store",
-        credentials: options.credentials ?? "include",
+        cache: fetchOptions.cache ?? "no-store",
+        credentials: fetchOptions.credentials ?? "include",
         headers,
         method,
       });
-      const payload = await parseJson(response);
       if (!response.ok) {
         const error = new ApiError(errorKindForStatus(response.status), response.status);
         notifyError(error);
         throw error;
       }
+      if (expectedStatus !== undefined && response.status !== expectedStatus) {
+        throw new ApiError("server", response.status);
+      }
+      const payload = await parseJson(response);
       return payload as T;
     } catch (error: unknown) {
       if (error instanceof ApiError) throw error;

@@ -1,5 +1,5 @@
 export type AuthenticationApi = {
-  request<T>(path: string): Promise<T>;
+  request<T>(path: string, options?: { expectedStatus?: number }): Promise<T>;
 };
 
 export type CurrentUser = {
@@ -8,9 +8,53 @@ export type CurrentUser = {
   email: string;
   id: string;
   lastLoginAt: string | null;
-  status: string;
+  status: "ACTIVE";
   updatedAt: string;
 };
+
+export type OperationalPermissionCode =
+  | "authorization.read"
+  | "authorization.manage"
+  | "identity.read"
+  | "identity.manage"
+  | "master.read"
+  | "master.write"
+  | "purchase.read"
+  | "purchase.write"
+  | "purchase.confirm"
+  | "purchase.post"
+  | "production.read"
+  | "production.write"
+  | "production.confirm"
+  | "production.post"
+  | "stocktake.read"
+  | "stocktake.write"
+  | "stocktake.confirm"
+  | "stocktake.post";
+
+// This client-side allowlist mirrors the typed server permission registry. It
+// controls only fail-closed bootstrap UX; AuthorizationGuard remains the API
+// security boundary for every operation.
+const KNOWN_OPERATIONAL_PERMISSION_CODES = new Set<OperationalPermissionCode>([
+  "authorization.read",
+  "authorization.manage",
+  "identity.read",
+  "identity.manage",
+  "master.read",
+  "master.write",
+  "purchase.read",
+  "purchase.write",
+  "purchase.confirm",
+  "purchase.post",
+  "production.read",
+  "production.write",
+  "production.confirm",
+  "production.post",
+  "stocktake.read",
+  "stocktake.write",
+  "stocktake.confirm",
+  "stocktake.post",
+]);
 
 export type OperationalAuthentication = {
   permissions: ReadonlySet<string>;
@@ -44,8 +88,8 @@ export async function bootstrapOperationalAuthentication(
   generation: number,
 ): Promise<OperationalAuthentication | null> {
   const [meResponse, permissionsResponse] = await Promise.all([
-    api.request<unknown>("/auth/me"),
-    api.request<unknown>("/auth/me/permissions"),
+    api.request<unknown>("/auth/me", { expectedStatus: 200 }),
+    api.request<unknown>("/auth/me/permissions", { expectedStatus: 200 }),
   ]);
   if (!isMeResponse(meResponse) || !isPermissionsResponse(permissionsResponse)) {
     throw new Error("Invalid current authentication response.");
@@ -59,28 +103,57 @@ export async function bootstrapOperationalAuthentication(
 }
 
 function isCurrentUser(value: unknown): value is CurrentUser {
-  if (typeof value !== "object" || value === null) return false;
-  const user = value as Record<string, unknown>;
+  if (!isRecord(value)) return false;
+  if (!hasExactlyKeys(value, ["id", "email", "displayName", "status", "lastLoginAt", "createdAt", "updatedAt"])) return false;
+
+  // SessionAuthGuard permits this endpoint only for active, non-deleted users.
+  // This validates the response contract for bootstrap UX; it is not the
+  // application's authorization boundary.
   return (
-    typeof user.id === "string" &&
-    typeof user.email === "string" &&
-    typeof user.displayName === "string" &&
-    typeof user.status === "string" &&
-    (typeof user.lastLoginAt === "string" || user.lastLoginAt === null) &&
-    typeof user.createdAt === "string" &&
-    typeof user.updatedAt === "string"
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.email) &&
+    isNonEmptyString(value.displayName) &&
+    value.status === "ACTIVE" &&
+    (value.lastLoginAt === null || isSerializedPrismaDateTime(value.lastLoginAt)) &&
+    isSerializedPrismaDateTime(value.createdAt) &&
+    isSerializedPrismaDateTime(value.updatedAt)
   );
 }
 
 function isMeResponse(value: unknown): value is { user: CurrentUser } {
-  return typeof value === "object" && value !== null && isCurrentUser((value as { user?: unknown }).user);
+  return isRecord(value) && hasExactlyKeys(value, ["user"]) && isCurrentUser(value.user);
 }
 
-function isPermissionsResponse(value: unknown): value is { permissions: string[] } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Array.isArray((value as { permissions?: unknown }).permissions) &&
-    (value as { permissions: unknown[] }).permissions.every((permission) => typeof permission === "string")
-  );
+function isPermissionsResponse(value: unknown): value is { permissions: OperationalPermissionCode[] } {
+  if (!isRecord(value) || !hasExactlyKeys(value, ["permissions"]) || !Array.isArray(value.permissions)) return false;
+  const permissions = value.permissions;
+  return permissions.every(isOperationalPermissionCode) && new Set(permissions).size === permissions.length;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actualKeys = Object.keys(value);
+  return actualKeys.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isSerializedPrismaDateTime(value: unknown): value is string {
+  if (!isNonEmptyString(value)) return false;
+  const parsed = new Date(value);
+  // Dates returned by Nest's JSON serialization of Prisma Date fields use the
+  // native Date JSON representation. Checking that exact round-trip avoids
+  // accepting malformed values without inventing a narrower custom date rule.
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+function isOperationalPermissionCode(value: unknown): value is OperationalPermissionCode {
+  return typeof value === "string" && KNOWN_OPERATIONAL_PERMISSION_CODES.has(value as OperationalPermissionCode);
 }

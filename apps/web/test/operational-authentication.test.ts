@@ -28,6 +28,13 @@ function apiWithResponses(responses: Record<string, unknown | Error>): Authentic
   };
 }
 
+function expectBootstrapRejection(responses: Record<string, unknown | Error>): Promise<unknown> {
+  const coordinator = new AuthenticationBootstrapCoordinator();
+  return assert.rejects(
+    () => bootstrapOperationalAuthentication(apiWithResponses(responses), coordinator, coordinator.begin()),
+  );
+}
+
 test("BFCache pageshow is the only pageshow that triggers authentication revalidation", () => {
   assert.equal(isBfcacheRestore({ persisted: true }), true);
   assert.equal(isBfcacheRestore({ persisted: false }), false);
@@ -65,6 +72,73 @@ test("a valid BFCache rebootstrap returns only the current user and effective pe
 
   assert.equal(result?.user.email, currentUser.email);
   assert.deepEqual([...result?.permissions ?? []], ["master.read"]);
+});
+
+test("bootstrap sends an exact-200 contract for both session responses", async () => {
+  const coordinator = new AuthenticationBootstrapCoordinator();
+  const calls: Array<{ path: string; options: unknown }> = [];
+  const api: AuthenticationApi = {
+    async request<T>(path: string, options?: { expectedStatus?: number }): Promise<T> {
+      calls.push({ path, options });
+      return (path === "/auth/me" ? { user: currentUser } : { permissions: ["master.read"] }) as T;
+    },
+  };
+
+  await bootstrapOperationalAuthentication(api, coordinator, coordinator.begin());
+  assert.deepEqual(calls, [
+    { path: "/auth/me", options: { expectedStatus: 200 } },
+    { path: "/auth/me/permissions", options: { expectedStatus: 200 } },
+  ]);
+});
+
+test("any malformed current-user contract rejects the whole bootstrap", async () => {
+  for (const malformedMe of [
+    { user: currentUser, extra: true },
+    { user: { ...currentUser, extra: true } },
+    { user: { ...currentUser, status: "DISABLED" } },
+    { user: { ...currentUser, lastLoginAt: "not-a-prisma-date" } },
+    { user: { ...currentUser, updatedAt: null } },
+  ]) {
+    await expectBootstrapRejection({
+      "/auth/me": malformedMe,
+      "/auth/me/permissions": { permissions: ["master.read"] },
+    });
+  }
+});
+
+test("any malformed permissions contract rejects the whole bootstrap", async () => {
+  for (const malformedPermissions of [
+    { permissions: ["master.read"], extra: true },
+    { permissions: ["master.read", "master.read"] },
+    { permissions: ["master.read", "future.permission"] },
+    { permissions: "master.read" },
+  ]) {
+    await expectBootstrapRejection({
+      "/auth/me": { user: currentUser },
+      "/auth/me/permissions": malformedPermissions,
+    });
+  }
+});
+
+test("valid permission ordering remains a server detail rather than a client bootstrap contract", async () => {
+  const coordinator = new AuthenticationBootstrapCoordinator();
+  const result = await bootstrapOperationalAuthentication(apiWithResponses({
+    "/auth/me": { user: currentUser },
+    "/auth/me/permissions": { permissions: ["purchase.read", "master.read"] },
+  }), coordinator, coordinator.begin());
+
+  assert.deepEqual([...result?.permissions ?? []], ["purchase.read", "master.read"]);
+});
+
+test("a partial bootstrap never returns ready authentication state", async () => {
+  await expectBootstrapRejection({
+    "/auth/me": { user: currentUser },
+    "/auth/me/permissions": new ApiError("server", 201),
+  });
+  await expectBootstrapRejection({
+    "/auth/me": new ApiError("server", 201),
+    "/auth/me/permissions": { permissions: ["master.read"] },
+  });
 });
 
 test("an unauthorized BFCache bootstrap cannot produce authenticated state", async () => {

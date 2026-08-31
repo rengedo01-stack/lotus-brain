@@ -34,11 +34,52 @@ import { Public } from "../decorators/public.decorator";
 import { PendingSessionActivation } from "../decorators/pending-session-activation.decorator";
 import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
 import { AuthorizationService } from "../../authorization/application/authorization.service";
+import { ALL_PERMISSION_CODES } from "../../authorization/permission.registry";
 import { LoginDto } from "./dto/login.dto";
 import type { EnvironmentVariables } from "../../../config/environment";
 import { makeMfaPreauthCookieName, makeSessionCookieName } from "../auth.utils";
 import type { AuthenticatedRequest, LoginResponse } from "../auth.types";
 import { ChangePasswordDto } from "./dto/change-password.dto";
+
+const authenticatedUserResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["id", "email", "displayName", "status", "lastLoginAt", "createdAt", "updatedAt"],
+  properties: {
+    id: { type: "string" as const },
+    email: { type: "string" as const },
+    displayName: { type: "string" as const },
+    // SessionAuthGuard admits only active, non-deleted users to this endpoint.
+    // Document the reachable successful response rather than the wider UserStatus enum.
+    status: { type: "string" as const, enum: ["ACTIVE"] },
+    lastLoginAt: { type: "string" as const, format: "date-time", nullable: true },
+    createdAt: { type: "string" as const, format: "date-time" },
+    updatedAt: { type: "string" as const, format: "date-time" },
+  },
+};
+
+const currentUserResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["user"],
+  properties: { user: authenticatedUserResponseSchema },
+};
+
+const currentPermissionsResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["permissions"],
+  properties: {
+    permissions: {
+      type: "array" as const,
+      uniqueItems: true,
+      items: {
+        type: "string" as const,
+        enum: [...ALL_PERMISSION_CODES],
+      },
+    },
+  },
+};
 
 @ApiTags("auth")
 @Controller("auth")
@@ -164,8 +205,10 @@ export class AuthController {
   @AuthenticatedOnly()
   @ApiOperation({ summary: "Get the current authenticated user" })
   @ApiCookieAuth()
-  async me(@Req() request: AuthenticatedRequest) {
+  @ApiOkResponse({ description: "The current authenticated user was returned.", schema: currentUserResponseSchema })
+  async me(@Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {
     if (request.authUser === undefined) throw new UnauthorizedException("Authentication required.");
+    response.setHeader("Cache-Control", "no-store");
     return { user: await this.getCurrentUserUseCase.execute(request.authUser.id) };
   }
 
@@ -173,6 +216,7 @@ export class AuthController {
   @AuthenticatedOnly()
   @ApiOperation({ summary: "Get the current authenticated user's effective permissions" })
   @ApiCookieAuth()
+  @ApiOkResponse({ description: "The current authenticated user's effective permissions were returned.", schema: currentPermissionsResponseSchema })
   async permissions(
     @Req() request: AuthenticatedRequest,
     @Res({ passthrough: true }) response: Response,
