@@ -54,6 +54,35 @@ test("API client maps a 401 to session expiry without retaining its CSRF token",
   assert.deepEqual(events, ["unauthorized"]);
 });
 
+test("an opted-in exact status contract rejects an unexpected 2xx without emitting an unauthorized event", async (t) => {
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = apiBaseUrl;
+  t.after(() => {
+    process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl;
+  });
+  const events: string[] = [];
+  const unsubscribe = subscribeToApiSessionEvents((event) => events.push(event));
+  t.after(unsubscribe);
+  installFetch(t, async () => jsonResponse({ user: "unexpected" }, 201));
+
+  await assert.rejects(
+    () => createApiClient().request("/auth/me", { expectedStatus: 200 }),
+    (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === 201,
+  );
+  assert.deepEqual(events, []);
+});
+
+test("endpoints without an exact-status contract retain their existing 2xx behavior", async (t) => {
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = apiBaseUrl;
+  t.after(() => {
+    process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl;
+  });
+  installFetch(t, async () => jsonResponse({ status: "accepted" }, 202));
+
+  assert.deepEqual(await createApiClient().request("/existing-202-contract"), { status: "accepted" });
+});
+
 test("API client maps forbidden, validation, and network failures to safe error categories", async (t) => {
   const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
   process.env.NEXT_PUBLIC_API_BASE_URL = apiBaseUrl;

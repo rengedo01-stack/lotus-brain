@@ -517,3 +517,34 @@ test("current permission bootstrap derives permissions only from the authenticat
   assert.deepEqual(headers, [["Cache-Control", "no-store"]]);
   assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, AuthController.prototype.permissions), true);
 });
+
+test("current user bootstrap derives the user only from the authenticated session and is never cacheable", async () => {
+  const calls = [];
+  const user = {
+    id: "user-from-session",
+    email: "user@example.test",
+    displayName: "Current User",
+    status: "ACTIVE",
+    lastLoginAt: null,
+    createdAt: new Date("2026-08-31T00:00:00.000Z"),
+    updatedAt: new Date("2026-08-31T00:00:00.000Z"),
+  };
+  const controller = new AuthController(
+    { get: () => "development" },
+    {},
+    {},
+    { async execute(userId) { calls.push(userId); return user; } },
+    {},
+    {},
+    {},
+  );
+  const headers = [];
+  const response = { setHeader(name, value) { headers.push([name, value]); } };
+
+  const result = await controller.me({ authUser: { id: "user-from-session" } }, response);
+
+  assert.deepEqual(result, { user });
+  assert.deepEqual(calls, ["user-from-session"]);
+  assert.deepEqual(headers, [["Cache-Control", "no-store"]]);
+  assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, AuthController.prototype.me), true);
+});
