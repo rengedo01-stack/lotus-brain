@@ -15,7 +15,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Throttle } from "@nestjs/throttler";
-import { ApiBody, ApiCookieAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBody, ApiCookieAuth, ApiHeader, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import type { Response } from "express";
 import type { EnvironmentVariables } from "../../../config/environment";
 import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
@@ -32,6 +32,7 @@ import {
 } from "../application/passkey-mfa.service";
 import { Public } from "../decorators/public.decorator";
 import { BeginPasskeyMfaDto, VerifyPasskeyMfaDto } from "./dto/passkey-mfa.dto";
+import { authenticatedLoginResponseSchema } from "./auth-response.schemas";
 
 @ApiTags("auth")
 @ApiCookieAuth()
@@ -159,6 +160,12 @@ export class PasskeyMfaLoginController {
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: VerifyPasskeyMfaDto })
   @ApiOperation({ summary: "Complete password-plus-passkey MFA login" })
+  @ApiCookieAuth()
+  @ApiHeader({ name: CSRF_HEADER_NAME, required: true, description: "The CSRF proof returned by the matching MFA_REQUIRED login response." })
+  @ApiHeader({ name: "origin", required: false, description: "Optional browser origin. Required by the runtime only when the configured origin policy requires it." })
+  @ApiHeader({ name: "referer", required: false, description: "Optional browser referrer used when Origin is absent." })
+  @ApiOkResponse({ description: "A pending session was created after MFA verification.", schema: authenticatedLoginResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The MFA pre-authentication cookie, CSRF proof, assertion, user status, or login origin is invalid." })
   async verifyLogin(
     @Req() request: AuthenticatedRequest,
     @Body() dto: VerifyPasskeyMfaDto,
