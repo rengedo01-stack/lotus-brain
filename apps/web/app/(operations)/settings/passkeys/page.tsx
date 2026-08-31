@@ -21,7 +21,6 @@ import {
 } from "@/lib/passkey-management";
 import {
   isPasskeyAuthenticationOptions,
-  isPasskeyMfaMutationResponse,
   isPasskeyMfaStatus,
   passkeyMfaErrorMessage,
   passkeyMfaOptionsPath,
@@ -30,6 +29,10 @@ import {
   type PasskeyMfaAction,
   type PasskeyMfaStatus,
 } from "@/lib/passkey-mfa";
+import {
+  isAmbiguousSessionTerminationError,
+  isConfirmedSessionTerminationResponse,
+} from "@/lib/session-termination";
 import { useOperationalApp } from "../../_components/operational-app";
 
 type PageState = "ready" | "loading" | "registering" | "complete" | "error";
@@ -53,7 +56,7 @@ function passkeyErrorMessage(error: unknown, action: string): string {
 }
 
 export default function PasskeysSettingsPage() {
-  const { api, refreshAuthentication } = useOperationalApp();
+  const { api, terminateSession } = useOperationalApp();
   const [passkeys, setPasskeys] = useState<PasskeyView[]>([]);
   const [state, setState] = useState<PageState>("loading");
   const [message, setMessage] = useState<string | null>(null);
@@ -195,6 +198,7 @@ export default function PasskeysSettingsPage() {
     if (typeof currentPassword !== "string" || currentPassword.length === 0) return;
     setMessage(null);
     setMfaOperation(action);
+    let verificationStarted = false;
     try {
       const optionsJSON = await api.request<Parameters<typeof startAuthentication>[0]["optionsJSON"]>(passkeyMfaOptionsPath(action), {
         method: "POST",
@@ -202,25 +206,30 @@ export default function PasskeysSettingsPage() {
       });
       if (!isPasskeyAuthenticationOptions(optionsJSON)) throw new Error("Unexpected MFA options response.");
       const assertion = await startAuthentication({ optionsJSON });
+      verificationStarted = true;
       const response = await api.request<unknown>(passkeyMfaVerifyPath(action), {
         method: "POST",
         body: { response: assertion },
+        expectedStatus: 200,
       });
-      if (!isPasskeyMfaMutationResponse(response)) {
+      if (!isConfirmedSessionTerminationResponse(response)) {
         // The mutation may have committed and cleared every session before an
         // unexpected 2xx body reached the client. Treat it as unconfirmed,
         // not successful, and leave no authenticated shell or CSRF state.
-        api.clearCsrfToken();
-        window.location.replace("/login");
+        terminateSession("unconfirmed");
         return;
       }
 
       // The API has atomically invalidated every session and cleared this
-      // browser's session cookie. Rebootstrap immediately so an authenticated
-      // shell can never remain visible after a successful MFA policy change.
-      refreshAuthentication();
+      // browser's session cookie. End this document rather than allowing a
+      // rebootstrap to briefly restore an authenticated shell.
+      terminateSession("confirmed");
     } catch (error: unknown) {
       if (error instanceof ApiError && error.kind === "unauthorized") return;
+      if (verificationStarted && isAmbiguousSessionTerminationError(error)) {
+        terminateSession("unconfirmed");
+        return;
+      }
       setMessage(passkeyMfaErrorMessage(error));
     } finally {
       setMfaOperation(null);

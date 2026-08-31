@@ -548,3 +548,35 @@ test("current user bootstrap derives the user only from the authenticated sessio
   assert.deepEqual(headers, [["Cache-Control", "no-store"]]);
   assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, AuthController.prototype.me), true);
 });
+
+test("logout revokes only the authenticated session and returns the exact non-cacheable success contract", async () => {
+  const revokedSessionIds = [];
+  const controller = new AuthController(
+    { get: () => "development" },
+    {},
+    {},
+    {},
+    {},
+    {},
+    { async execute(sessionId) { revokedSessionIds.push(sessionId); } },
+  );
+  const clearedCookies = [];
+  const headers = [];
+  const response = {
+    clearCookie(name, options) { clearedCookies.push([name, options]); },
+    setHeader(name, value) { headers.push([name, value]); },
+  };
+
+  const result = await controller.logout({ authSession: { id: "session-from-guard" } }, response);
+
+  assert.deepEqual(result, { status: "ok" });
+  assert.deepEqual(revokedSessionIds, ["session-from-guard"]);
+  assert.deepEqual(clearedCookies, [["lotus_session", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: false,
+    path: "/",
+  }]]);
+  assert.deepEqual(headers, [["Cache-Control", "no-store"]]);
+  assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, AuthController.prototype.logout), true);
+});

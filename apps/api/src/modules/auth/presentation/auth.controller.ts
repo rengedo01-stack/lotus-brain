@@ -13,7 +13,16 @@ import {
   UnprocessableEntityException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { ApiBody, ApiCookieAuth, ApiHeader, ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
+import {
+  ApiBody,
+  ApiCookieAuth,
+  ApiForbiddenResponse,
+  ApiHeader,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiUnauthorizedResponse,
+} from "@nestjs/swagger";
 import type { Response } from "express";
 import {
   ChangePasswordUseCase,
@@ -78,6 +87,15 @@ const currentPermissionsResponseSchema = {
         enum: [...ALL_PERMISSION_CODES],
       },
     },
+  },
+};
+
+const sessionTerminationResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["status"],
+  properties: {
+    status: { type: "string" as const, enum: ["ok"] },
   },
 };
 
@@ -243,6 +261,11 @@ export class AuthController {
   @AuthenticatedOnly()
   @HttpCode(200)
   @ApiOperation({ summary: "Log out the current authenticated user" })
+  @ApiCookieAuth()
+  @ApiHeader({ name: "x-csrf-token", required: true, description: "The CSRF token issued for the current activated session." })
+  @ApiOkResponse({ description: "The current session was revoked and the session cookie was cleared.", schema: sessionTerminationResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise no longer authenticated." })
+  @ApiForbiddenResponse({ description: "The CSRF token is missing or invalid." })
   async logout(@Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {
     const session = request.authSession;
     if (session === undefined) throw new UnauthorizedException("Authentication required.");

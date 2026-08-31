@@ -63,6 +63,7 @@ export type OperationalAuthentication = {
 
 export class AuthenticationBootstrapCoordinator {
   private generation = 0;
+  private sessionTerminationInProgress = false;
 
   begin(): number {
     this.generation += 1;
@@ -73,8 +74,23 @@ export class AuthenticationBootstrapCoordinator {
     this.generation += 1;
   }
 
+  /**
+   * A session-termination intent is one-way for the lifetime of this
+   * protected document. In particular, a BFCache restoration or an old
+   * bootstrap response must never make the authenticated shell visible again.
+   * A new login creates a new document and therefore a new coordinator.
+   */
+  beginSessionTermination(): void {
+    this.sessionTerminationInProgress = true;
+    this.invalidate();
+  }
+
+  isSessionTerminationInProgress(): boolean {
+    return this.sessionTerminationInProgress;
+  }
+
   isCurrent(generation: number): boolean {
-    return generation === this.generation;
+    return !this.sessionTerminationInProgress && generation === this.generation;
   }
 }
 

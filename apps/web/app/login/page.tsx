@@ -2,7 +2,7 @@
 
 import { startAuthentication } from "@simplewebauthn/browser";
 import Link from "next/link";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createApiClient } from "@/lib/api-client";
 import {
   completeLoginResponse,
@@ -12,10 +12,26 @@ import {
 
 type LoginState = "ready" | "password" | "passkey" | "error";
 
+function logoutNotice(outcome: string | null): string | null {
+  if (outcome === "confirmed") return "ログアウトしました。";
+  if (outcome === "already-ended") return "ログイン状態はすでに終了しています。";
+  if (outcome === "unconfirmed") {
+    return "サーバー側のログアウト結果を確認できませんでした。この画面では認証済み機能を表示していません。";
+  }
+  return null;
+}
+
 export default function LoginPage() {
   const api = useMemo(() => createApiClient(), []);
   const [state, setState] = useState<LoginState>("ready");
   const [message, setMessage] = useState<string | null>(null);
+  const [terminationNotice, setTerminationNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setTerminationNotice(logoutNotice(new URLSearchParams(window.location.search).get("logout")));
+    });
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -77,6 +93,7 @@ export default function LoginPage() {
         <Link className="mt-5 inline-block text-sm font-medium text-blue-700 underline-offset-2 hover:underline" href="/forgot-password">
           パスワードをお忘れですか？
         </Link>
+        {terminationNotice !== null && <p className="mt-4 text-sm text-slate-700" role="status">{terminationNotice}</p>}
         {message !== null && <p className="mt-4 text-sm text-red-800" role="alert">{message}</p>}
       </section>
     </main>
