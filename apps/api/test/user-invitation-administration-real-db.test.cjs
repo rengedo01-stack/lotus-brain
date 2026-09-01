@@ -58,6 +58,7 @@ if (databaseUrl === undefined) {
             csrfTokenHash: hash(csrfToken),
             credentialVersion: 1,
             authenticationPolicyVersion: 1,
+            activatedAt: new Date(),
             expiresAt: new Date(Date.now() + 120_000),
           },
         });

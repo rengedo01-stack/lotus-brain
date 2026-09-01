@@ -7,8 +7,8 @@ import {
   insertUserInvitation,
   isUserInvitation,
   isUserInvitationList,
-  isUserInvitationResendAccepted,
   replaceUserInvitation,
+  resendUserInvitation,
   userInvitationListPath,
   userInvitationStatusLabel,
   type UserInvitation,
@@ -168,8 +168,7 @@ export function UserInvitationWorkspacePage() {
     setPendingAction(`resend:${invitation.id}`);
     setMessage(null);
     try {
-      const result = await api.request<unknown>(`/identity/invitations/${encodeURIComponent(invitation.id)}/resend`, { method: "POST" });
-      if (!isUserInvitationResendAccepted(result)) throw new ApiError("server");
+      await resendUserInvitation(api, invitation.id);
       // Resend has no invitation view response. Its accepted response is success; avoid an unnecessary GET.
       setMessage("招待メールの再送を受け付けました。送達状況や招待tokenはこの画面に表示しません。");
     } catch (error: unknown) {

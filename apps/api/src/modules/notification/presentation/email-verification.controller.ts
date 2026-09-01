@@ -15,6 +15,7 @@ import { Public } from "../../auth/decorators/public.decorator";
 import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
 import { EmailVerificationTokenInvalidError } from "../application/recovery-channel.errors";
 import { EmailVerificationService } from "../application/email-verification.service";
+import { notificationRequestAcceptedResponseSchema } from "../notification-response.schemas";
 import { EmailVerificationConfirmDto, EmailVerificationRequestDto } from "./dto/email-verification.dto";
 
 @ApiTags("auth")
@@ -28,7 +29,11 @@ export class EmailVerificationController {
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiCookieAuth()
   @ApiOperation({ summary: "Request verification for the current authenticated user's email address" })
-  @ApiResponse({ status: HttpStatus.ACCEPTED, description: "A request was accepted; an already verified email is a no-op." })
+  @ApiResponse({
+    status: HttpStatus.ACCEPTED,
+    description: "A request was accepted; an already verified email is a no-op.",
+    schema: notificationRequestAcceptedResponseSchema,
+  })
   async request(
     @Req() request: AuthenticatedRequest,
     @Body() dto: EmailVerificationRequestDto,

@@ -1,3 +1,5 @@
+import type { ApiClient } from "@/lib/api-client";
+
 export const passwordRecoveryRequestPath = "/auth/password/recovery/request";
 
 export type PasswordRecoveryRequestAccepted = {
@@ -9,7 +11,24 @@ export type PasswordRecoveryResetComplete = {
 };
 
 export function isPasswordRecoveryRequestAccepted(value: unknown): value is PasswordRecoveryRequestAccepted {
-  return typeof value === "object" && value !== null && (value as { status?: unknown }).status === "accepted";
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length === 1 && keys[0] === "status" && (value as { status?: unknown }).status === "accepted";
+}
+
+export function requestPasswordRecovery(
+  api: ApiClient,
+  payload: { email: string },
+): Promise<PasswordRecoveryRequestAccepted> {
+  return api.request<unknown>(passwordRecoveryRequestPath, {
+    body: payload,
+    credentials: "omit",
+    csrf: "none",
+    expectedStatus: 202,
+  }).then((response) => {
+    if (!isPasswordRecoveryRequestAccepted(response)) throw new Error("Unexpected password recovery request response.");
+    return response;
+  });
 }
 
 export function isPasswordRecoveryResetComplete(value: unknown): value is PasswordRecoveryResetComplete {
