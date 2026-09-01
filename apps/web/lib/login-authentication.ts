@@ -6,6 +6,7 @@ export type LoginAuthenticationApi = {
   request<T>(path: string, options?: {
     body?: unknown;
     csrf?: "auto" | "none";
+    expectedStatus?: number;
     headers?: HeadersInit;
     method?: string;
   }): Promise<T>;
@@ -100,6 +101,24 @@ export function isSessionActivationResponse(value: unknown): value is { status: 
 }
 
 /**
+ * A login response is the start of an authentication exchange, not a generic
+ * successful mutation. Its exact HTTP status is part of the contract before
+ * the response body is trusted or a pending session can be activated.
+ */
+export function requestPasswordLogin(
+  api: LoginAuthenticationApi,
+  email: string,
+  password: string,
+): Promise<unknown> {
+  return api.request<unknown>("/auth/login", {
+    method: "POST",
+    body: { email, password },
+    csrf: "none",
+    expectedStatus: 200,
+  });
+}
+
+/**
  * The login response carries the only CSRF proof that is valid for its pending
  * session. This request deliberately opts out of ApiClient's normal CSRF
  * bootstrap because that bootstrap is protected and must return 401 while the
@@ -114,6 +133,7 @@ export async function activatePendingSession(
       method: "POST",
       headers: { "x-csrf-token": authenticated.csrfToken },
       csrf: "none",
+      expectedStatus: 200,
     });
     if (!isSessionActivationResponse(response)) {
       await discardAmbiguouslyActivatedSession(api, authenticated.csrfToken);
@@ -174,6 +194,7 @@ export async function completeLoginResponse(
     headers: { "x-csrf-token": response.preAuthCsrfToken },
     body: { response: assertion },
     csrf: "none",
+    expectedStatus: 200,
   });
   if (!isAuthenticatedLoginResponse(verified)) throw new LoginResponseContractError();
   await activatePendingSession(api, verified);

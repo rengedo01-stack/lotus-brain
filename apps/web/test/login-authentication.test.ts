@@ -8,6 +8,7 @@ import {
   isMfaRequiredLoginResponse,
   isSessionActivationResponse,
   LoginResponseContractError,
+  requestPasswordLogin,
   SessionActivationAmbiguityError,
 } from "../lib/login-authentication.ts";
 
@@ -79,6 +80,27 @@ test("accepts only the exact session activation response contract", () => {
   assert.equal(isSessionActivationResponse(null), false);
 });
 
+test("password login requests only an exact HTTP 200 response", async () => {
+  const calls: Array<{ path: string; options: unknown }> = [];
+  const api = {
+    async request<T>(path: string, options: unknown): Promise<T> {
+      calls.push({ path, options });
+      return authenticatedLogin as T;
+    },
+  };
+
+  await requestPasswordLogin(api, "staff@example.test", "password");
+  assert.deepEqual(calls, [{
+    path: "/auth/login",
+    options: {
+      method: "POST",
+      body: { email: "staff@example.test", password: "password" },
+      csrf: "none",
+      expectedStatus: 200,
+    },
+  }]);
+});
+
 test("activation uses the response-bound proof directly and makes no bootstrap request", async () => {
   const calls: Array<{ path: string; options: unknown }> = [];
   const api = {
@@ -95,6 +117,7 @@ test("activation uses the response-bound proof directly and makes no bootstrap r
       method: "POST",
       headers: { "x-csrf-token": "csrf-token" },
       csrf: "none",
+      expectedStatus: 200,
     },
   }]);
 });
@@ -120,6 +143,7 @@ test("an unexpected activation 2xx is ambiguous and triggers only CSRF-bound bes
         method: "POST",
         headers: { "x-csrf-token": "csrf-token" },
         csrf: "none",
+        expectedStatus: 200,
       },
     },
     {
@@ -149,6 +173,42 @@ test("activation 401, 403, and 409 remain explicit safe login failures", async (
     await assert.rejects(() => activatePendingSession(api, authenticatedLogin), (actual: unknown) => actual === error);
     assert.deepEqual(calls, ["/auth/session/activate"]);
   }
+});
+
+test("an unexpected activation HTTP 2xx is ambiguous and triggers bounded cleanup", async () => {
+  const calls: Array<{ path: string; options: unknown }> = [];
+  const api = {
+    async request<T>(path: string, options: unknown): Promise<T> {
+      calls.push({ path, options });
+      if (path === "/auth/session/activate") throw new ApiError("server", 201);
+      if (path === "/auth/logout") return { status: "ok" } as T;
+      throw new Error(`Unexpected request: ${path}`);
+    },
+  };
+
+  await assert.rejects(
+    () => activatePendingSession(api, authenticatedLogin),
+    SessionActivationAmbiguityError,
+  );
+  assert.deepEqual(calls, [
+    {
+      path: "/auth/session/activate",
+      options: {
+        method: "POST",
+        headers: { "x-csrf-token": "csrf-token" },
+        csrf: "none",
+        expectedStatus: 200,
+      },
+    },
+    {
+      path: "/auth/logout",
+      options: {
+        method: "POST",
+        headers: { "x-csrf-token": "csrf-token" },
+        csrf: "none",
+      },
+    },
+  ]);
 });
 
 test("network ambiguity after activation is never treated as pending and attempts bounded cleanup", async () => {
@@ -244,6 +304,7 @@ test("MFA verification is strictly validated before the pending session is activ
         headers: { "x-csrf-token": "mfa-preauth-csrf-token" },
         body: { response: { id: "assertion" } },
         csrf: "none",
+        expectedStatus: 200,
       },
     },
     {
@@ -252,6 +313,7 @@ test("MFA verification is strictly validated before the pending session is activ
         method: "POST",
         headers: { "x-csrf-token": "csrf-token" },
         csrf: "none",
+        expectedStatus: 200,
       },
     },
   ]);
@@ -271,6 +333,31 @@ test("a malformed MFA verify response cannot activate the pending session", asyn
     LoginResponseContractError,
   );
   assert.deepEqual(calls, ["/auth/login/passkey/verify"]);
+});
+
+test("an unexpected MFA verify HTTP 2xx cannot activate the pending session", async () => {
+  const calls: Array<{ path: string; options: unknown }> = [];
+  const api = {
+    async request<T>(path: string, options: unknown): Promise<T> {
+      calls.push({ path, options });
+      throw new ApiError("server", 201);
+    },
+  };
+
+  await assert.rejects(
+    () => completeLoginResponse(api, mfaRequiredLogin, async () => ({ id: "assertion" })),
+    (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === 201,
+  );
+  assert.deepEqual(calls, [{
+    path: "/auth/login/passkey/verify",
+    options: {
+      method: "POST",
+      headers: { "x-csrf-token": "mfa-preauth-csrf-token" },
+      body: { response: { id: "assertion" } },
+      csrf: "none",
+      expectedStatus: 200,
+    },
+  }]);
 });
 
 test("a non-ACTIVE MFA verify response cannot activate the pending session", async () => {

@@ -7,6 +7,7 @@ import { createApiClient } from "@/lib/api-client";
 import {
   completeLoginResponse,
   isMfaRequiredLoginResponse,
+  requestPasswordLogin,
   SessionActivationAmbiguityError,
 } from "@/lib/login-authentication";
 
@@ -43,11 +44,7 @@ export default function LoginPage() {
     setState("password");
     setMessage(null);
     try {
-      const payload = await api.request<unknown>("/auth/login", {
-        method: "POST",
-        body: { email, password },
-        csrf: "none",
-      });
+      const payload = await requestPasswordLogin(api, email, password);
       if (isMfaRequiredLoginResponse(payload)) setState("passkey");
       await completeLoginResponse(
         api,
