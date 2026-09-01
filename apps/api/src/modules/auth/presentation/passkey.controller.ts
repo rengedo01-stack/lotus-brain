@@ -14,7 +14,7 @@ import {
   UnauthorizedException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { ApiBody, ApiCookieAuth, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { ApiBody, ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
 import { AuthInvalidCredentialsError } from "../auth.errors";
 import type { AuthenticatedRequest } from "../auth.types";
@@ -31,6 +31,7 @@ import {
   RevokePasskeyDto,
   VerifyPasskeyRegistrationDto,
 } from "./dto/passkey.dto";
+import { passkeyListResponseSchema, passkeyMutationResponseSchema } from "./passkey-response.schemas";
 
 @ApiTags("auth")
 @ApiCookieAuth()
@@ -54,7 +55,7 @@ export class PasskeyController {
   @Post("registration/verify")
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: VerifyPasskeyRegistrationDto })
-  @ApiResponse({ status: HttpStatus.OK, description: "The passkey was registered." })
+  @ApiOkResponse({ description: "The passkey was registered.", schema: passkeyMutationResponseSchema })
   @ApiOperation({ summary: "Verify and persist a passkey registration response" })
   async verifyRegistration(@Req() request: AuthenticatedRequest, @Body() dto: VerifyPasskeyRegistrationDto) {
     const passkey = await this.run(() => this.passkeys.verifyRegistration({
@@ -67,12 +68,14 @@ export class PasskeyController {
 
   @Get()
   @ApiOperation({ summary: "List the current user's passkeys without credential material" })
+  @ApiOkResponse({ description: "The current user's passkeys were returned without credential material.", schema: passkeyListResponseSchema })
   list(@Req() request: AuthenticatedRequest) {
     return this.passkeys.listPasskeys(this.userId(request));
   }
 
   @Patch(":id")
   @ApiOperation({ summary: "Rename one of the current user's passkeys" })
+  @ApiOkResponse({ description: "The passkey was renamed.", schema: passkeyMutationResponseSchema })
   async rename(
     @Req() request: AuthenticatedRequest,
     @Param("id") passkeyId: string,
@@ -91,6 +94,7 @@ export class PasskeyController {
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: RevokePasskeyDto })
   @ApiOperation({ summary: "Revoke one of the current user's passkeys after password re-authentication" })
+  @ApiOkResponse({ description: "The passkey was revoked.", schema: passkeyMutationResponseSchema })
   async revoke(
     @Req() request: AuthenticatedRequest,
     @Param("id") passkeyId: string,

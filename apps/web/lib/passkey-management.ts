@@ -1,3 +1,5 @@
+import type { ApiClient, ApiRequestOptions } from "./api-client";
+
 export type PasskeyView = {
   backedUp: boolean | null;
   createdAt: string;
@@ -9,6 +11,24 @@ export type PasskeyView = {
   transports: string[];
   updatedAt: string;
 };
+
+export type PasskeyManagementApi = Pick<ApiClient, "request">;
+
+const PASSKEY_VIEW_KEYS = [
+  "backedUp",
+  "createdAt",
+  "deviceType",
+  "displayName",
+  "id",
+  "lastUsedAt",
+  "revokedAt",
+  "transports",
+  "updatedAt",
+] as const;
+
+const PASSKEY_MUTATION_RESPONSE_KEYS = ["passkey"] as const;
+const PASSKEY_DEVICE_TYPES = new Set(["singleDevice", "multiDevice"]);
+const PASSKEY_TRANSPORTS = new Set(["ble", "cable", "hybrid", "internal", "nfc", "smart-card", "usb"]);
 
 export const passkeyPaths = {
   list: "/auth/passkeys",
@@ -24,28 +44,69 @@ export function passkeyRevokePath(passkeyId: string): string {
   return `${passkeyRenamePath(passkeyId)}/revoke`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactlyKeys(value: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expectedKeys.length
+    && expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const timestamp = new Date(value);
+  return !Number.isNaN(timestamp.getTime()) && timestamp.toISOString() === value;
+}
+
 export function isPasskeyView(value: unknown): value is PasskeyView {
-  if (typeof value !== "object" || value === null) return false;
-  const passkey = value as Partial<PasskeyView>;
+  if (!isRecord(value) || !hasExactlyKeys(value, PASSKEY_VIEW_KEYS)) return false;
+  const passkey = value as PasskeyView;
   return (
     typeof passkey.id === "string" && passkey.id.length > 0 &&
     (typeof passkey.displayName === "string" || passkey.displayName === null) &&
-    Array.isArray(passkey.transports) && passkey.transports.every((transport) => typeof transport === "string") &&
-    (typeof passkey.deviceType === "string" || passkey.deviceType === null) &&
+    Array.isArray(passkey.transports) && passkey.transports.every((transport) => typeof transport === "string" && PASSKEY_TRANSPORTS.has(transport)) &&
+    (passkey.deviceType === null || PASSKEY_DEVICE_TYPES.has(passkey.deviceType)) &&
     (typeof passkey.backedUp === "boolean" || passkey.backedUp === null) &&
-    typeof passkey.createdAt === "string" &&
-    typeof passkey.updatedAt === "string" &&
-    (typeof passkey.lastUsedAt === "string" || passkey.lastUsedAt === null) &&
-    (typeof passkey.revokedAt === "string" || passkey.revokedAt === null)
+    isIsoTimestamp(passkey.createdAt) &&
+    isIsoTimestamp(passkey.updatedAt) &&
+    (passkey.lastUsedAt === null || isIsoTimestamp(passkey.lastUsedAt)) &&
+    (passkey.revokedAt === null || isIsoTimestamp(passkey.revokedAt))
   );
 }
 
 export function isPasskeyList(value: unknown): value is PasskeyView[] {
-  return Array.isArray(value) && value.every(isPasskeyView);
+  if (!Array.isArray(value) || !value.every(isPasskeyView)) return false;
+  const ids = new Set(value.map((passkey) => passkey.id));
+  return ids.size === value.length;
 }
 
 export function isPasskeyMutationResponse(value: unknown): value is { passkey: PasskeyView } {
-  return typeof value === "object" && value !== null && isPasskeyView((value as { passkey?: unknown }).passkey);
+  return isRecord(value)
+    && hasExactlyKeys(value, PASSKEY_MUTATION_RESPONSE_KEYS)
+    && isPasskeyView(value.passkey);
+}
+
+/**
+ * These settings views are trusted only after the API client has confirmed
+ * their documented 200 response. The helpers deliberately do not refresh the
+ * list: a mutation response is the source of truth for its local update.
+ */
+export async function requestPasskeyList(api: PasskeyManagementApi): Promise<PasskeyView[]> {
+  const payload = await api.request<unknown>(passkeyPaths.list, { expectedStatus: 200 });
+  if (!isPasskeyList(payload)) throw new Error("Passkeys could not be loaded.");
+  return payload;
+}
+
+export async function requestPasskeyMutation(
+  api: PasskeyManagementApi,
+  path: string,
+  options: ApiRequestOptions,
+): Promise<{ passkey: PasskeyView }> {
+  const payload = await api.request<unknown>(path, { ...options, expectedStatus: 200 });
+  if (!isPasskeyMutationResponse(payload)) throw new Error("Unexpected passkey mutation response.");
+  return payload;
 }
 
 function sortPasskeys(passkeys: PasskeyView[]): PasskeyView[] {

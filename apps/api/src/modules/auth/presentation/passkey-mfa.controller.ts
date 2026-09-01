@@ -33,6 +33,7 @@ import {
 import { Public } from "../decorators/public.decorator";
 import { BeginPasskeyMfaDto, VerifyPasskeyMfaDto } from "./dto/passkey-mfa.dto";
 import { authenticatedLoginResponseSchema } from "./auth-response.schemas";
+import { passkeyMfaStatusResponseSchema } from "./passkey-response.schemas";
 
 @ApiTags("auth")
 @ApiCookieAuth()
@@ -46,6 +47,7 @@ export class PasskeyMfaController {
 
   @Get()
   @ApiOperation({ summary: "Get the current user's passkey MFA status" })
+  @ApiOkResponse({ description: "The current user's passkey MFA status was returned.", schema: passkeyMfaStatusResponseSchema })
   async status(@Req() request: AuthenticatedRequest) {
     return this.passkeyMfa.getStatus(this.userId(request));
   }
