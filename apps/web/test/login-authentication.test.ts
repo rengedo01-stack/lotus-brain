@@ -27,7 +27,11 @@ const authenticatedLogin = {
 
 const mfaRequiredLogin = {
   status: "MFA_REQUIRED",
-  options: { challenge: "webauthn-challenge" },
+  options: {
+    challenge: "webauthn-challenge",
+    rpId: "localhost",
+    allowCredentials: [{ id: "credential-1", type: "public-key", transports: ["internal"] }],
+  },
   preAuthCsrfToken: "mfa-preauth-csrf-token",
 };
 
@@ -70,6 +74,8 @@ test("accepts only the exact and actionable MFA_REQUIRED response contract", () 
   assert.equal(isMfaRequiredLoginResponse({ ...mfaRequiredLogin, preAuthCsrfToken: "" }), false);
   assert.equal(isMfaRequiredLoginResponse({ ...mfaRequiredLogin, options: {} }), false);
   assert.equal(isMfaRequiredLoginResponse({ ...mfaRequiredLogin, options: { challenge: "" } }), false);
+  assert.equal(isMfaRequiredLoginResponse({ ...mfaRequiredLogin, options: { ...mfaRequiredLogin.options, allowCredentials: [] } }), false);
+  assert.equal(isMfaRequiredLoginResponse({ ...mfaRequiredLogin, options: { ...mfaRequiredLogin.options, futureExtension: { enabled: true } } }), true);
   assert.equal(isMfaRequiredLoginResponse([]), false);
 });
 

@@ -1,4 +1,5 @@
 import type { ApiClient } from "./api-client";
+import { isWebAuthnAuthenticationOptions } from "./webauthn-options.ts";
 
 export type PasskeyMfaStatus = {
   activePasskeyCount: number;
@@ -45,12 +46,7 @@ export async function requestPasskeyMfaStatus(api: PasskeyMfaApi): Promise<Passk
 }
 
 export function isPasskeyAuthenticationOptions(value: unknown): value is { challenge: string } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { challenge?: unknown }).challenge === "string" &&
-    (value as { challenge: string }).challenge.length > 0
-  );
+  return isWebAuthnAuthenticationOptions(value);
 }
 
 export function isPasskeyMfaMutationResponse(value: unknown): value is { status: "ok" } {
