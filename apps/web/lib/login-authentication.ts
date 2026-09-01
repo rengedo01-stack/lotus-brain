@@ -1,4 +1,5 @@
 import type { startAuthentication } from "@simplewebauthn/browser";
+import { isWebAuthnAuthenticationOptions } from "./webauthn-options.ts";
 
 type WebAuthnAuthenticationOptions = Parameters<typeof startAuthentication>[0]["optionsJSON"];
 
@@ -93,7 +94,7 @@ export function isMfaRequiredLoginResponse(value: unknown): value is MfaRequired
   if (!hasExactlyKeys(value, ["status", "options", "preAuthCsrfToken"])) return false;
   if (value.status !== "MFA_REQUIRED" || !isNonEmptyString(value.preAuthCsrfToken) || !isRecord(value.options)) return false;
 
-  return isNonEmptyString(value.options.challenge);
+  return isWebAuthnAuthenticationOptions(value.options);
 }
 
 export function isSessionActivationResponse(value: unknown): value is { status: "ok" } {

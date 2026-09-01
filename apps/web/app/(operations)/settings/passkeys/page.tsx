@@ -19,7 +19,6 @@ import {
   type PasskeyView,
 } from "@/lib/passkey-management";
 import {
-  isPasskeyAuthenticationOptions,
   passkeyMfaErrorMessage,
   passkeyMfaOptionsPath,
   passkeyMfaVerifyPath,
@@ -27,6 +26,10 @@ import {
   type PasskeyMfaAction,
   type PasskeyMfaStatus,
 } from "@/lib/passkey-mfa";
+import {
+  requestWebAuthnAuthenticationOptions,
+  requestWebAuthnRegistrationOptions,
+} from "@/lib/webauthn-options";
 import {
   isAmbiguousSessionTerminationError,
   isConfirmedSessionTerminationResponse,
@@ -113,10 +116,7 @@ export default function PasskeysSettingsPage() {
     setMessage(null);
     setState("registering");
     try {
-      const optionsJSON = await api.request<Parameters<typeof startRegistration>[0]["optionsJSON"]>(passkeyPaths.registrationOptions, {
-        method: "POST",
-        body: { currentPassword },
-      });
+      const optionsJSON = await requestWebAuthnRegistrationOptions(api, passkeyPaths.registrationOptions, currentPassword);
       const response = await startRegistration({ optionsJSON });
       const verification = await requestPasskeyMutation(api, passkeyPaths.registrationVerify, {
         method: "POST",
@@ -194,11 +194,7 @@ export default function PasskeysSettingsPage() {
     setMfaOperation(action);
     let verificationStarted = false;
     try {
-      const optionsJSON = await api.request<Parameters<typeof startAuthentication>[0]["optionsJSON"]>(passkeyMfaOptionsPath(action), {
-        method: "POST",
-        body: { currentPassword },
-      });
-      if (!isPasskeyAuthenticationOptions(optionsJSON)) throw new Error("Unexpected MFA options response.");
+      const optionsJSON = await requestWebAuthnAuthenticationOptions(api, passkeyMfaOptionsPath(action), currentPassword);
       const assertion = await startAuthentication({ optionsJSON });
       verificationStarted = true;
       const response = await api.request<unknown>(passkeyMfaVerifyPath(action), {

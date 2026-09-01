@@ -63,8 +63,14 @@ test("MFA status requires the exact HTTP 200 and exact JSON contract", async () 
 });
 
 test("passkey MFA settings require a usable assertion challenge before invoking WebAuthn", () => {
-  assert.equal(isPasskeyAuthenticationOptions({ challenge: "opaque-challenge" }), true);
-  assert.equal(isPasskeyAuthenticationOptions({ challenge: "" }), false);
+  const options = {
+    challenge: "opaque-challenge",
+    rpId: "localhost",
+    allowCredentials: [{ id: "credential-1", type: "public-key", transports: ["internal"] }],
+  };
+  assert.equal(isPasskeyAuthenticationOptions(options), true);
+  assert.equal(isPasskeyAuthenticationOptions({ ...options, challenge: "" }), false);
+  assert.equal(isPasskeyAuthenticationOptions({ ...options, allowCredentials: [] }), false);
   assert.equal(isPasskeyAuthenticationOptions({}), false);
 });
 

@@ -1,3 +1,5 @@
+import { passkeyAuthenticationOptionsResponseSchema } from "./passkey-response.schemas";
+
 export const authenticatedLoginUserResponseSchema = {
   type: "object" as const,
   additionalProperties: false,
@@ -30,13 +32,7 @@ export const mfaRequiredLoginResponseSchema = {
   required: ["status", "options", "preAuthCsrfToken"],
   properties: {
     status: { type: "string" as const, enum: ["MFA_REQUIRED"] },
-    // The WebAuthn library owns the remaining option fields. challenge is the
-    // actionable value required by the browser before an assertion can start.
-    options: {
-      type: "object" as const,
-      required: ["challenge"],
-      properties: { challenge: { type: "string" as const } },
-    },
+    options: passkeyAuthenticationOptionsResponseSchema,
     preAuthCsrfToken: { type: "string" as const },
   },
 };

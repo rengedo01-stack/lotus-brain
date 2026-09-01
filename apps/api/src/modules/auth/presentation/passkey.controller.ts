@@ -31,7 +31,11 @@ import {
   RevokePasskeyDto,
   VerifyPasskeyRegistrationDto,
 } from "./dto/passkey.dto";
-import { passkeyListResponseSchema, passkeyMutationResponseSchema } from "./passkey-response.schemas";
+import {
+  passkeyListResponseSchema,
+  passkeyMutationResponseSchema,
+  passkeyRegistrationOptionsResponseSchema,
+} from "./passkey-response.schemas";
 
 @ApiTags("auth")
 @ApiCookieAuth()
@@ -43,6 +47,7 @@ export class PasskeyController {
   @Post("registration/options")
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: BeginPasskeyRegistrationDto })
+  @ApiOkResponse({ description: "WebAuthn registration options were returned.", schema: passkeyRegistrationOptionsResponseSchema })
   @ApiOperation({ summary: "Start passkey registration after current-password re-authentication" })
   async beginRegistration(@Req() request: AuthenticatedRequest, @Body() dto: BeginPasskeyRegistrationDto) {
     return this.run(() => this.passkeys.beginRegistration({

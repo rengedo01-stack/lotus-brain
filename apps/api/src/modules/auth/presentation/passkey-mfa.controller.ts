@@ -33,7 +33,7 @@ import {
 import { Public } from "../decorators/public.decorator";
 import { BeginPasskeyMfaDto, VerifyPasskeyMfaDto } from "./dto/passkey-mfa.dto";
 import { authenticatedLoginResponseSchema } from "./auth-response.schemas";
-import { passkeyMfaStatusResponseSchema } from "./passkey-response.schemas";
+import { passkeyAuthenticationOptionsResponseSchema, passkeyMfaStatusResponseSchema } from "./passkey-response.schemas";
 
 @ApiTags("auth")
 @ApiCookieAuth()
@@ -55,6 +55,7 @@ export class PasskeyMfaController {
   @Post("enable/options")
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: BeginPasskeyMfaDto })
+  @ApiOkResponse({ description: "WebAuthn authentication options were returned for MFA enablement.", schema: passkeyAuthenticationOptionsResponseSchema })
   @ApiOperation({ summary: "Start passkey MFA enablement after password re-authentication" })
   async beginEnable(@Req() request: AuthenticatedRequest, @Body() dto: BeginPasskeyMfaDto) {
     return this.run(() => this.passkeyMfa.beginEnable({
@@ -85,6 +86,7 @@ export class PasskeyMfaController {
   @Post("disable/options")
   @HttpCode(HttpStatus.OK)
   @ApiBody({ type: BeginPasskeyMfaDto })
+  @ApiOkResponse({ description: "WebAuthn authentication options were returned for MFA disablement.", schema: passkeyAuthenticationOptionsResponseSchema })
   @ApiOperation({ summary: "Start passkey MFA disablement after password re-authentication" })
   async beginDisable(@Req() request: AuthenticatedRequest, @Body() dto: BeginPasskeyMfaDto) {
     return this.run(() => this.passkeyMfa.beginDisable({
