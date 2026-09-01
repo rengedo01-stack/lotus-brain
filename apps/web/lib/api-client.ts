@@ -10,6 +10,13 @@ export type ApiErrorKind =
 
 const CSRF_HEADER_NAME = "x-csrf-token";
 
+class CsrfEpochInvalidatedError extends Error {
+  constructor() {
+    super("CSRF token acquisition was invalidated.");
+    this.name = "CsrfEpochInvalidatedError";
+  }
+}
+
 const errorMessages: Record<ApiErrorKind, string> = {
   configuration: "アプリケーションの接続設定を確認してください。",
   unauthorized: "ログイン状態を確認できませんでした。",
@@ -104,11 +111,25 @@ async function parseJson(response: Response): Promise<unknown> {
   }
 }
 
+function isExactCsrfTokenResponse(value: unknown): value is { csrfToken: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== "csrfToken") return false;
+
+  const csrfToken = (value as { csrfToken?: unknown }).csrfToken;
+  return typeof csrfToken === "string" && csrfToken.trim().length > 0;
+}
+
 export function createApiClient(): ApiClient {
   let csrfToken: string | null = null;
+  let csrfEpoch = 0;
+  let csrfAcquisition: { epoch: number; promise: Promise<string> } | null = null;
 
   const clearCsrfToken = () => {
+    csrfEpoch += 1;
     csrfToken = null;
+    csrfAcquisition = null;
   };
 
   const notifyError = (error: ApiError) => {
@@ -116,6 +137,38 @@ export function createApiClient(): ApiClient {
       clearCsrfToken();
       sessionEventListeners.forEach((listener) => listener("unauthorized"));
     }
+  };
+
+  const acquireCsrfToken = async (epoch: number): Promise<string> => {
+    if (csrfEpoch !== epoch) throw new CsrfEpochInvalidatedError();
+    if (csrfToken !== null) return csrfToken;
+
+    let acquisition = csrfAcquisition;
+    if (acquisition === null || acquisition.epoch !== epoch) {
+      const promise = (async () => {
+        const payload = await request<unknown>("/auth/csrf", { method: "GET", expectedStatus: 200 });
+        if (!isExactCsrfTokenResponse(payload)) throw new ApiError("server");
+        if (csrfEpoch !== epoch) throw new CsrfEpochInvalidatedError();
+
+        csrfToken = payload.csrfToken;
+        return payload.csrfToken;
+      })();
+
+      acquisition = { epoch, promise };
+      csrfAcquisition = acquisition;
+      void promise.then(
+        () => {
+          if (csrfAcquisition === acquisition) csrfAcquisition = null;
+        },
+        () => {
+          if (csrfAcquisition === acquisition) csrfAcquisition = null;
+        },
+      );
+    }
+
+    const token = await acquisition.promise;
+    if (csrfEpoch !== epoch) throw new CsrfEpochInvalidatedError();
+    return token;
   };
 
   const request = async <T>(path: string, options: ApiRequestOptions = {}): Promise<T> => {
@@ -136,14 +189,10 @@ export function createApiClient(): ApiClient {
 
     try {
       if (!isSafeMethod(method) && csrf !== "none") {
-        if (csrfToken === null) {
-          const csrfPayload = await request<{ csrfToken?: unknown }>("/auth/csrf", { method: "GET" });
-          if (typeof csrfPayload.csrfToken !== "string" || csrfPayload.csrfToken.length === 0) {
-            throw new ApiError("server");
-          }
-          csrfToken = csrfPayload.csrfToken;
-        }
-        headers.set(CSRF_HEADER_NAME, csrfToken);
+        const epoch = csrfEpoch;
+        const token = await acquireCsrfToken(epoch);
+        if (csrfEpoch !== epoch) throw new CsrfEpochInvalidatedError();
+        headers.set(CSRF_HEADER_NAME, token);
       }
 
       const response = await fetch(endpointUrl(path), {
