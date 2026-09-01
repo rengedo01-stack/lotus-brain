@@ -27,6 +27,7 @@ import {
   UserInvitationCredentialInvalidError,
   UserInvitationNotFoundError,
 } from "../../notification/application/user-invitation.errors";
+import { notificationRequestAcceptedResponseSchema } from "../../notification/notification-response.schemas";
 import { UserInvitationService } from "../application/user-invitation.service";
 import {
   AcceptUserInvitationDto,
@@ -73,6 +74,11 @@ export class UserInvitationAdministrationController {
   @RequirePermissions(Permissions.IDENTITY_MANAGE)
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: "Queue a new invitation email after the resend cooldown" })
+  @ApiResponse({
+    status: HttpStatus.ACCEPTED,
+    description: "The invitation resend request was accepted.",
+    schema: notificationRequestAcceptedResponseSchema,
+  })
   async resend(@Req() request: AuthenticatedRequest, @Param("id") invitationId: string) {
     await this.run(() => this.invitations.resendInvitation(invitationId, this.actorUserId(request)));
     return { status: "accepted" as const };

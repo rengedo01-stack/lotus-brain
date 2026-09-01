@@ -5,8 +5,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api-client";
 import {
-  emailVerificationRequestPath,
-  isEmailVerificationRequestAccepted,
+  requestEmailVerification as requestEmailVerificationRequest,
 } from "@/lib/email-verification";
 import {
   addPasskeyFromResponse,
@@ -241,8 +240,7 @@ export default function PasskeysSettingsPage() {
     setVerificationRequestError(null);
     setVerificationRequestState("submitting");
     try {
-      const response = await api.request<unknown>(emailVerificationRequestPath, { method: "POST" });
-      if (!isEmailVerificationRequestAccepted(response)) throw new Error("Unexpected email verification response.");
+      await requestEmailVerificationRequest(api);
       setVerificationRequestState("accepted");
     } catch (error: unknown) {
       if (error instanceof ApiError && error.kind === "unauthorized") return;

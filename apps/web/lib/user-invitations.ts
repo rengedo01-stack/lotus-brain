@@ -1,3 +1,5 @@
+import type { ApiClient } from "@/lib/api-client";
+
 export const USER_INVITATION_STATUSES = ["PENDING", "ACCEPTED", "CANCELLED"] as const;
 
 export type UserInvitationStatus = (typeof USER_INVITATION_STATUSES)[number];
@@ -48,7 +50,19 @@ export function isUserInvitationList(value: unknown): value is UserInvitation[] 
 }
 
 export function isUserInvitationResendAccepted(value: unknown): value is { status: "accepted" } {
-  return isRecord(value) && value.status === "accepted";
+  if (!isRecord(value) || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length === 1 && keys[0] === "status" && value.status === "accepted";
+}
+
+export function resendUserInvitation(api: ApiClient, invitationId: string): Promise<{ status: "accepted" }> {
+  return api.request<unknown>(`/identity/invitations/${encodeURIComponent(invitationId)}/resend`, {
+    method: "POST",
+    expectedStatus: 202,
+  }).then((response) => {
+    if (!isUserInvitationResendAccepted(response)) throw new Error("Unexpected invitation resend response.");
+    return response;
+  });
 }
 
 export function isUserInvitationAcceptanceComplete(value: unknown): value is { status: "ok" } {

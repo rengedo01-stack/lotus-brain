@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
-import { ApiError, createApiClient } from "@/lib/api-client";
+import { createApiClient } from "@/lib/api-client";
 import {
-  isPasswordRecoveryRequestAccepted,
-  passwordRecoveryRequestPath,
   passwordRecoveryRequestPayload,
+  requestPasswordRecovery,
 } from "@/lib/password-recovery";
 
 type RequestState = "ready" | "submitting" | "accepted" | "error";
@@ -28,13 +27,7 @@ export default function ForgotPasswordPage() {
 
     setState("submitting");
     try {
-      const response = await api.request<unknown>(passwordRecoveryRequestPath, {
-        method: "POST",
-        credentials: "omit",
-        body: payload,
-        csrf: "none",
-      });
-      if (!isPasswordRecoveryRequestAccepted(response)) throw new ApiError("server");
+      await requestPasswordRecovery(api, payload);
       formElement.reset();
       setState("accepted");
     } catch {

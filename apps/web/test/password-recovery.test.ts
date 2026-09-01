@@ -10,7 +10,7 @@ import {
 test("password recovery request accepts only the documented generic success response", () => {
   assert.equal(isPasswordRecoveryRequestAccepted({ status: "accepted" }), true);
   assert.equal(isPasswordRecoveryRequestAccepted({ status: "ok" }), false);
-  assert.equal(isPasswordRecoveryRequestAccepted({ status: "accepted", email: "operator@example.test" }), true);
+  assert.equal(isPasswordRecoveryRequestAccepted({ status: "accepted", email: "operator@example.test" }), false);
   assert.equal(isPasswordRecoveryRequestAccepted(null), false);
 });
 
