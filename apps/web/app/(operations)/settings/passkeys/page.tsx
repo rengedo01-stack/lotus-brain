@@ -10,21 +10,20 @@ import {
 import {
   addPasskeyFromResponse,
   isCurrentPasskeyListResponse,
-  isPasskeyList,
-  isPasskeyMutationResponse,
   passkeyPaths,
   passkeyRenamePath,
   passkeyRevokePath,
+  requestPasskeyList,
+  requestPasskeyMutation,
   replacePasskeyFromResponse,
   type PasskeyView,
 } from "@/lib/passkey-management";
 import {
   isPasskeyAuthenticationOptions,
-  isPasskeyMfaStatus,
   passkeyMfaErrorMessage,
   passkeyMfaOptionsPath,
-  passkeyMfaPaths,
   passkeyMfaVerifyPath,
+  requestPasskeyMfaStatus,
   type PasskeyMfaAction,
   type PasskeyMfaStatus,
 } from "@/lib/passkey-mfa";
@@ -75,14 +74,14 @@ export default function PasskeysSettingsPage() {
   const loadPasskeys = useCallback(async () => {
     const generation = passkeyListGeneration.current;
     try {
-      const payload = await api.request<unknown>(passkeyPaths.list);
-      if (!isPasskeyList(payload)) throw new Error("Passkeys could not be loaded.");
+      const payload = await requestPasskeyList(api);
       if (!isCurrentPasskeyListResponse(generation, passkeyListGeneration.current)) return;
       setPasskeys(payload);
       setState("ready");
     } catch (error: unknown) {
       if (!isCurrentPasskeyListResponse(generation, passkeyListGeneration.current)) return;
       if (error instanceof ApiError && error.kind === "unauthorized") return;
+      setPasskeys([]);
       setMessage("パスキーを読み込めませんでした。ログイン状態を確認してください。");
       setState("error");
     }
@@ -90,8 +89,7 @@ export default function PasskeysSettingsPage() {
 
   const refreshMfaStatus = useCallback(async () => {
     try {
-      const payload = await api.request<unknown>(passkeyMfaPaths.status);
-      if (!isPasskeyMfaStatus(payload)) throw new Error("MFA status could not be loaded.");
+      const payload = await requestPasskeyMfaStatus(api);
       setMfaStatus(payload);
     } catch {
       setMfaStatus(null);
@@ -120,11 +118,10 @@ export default function PasskeysSettingsPage() {
         body: { currentPassword },
       });
       const response = await startRegistration({ optionsJSON });
-      const verification = await api.request<unknown>(passkeyPaths.registrationVerify, {
+      const verification = await requestPasskeyMutation(api, passkeyPaths.registrationVerify, {
         method: "POST",
         body: { response },
       });
-      if (!isPasskeyMutationResponse(verification)) throw new Error("Unexpected passkey registration response.");
       passkeyListGeneration.current += 1;
       setPasskeys((current) => addPasskeyFromResponse(current, verification.passkey));
       void refreshMfaStatus();
@@ -146,11 +143,10 @@ export default function PasskeysSettingsPage() {
     setMessage(null);
     setPendingPasskeyId(passkeyId);
     try {
-      const response = await api.request<unknown>(passkeyRenamePath(passkeyId), {
+      const response = await requestPasskeyMutation(api, passkeyRenamePath(passkeyId), {
         method: "PATCH",
         body: { displayName },
       });
-      if (!isPasskeyMutationResponse(response)) throw new Error("Unexpected passkey rename response.");
       passkeyListGeneration.current += 1;
       setPasskeys((current) => replacePasskeyFromResponse(current, response.passkey));
       setMessage("パスキー名を更新しました。");
@@ -171,11 +167,10 @@ export default function PasskeysSettingsPage() {
     setMessage(null);
     setPendingPasskeyId(passkeyId);
     try {
-      const response = await api.request<unknown>(passkeyRevokePath(passkeyId), {
+      const response = await requestPasskeyMutation(api, passkeyRevokePath(passkeyId), {
         method: "POST",
         body: { currentPassword },
       });
-      if (!isPasskeyMutationResponse(response)) throw new Error("Unexpected passkey revoke response.");
       passkeyListGeneration.current += 1;
       setPasskeys((current) => replacePasskeyFromResponse(current, response.passkey));
       void refreshMfaStatus();

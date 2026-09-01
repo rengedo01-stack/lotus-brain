@@ -4,6 +4,36 @@ const argon2 = require("argon2");
 
 const databaseUrl = process.env.PASSKEY_ENROLLMENT_DATABASE_URL;
 
+const passkeyViewKeys = [
+  "backedUp",
+  "createdAt",
+  "deviceType",
+  "displayName",
+  "id",
+  "lastUsedAt",
+  "revokedAt",
+  "transports",
+  "updatedAt",
+].sort();
+
+function assertSerializedPasskeyView(view) {
+  const wire = JSON.parse(JSON.stringify(view));
+  assert.deepEqual(Object.keys(wire).sort(), passkeyViewKeys);
+  assert.equal(typeof wire.id, "string");
+  assert.equal(typeof wire.displayName === "string" || wire.displayName === null, true);
+  assert.equal(Array.isArray(wire.transports), true);
+  assert.equal(wire.transports.every((transport) => ["ble", "cable", "hybrid", "internal", "nfc", "smart-card", "usb"].includes(transport)), true);
+  assert.equal(["singleDevice", "multiDevice", null].includes(wire.deviceType), true);
+  assert.equal(typeof wire.backedUp === "boolean" || wire.backedUp === null, true);
+  for (const key of ["createdAt", "updatedAt"]) {
+    assert.equal(new Date(wire[key]).toISOString(), wire[key]);
+  }
+  for (const key of ["lastUsedAt", "revokedAt"]) {
+    assert.equal(wire[key] === null || new Date(wire[key]).toISOString() === wire[key], true);
+  }
+  return wire;
+}
+
 if (databaseUrl === undefined) {
   test("passkey-enrollment real database proof is opt-in", { skip: "PASSKEY_ENROLLMENT_DATABASE_URL is not set" }, () => {});
 } else {
@@ -49,6 +79,7 @@ if (databaseUrl === undefined) {
           csrfTokenHash: `${fixture}-csrf-token-${sessions.length}`,
           credentialVersion: user.credentialVersion,
           expiresAt: new Date(Date.now() + 60_000),
+          activatedAt: new Date(),
           ...overrides,
         },
       });
@@ -110,6 +141,7 @@ if (databaseUrl === undefined) {
 
       const created = await claimAndComplete(user, session, first.challenge, `${fixture}-credential-one`);
       const stored = await prisma.webAuthnCredential.findUniqueOrThrow({ where: { id: created.id } });
+      assertSerializedPasskeyView(created);
       assert.equal(stored.userId, user.id);
       assert.equal(stored.credentialId, `${fixture}-credential-one`);
       assert.deepEqual([...stored.publicKey], [1, 2, 3, 4]);
@@ -217,10 +249,12 @@ if (databaseUrl === undefined) {
 
       const listed = await repository.listPasskeys(user.id);
       assert.equal(listed.every((row) => Object.hasOwn(row, "publicKey") === false && Object.hasOwn(row, "credentialId") === false), true);
+      listed.forEach(assertSerializedPasskeyView);
       const renamed = await repository.renamePasskey({
         userId: user.id, identitySessionId: session.id, passkeyId: created.id, displayName: "Office key",
       });
       assert.equal(renamed.displayName, "Office key");
+      assertSerializedPasskeyView(renamed);
       await assert.rejects(
         () => repository.renamePasskey({
           userId: otherUser.id, identitySessionId: otherSession.id, passkeyId: created.id, displayName: "attacker",
@@ -231,6 +265,7 @@ if (databaseUrl === undefined) {
         userId: user.id, identitySessionId: session.id, passkeyId: created.id, expectedCredentialVersion: 2,
       });
       assert.ok(revoked.revokedAt);
+      assertSerializedPasskeyView(revoked);
       assert.ok((await prisma.webAuthnCredential.findUniqueOrThrow({ where: { id: created.id } })).revokedAt);
       await assert.rejects(
         () => repository.revokePasskey({

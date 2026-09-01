@@ -1,8 +1,14 @@
+import type { ApiClient } from "./api-client";
+
 export type PasskeyMfaStatus = {
   activePasskeyCount: number;
   enabled: boolean;
   recoveryEmailVerified: boolean;
 };
+
+export type PasskeyMfaApi = Pick<ApiClient, "request">;
+
+const PASSKEY_MFA_STATUS_KEYS = ["enabled", "activePasskeyCount", "recoveryEmailVerified"] as const;
 
 export type PasskeyMfaAction = "enable" | "disable";
 
@@ -19,8 +25,10 @@ export function passkeyMfaVerifyPath(action: PasskeyMfaAction): string {
 }
 
 export function isPasskeyMfaStatus(value: unknown): value is PasskeyMfaStatus {
-  if (typeof value !== "object" || value === null) return false;
-  const status = value as Partial<PasskeyMfaStatus>;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const status = value as Record<string, unknown>;
+  const keys = Object.keys(status);
+  if (keys.length !== PASSKEY_MFA_STATUS_KEYS.length || !PASSKEY_MFA_STATUS_KEYS.every((key) => key in status)) return false;
   return (
     typeof status.enabled === "boolean" &&
     typeof status.activePasskeyCount === "number" &&
@@ -28,6 +36,12 @@ export function isPasskeyMfaStatus(value: unknown): value is PasskeyMfaStatus {
     status.activePasskeyCount >= 0 &&
     typeof status.recoveryEmailVerified === "boolean"
   );
+}
+
+export async function requestPasskeyMfaStatus(api: PasskeyMfaApi): Promise<PasskeyMfaStatus> {
+  const payload = await api.request<unknown>(passkeyMfaPaths.status, { expectedStatus: 200 });
+  if (!isPasskeyMfaStatus(payload)) throw new Error("MFA status could not be loaded.");
+  return payload;
 }
 
 export function isPasskeyAuthenticationOptions(value: unknown): value is { challenge: string } {

@@ -3,6 +3,14 @@ const assert = require("node:assert/strict");
 
 const databaseUrl = process.env.PASSKEY_MFA_DATABASE_URL;
 
+function assertExactMfaStatus(status, expected) {
+  assert.deepEqual(Object.keys(status).sort(), ["activePasskeyCount", "enabled", "recoveryEmailVerified"]);
+  assert.equal(typeof status.enabled, "boolean");
+  assert.equal(Number.isInteger(status.activePasskeyCount) && status.activePasskeyCount >= 0, true);
+  assert.equal(typeof status.recoveryEmailVerified, "boolean");
+  assert.deepEqual(status, expected);
+}
+
 if (databaseUrl === undefined) {
   test("passkey MFA real database proof is opt-in", { skip: "PASSKEY_MFA_DATABASE_URL is not set" }, () => {});
 } else {
@@ -64,6 +72,11 @@ if (databaseUrl === undefined) {
     try {
       const user = await createUser("mfa");
       const credential = await createCredential(user, "mfa");
+      assertExactMfaStatus(await mfa.getMfaStatus(user.id), {
+        enabled: false,
+        activePasskeyCount: 1,
+        recoveryEmailVerified: true,
+      });
       const oldSession = await createSession(user, "old");
       const pendingBeforeEnable = await createSession(user, "pending-before-enable", { activatedAt: null });
 
@@ -99,6 +112,11 @@ if (databaseUrl === undefined) {
       assert.ok((await prisma.identitySession.findUniqueOrThrow({ where: { id: pendingBeforeEnable.id } })).revokedAt);
       assert.equal(await prisma.identityAuditLog.count({ where: { action: "PASSKEY_MFA_ENABLED", targetUserId: user.id } }), 1);
       assert.equal(await prisma.notificationOutbox.count({ where: { kind: "PASSKEY_MFA_ENABLED", userId: user.id } }), 1);
+      assertExactMfaStatus(await mfa.getMfaStatus(user.id), {
+        enabled: true,
+        activePasskeyCount: 1,
+        recoveryEmailVerified: true,
+      });
 
       await assert.rejects(
         () => prisma.webAuthnCredential.update({ where: { id: credential.id }, data: { revokedAt: new Date() } }),
@@ -219,6 +237,11 @@ if (databaseUrl === undefined) {
       assert.ok((await prisma.identitySession.findUniqueOrThrow({ where: { id: pendingBeforeDisable.id } })).revokedAt);
       assert.equal(await prisma.identityAuditLog.count({ where: { action: "PASSKEY_MFA_DISABLED", targetUserId: user.id } }), 1);
       assert.equal(await prisma.notificationOutbox.count({ where: { kind: "PASSKEY_MFA_DISABLED", userId: user.id } }), 1);
+      assertExactMfaStatus(await mfa.getMfaStatus(user.id), {
+        enabled: false,
+        activePasskeyCount: 1,
+        recoveryEmailVerified: true,
+      });
 
       const staleUser = await createUser("stale-mfa");
       const staleCredential = await createCredential(staleUser, "stale-mfa");
