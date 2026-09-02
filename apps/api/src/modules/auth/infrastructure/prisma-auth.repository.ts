@@ -14,6 +14,8 @@ import { normalizeEmail } from "../auth.utils";
 import { SystemRoleCodes } from "../../authorization/authorization.constants";
 import { AuthConflictError, AuthInvalidCredentialsError } from "../auth.errors";
 
+const MAX_ACTIVE_CSRF_TOKENS_PER_SESSION = 8;
+
 const userSelect = {
   id: true,
   email: true,
@@ -217,6 +219,19 @@ export class PrismaAuthRepository implements AuthRepository {
         where: { id: session.id },
         data: { activatedAt: now, expiresAt: input.expiresAt },
       });
+      await transaction.identityCsrfToken.upsert({
+        where: { tokenHash: session.csrfTokenHash },
+        create: {
+          identitySessionId: session.id,
+          tokenHash: session.csrfTokenHash,
+          issuedAt: now,
+          expiresAt: input.expiresAt,
+        },
+        update: {
+          identitySessionId: session.id,
+          expiresAt: input.expiresAt,
+        },
+      });
       await transaction.user.update({ where: { id: user.id }, data: { lastLoginAt: now } });
       return "ACTIVATED";
     });
@@ -252,6 +267,9 @@ export class PrismaAuthRepository implements AuthRepository {
         where: { userId: input.userId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      await transaction.identityCsrfToken.deleteMany({
+        where: { identitySession: { userId: input.userId } },
+      });
       await transaction.identityAuditLog.create({
         data: {
           action: "CHANGE_PASSWORD",
@@ -264,27 +282,170 @@ export class PrismaAuthRepository implements AuthRepository {
     });
   }
 
-  async rotateSessionCsrfToken(sessionId: string, csrfTokenHash: string): Promise<AuthSessionView | null> {
-    const result = await this.prisma.identitySession.updateMany({
-      where: { id: sessionId, revokedAt: null, activatedAt: { not: null } },
-      data: {
-        csrfTokenHash,
-        lastSeenAt: new Date(),
-      },
+  async issueSessionCsrfToken(input: {
+    sessionId: string;
+    csrfTokenHash: string;
+    mirrorLegacyScalar: boolean;
+  }): Promise<AuthSessionView | null> {
+    const reference = await this.prisma.identitySession.findUnique({
+      where: { id: input.sessionId },
+      select: { userId: true },
     });
-    if (result.count === 0) return null;
-    return this.prisma.identitySession.findUnique({
-      where: { id: sessionId },
-      select: sessionSelect,
+    if (reference === null) return null;
+
+    // All active-token issuance follows User -> IdentitySession ->
+    // IdentityCsrfToken locking. Revocation paths use the same prefix so a
+    // concurrent revocation either precedes issuance or deletes its token
+    // before committing; a revoked session can never retain a live token.
+    return this.prisma.$transaction(async (transaction) => {
+      const users = await transaction.$queryRaw<Array<{
+        id: string;
+        credentialVersion: number;
+        authenticationPolicyVersion: number;
+        status: "ACTIVE" | "DISABLED" | "LOCKED";
+        deletedAt: Date | null;
+      }>>(Prisma.sql`
+        SELECT "id", "credentialVersion", "authenticationPolicyVersion", "status", "deletedAt"
+        FROM "User"
+        WHERE "id" = ${reference.userId}
+        FOR UPDATE
+      `);
+      const user = users[0] ?? null;
+      if (user === null || user.status !== "ACTIVE" || user.deletedAt !== null) return null;
+
+      const sessions = await transaction.$queryRaw<Array<{
+        id: string;
+        userId: string;
+        credentialVersion: number;
+        authenticationPolicyVersion: number;
+        expiresAt: Date;
+        activatedAt: Date | null;
+        revokedAt: Date | null;
+      }>>(Prisma.sql`
+        SELECT "id", "userId", "credentialVersion", "authenticationPolicyVersion", "expiresAt", "activatedAt", "revokedAt"
+        FROM "IdentitySession"
+        WHERE "id" = ${input.sessionId}
+        FOR UPDATE
+      `);
+      const session = sessions[0] ?? null;
+      const now = new Date();
+      if (
+        session === null ||
+        session.userId !== user.id ||
+        session.activatedAt === null ||
+        session.revokedAt !== null ||
+        session.expiresAt <= now ||
+        session.credentialVersion !== user.credentialVersion ||
+        session.authenticationPolicyVersion !== user.authenticationPolicyVersion
+      ) {
+        return null;
+      }
+
+      await transaction.identityCsrfToken.deleteMany({
+        where: { identitySessionId: session.id, expiresAt: { lte: now } },
+      });
+      const existingTokens = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT "id"
+        FROM "IdentityCsrfToken"
+        WHERE "identitySessionId" = ${session.id}
+        ORDER BY "issuedAt" ASC, "id" ASC
+        FOR UPDATE
+      `);
+      const overflow = existingTokens.length - (MAX_ACTIVE_CSRF_TOKENS_PER_SESSION - 1);
+      if (overflow > 0) {
+        await transaction.identityCsrfToken.deleteMany({
+          where: { id: { in: existingTokens.slice(0, overflow).map((token) => token.id) } },
+        });
+      }
+      await transaction.identityCsrfToken.create({
+        data: {
+          identitySessionId: session.id,
+          tokenHash: input.csrfTokenHash,
+          issuedAt: now,
+          expiresAt: session.expiresAt,
+        },
+      });
+      await transaction.identitySession.update({
+        where: { id: session.id },
+        data: {
+          ...(input.mirrorLegacyScalar ? { csrfTokenHash: input.csrfTokenHash } : {}),
+          lastSeenAt: now,
+        },
+      });
+      return transaction.identitySession.findUnique({ where: { id: session.id }, select: sessionSelect });
     });
   }
 
+  async isSessionCsrfTokenValid(input: {
+    sessionId: string;
+    csrfTokenHash: string;
+    allowLegacyScalarFallback: boolean;
+  }): Promise<boolean> {
+    const now = new Date();
+    const tableTokens = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "token"."id"
+      FROM "IdentityCsrfToken" AS "token"
+      INNER JOIN "IdentitySession" AS "session" ON "token"."identitySessionId" = "session"."id"
+      INNER JOIN "User" AS "user" ON "user"."id" = "session"."userId"
+      WHERE "token"."tokenHash" = ${input.csrfTokenHash}
+        AND "token"."expiresAt" > ${now}
+        AND "session"."id" = ${input.sessionId}
+        AND "session"."activatedAt" IS NOT NULL
+        AND "session"."revokedAt" IS NULL
+        AND "session"."expiresAt" > ${now}
+        AND "user"."status" = 'ACTIVE'
+        AND "user"."deletedAt" IS NULL
+        AND "session"."credentialVersion" = "user"."credentialVersion"
+        AND "session"."authenticationPolicyVersion" = "user"."authenticationPolicyVersion"
+      LIMIT 1
+    `);
+    if (tableTokens.length === 1) return true;
+    if (!input.allowLegacyScalarFallback) return false;
+
+    const legacyTokens = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "session"."id"
+      FROM "IdentitySession" AS "session"
+      INNER JOIN "User" AS "user" ON "user"."id" = "session"."userId"
+      WHERE "session"."csrfTokenHash" = ${input.csrfTokenHash}
+        AND "session"."id" = ${input.sessionId}
+        AND "session"."activatedAt" IS NOT NULL
+        AND "session"."revokedAt" IS NULL
+        AND "session"."expiresAt" > ${now}
+        AND "user"."status" = 'ACTIVE'
+        AND "user"."deletedAt" IS NULL
+        AND "session"."credentialVersion" = "user"."credentialVersion"
+        AND "session"."authenticationPolicyVersion" = "user"."authenticationPolicyVersion"
+      LIMIT 1
+    `);
+    return legacyTokens.length === 1;
+  }
+
   async revokeSession(sessionId: string): Promise<boolean> {
-    const result = await this.prisma.identitySession.updateMany({
-      where: { id: sessionId, revokedAt: null },
-      data: { revokedAt: new Date() },
+    const reference = await this.prisma.identitySession.findUnique({
+      where: { id: sessionId },
+      select: { userId: true },
     });
-    return result.count > 0;
+    if (reference === null) return false;
+
+    return this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw(Prisma.sql`
+        SELECT "id"
+        FROM "User"
+        WHERE "id" = ${reference.userId}
+        FOR UPDATE
+      `);
+      const sessions = await transaction.$queryRaw<Array<{ id: string; revokedAt: Date | null }>>(Prisma.sql`
+        SELECT "id", "revokedAt"
+        FROM "IdentitySession"
+        WHERE "id" = ${sessionId}
+        FOR UPDATE
+      `);
+      const session = sessions[0] ?? null;
+      if (session === null || session.revokedAt !== null) return false;
+      await transaction.identitySession.update({ where: { id: session.id }, data: { revokedAt: new Date() } });
+      await transaction.identityCsrfToken.deleteMany({ where: { identitySessionId: session.id } });
+      return true;
+    });
   }
 
   async touchSession(sessionId: string, lastSeenAt: Date): Promise<void> {

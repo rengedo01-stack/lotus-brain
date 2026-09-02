@@ -5,6 +5,7 @@ type NodeEnvironment = (typeof nodeEnvironments)[number];
 type LogLevel = (typeof logLevels)[number];
 
 export type EnvironmentVariables = {
+  CSRF_LEGACY_SCALAR_FALLBACK: boolean;
   CORS_ORIGIN: string;
   DATABASE_URL: string;
   LOG_LEVEL: LogLevel;
@@ -42,8 +43,14 @@ export function validateEnvironment(
 
   const logLevel = readLogLevel(environment.LOG_LEVEL, nodeEnvironment);
   const smtp = readSmtpConfiguration(environment, nodeEnvironment);
+  const csrfLegacyScalarFallback = readBoolean(
+    environment.CSRF_LEGACY_SCALAR_FALLBACK,
+    "CSRF_LEGACY_SCALAR_FALLBACK",
+    false,
+  );
 
   return {
+    CSRF_LEGACY_SCALAR_FALLBACK: csrfLegacyScalarFallback,
     CORS_ORIGIN: corsOrigin,
     DATABASE_URL: databaseUrl,
     LOG_LEVEL: logLevel,

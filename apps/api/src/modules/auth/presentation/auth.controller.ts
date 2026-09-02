@@ -229,7 +229,7 @@ export class AuthController {
 
   @Get("csrf")
   @AuthenticatedOnly()
-  @ApiOperation({ summary: "Rotate and return a CSRF token for the current session" })
+  @ApiOperation({ summary: "Issue a bounded CSRF token for the current active session" })
   @ApiOkResponse({ description: "A CSRF token was issued.", schema: csrfTokenResponseSchema })
   @ApiCookieAuth()
   async csrf(@Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response) {

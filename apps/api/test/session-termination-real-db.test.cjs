@@ -8,9 +8,13 @@ if (databaseUrl === undefined) {
   test("session termination real database proof is opt-in", { skip: "SESSION_TERMINATION_DATABASE_URL is not set" }, () => {});
 } else {
   const databaseName = decodeURIComponent(new URL(databaseUrl).pathname.slice(1));
-  if (databaseName !== "lotus_brain_pr005q_test") {
-    test("session termination real database proof requires the disposable PR-005Q database", () => {
-      assert.fail("SESSION_TERMINATION_DATABASE_URL must target lotus_brain_pr005q_test.");
+  const allowedDatabaseNames = new Set([
+    "lotus_brain_pr005q_test",
+    "lotus_brain_pr005w1_termination_test",
+  ]);
+  if (!allowedDatabaseNames.has(databaseName)) {
+    test("session termination real database proof requires an explicitly disposable database", () => {
+      assert.fail("SESSION_TERMINATION_DATABASE_URL must target an approved disposable session-termination database.");
     });
   } else {
     const { PrismaPg } = require("@prisma/adapter-pg");
@@ -92,6 +96,12 @@ if (databaseUrl === undefined) {
         }
 
         assert.equal((await request("/auth/me", activeSession)).status, 200);
+
+        const csrfResponse = await request("/auth/csrf", activeSession);
+        assert.equal(csrfResponse.status, 200);
+        const { csrfToken } = await csrfResponse.json();
+        assert.equal(typeof csrfToken, "string");
+        activeSession.csrfToken = csrfToken;
 
         const csrfFailure = await request("/auth/logout", activeSession, { method: "POST", csrf: false });
         assert.equal(csrfFailure.status, 403);

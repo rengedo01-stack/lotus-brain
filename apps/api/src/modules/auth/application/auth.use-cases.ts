@@ -1,4 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import type { EnvironmentVariables } from "../../../config/environment";
 import {
   AuthForbiddenError,
   AuthInvalidCredentialsError,
@@ -131,11 +133,18 @@ export class GetCurrentUserUseCase {
 
 @Injectable()
 export class RotateCsrfTokenUseCase {
-  constructor(@Inject(AUTH_REPOSITORY) private readonly repository: AuthRepository) {}
+  constructor(
+    @Inject(AUTH_REPOSITORY) private readonly repository: AuthRepository,
+    private readonly configService: ConfigService<EnvironmentVariables, true>,
+  ) {}
 
   async execute(sessionId: string): Promise<string> {
     const csrfToken = makeOpaqueToken();
-    const result = await this.repository.rotateSessionCsrfToken(sessionId, hashSecret(csrfToken));
+    const result = await this.repository.issueSessionCsrfToken({
+      sessionId,
+      csrfTokenHash: hashSecret(csrfToken),
+      mirrorLegacyScalar: this.configService.get("CSRF_LEGACY_SCALAR_FALLBACK", { infer: true }),
+    });
     if (result === null) throw new AuthNotFoundError(`Session ${sessionId} was not found.`);
     return csrfToken;
   }

@@ -64,7 +64,16 @@ export interface AuthRepository {
     tokenHash: string;
   }): Promise<"ACTIVATED" | "ALREADY_ACTIVATED" | "CSRF_INVALID" | "UNAUTHORIZED">;
   changePassword(input: ChangePasswordInput): Promise<void>;
-  rotateSessionCsrfToken(sessionId: string, csrfTokenHash: string): Promise<AuthSessionView | null>;
+  issueSessionCsrfToken(input: {
+    sessionId: string;
+    csrfTokenHash: string;
+    mirrorLegacyScalar: boolean;
+  }): Promise<AuthSessionView | null>;
+  isSessionCsrfTokenValid(input: {
+    sessionId: string;
+    csrfTokenHash: string;
+    allowLegacyScalarFallback: boolean;
+  }): Promise<boolean>;
   revokeSession(sessionId: string): Promise<boolean>;
   touchSession(sessionId: string, lastSeenAt: Date): Promise<void>;
   getUserCount(): Promise<number>;
