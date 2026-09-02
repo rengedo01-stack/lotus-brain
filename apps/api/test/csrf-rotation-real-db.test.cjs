@@ -22,7 +22,7 @@ if (databaseUrl === undefined) {
 
     const hash = (value) => createHash("sha256").update(value).digest("hex");
 
-    test("CSRF HTTP proof rotates tokens, rejects superseded proofs, and rejects revoked sessions", async () => {
+    test("CSRF HTTP proof retains bounded concurrent tokens and rejects revoked sessions", async () => {
       process.env.DATABASE_URL = databaseUrl;
       process.env.NODE_ENV = "test";
       process.env.CORS_ORIGIN = "http://localhost:3000";
@@ -100,8 +100,16 @@ if (databaseUrl === undefined) {
         assert.ok(secondCsrf.csrfToken.length > 0);
         assert.notEqual(secondCsrf.csrfToken, firstCsrf.csrfToken);
 
-        assert.equal((await request("/auth/logout", activeSession, { method: "POST", csrfToken: firstCsrf.csrfToken })).status, 403);
-        const currentTokenLogout = await request("/auth/logout", activeSession, { method: "POST", csrfToken: secondCsrf.csrfToken });
+        const firstTokenLogout = await request("/auth/logout", activeSession, { method: "POST", csrfToken: firstCsrf.csrfToken });
+        assert.equal(firstTokenLogout.status, 200);
+        assert.deepEqual(await firstTokenLogout.json(), { status: "ok" });
+        assert.equal((await request("/auth/logout", activeSession, { method: "POST", csrfToken: secondCsrf.csrfToken })).status, 401);
+
+        const anotherSession = await createSession("another-active");
+        const currentCsrfResponse = await request("/auth/csrf", anotherSession);
+        assert.equal(currentCsrfResponse.status, 200);
+        const currentCsrf = await currentCsrfResponse.json();
+        const currentTokenLogout = await request("/auth/logout", anotherSession, { method: "POST", csrfToken: currentCsrf.csrfToken });
         assert.equal(currentTokenLogout.status, 200);
         assert.deepEqual(await currentTokenLogout.json(), { status: "ok" });
 

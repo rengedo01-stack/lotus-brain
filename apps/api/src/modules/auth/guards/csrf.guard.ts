@@ -2,11 +2,14 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Reflector } from "@nestjs/core";
-import { createHash } from "node:crypto";
+import type { EnvironmentVariables } from "../../../config/environment";
+import { AUTH_REPOSITORY, type AuthRepository } from "../application/auth.repository";
 import {
   AUTH_CSRF_EXEMPT_KEY,
   AUTH_PENDING_SESSION_ACTIVATION_KEY,
@@ -14,13 +17,18 @@ import {
   CSRF_HEADER_NAME,
 } from "../auth.constants";
 import { isAuthInfrastructurePath } from "../auth.routes";
+import { hashSecret } from "../auth.utils";
 import type { AuthenticatedRequest } from "../auth.types";
 
 @Injectable()
 export class CsrfGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    @Inject(AUTH_REPOSITORY) private readonly repository: AuthRepository,
+    private readonly configService: ConfigService<EnvironmentVariables, true>,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     if (this.isSafeMethod(request.method)) return true;
 
@@ -44,8 +52,12 @@ export class CsrfGuard implements CanActivate {
     const csrfToken = this.readCsrfToken(request);
     if (csrfToken === null) throw new ForbiddenException("CSRF token is required.");
 
-    const tokenHash = createHash("sha256").update(csrfToken).digest("hex");
-    if (tokenHash !== session.csrfTokenHash) {
+    const tokenIsValid = await this.repository.isSessionCsrfTokenValid({
+      sessionId: session.id,
+      csrfTokenHash: hashSecret(csrfToken),
+      allowLegacyScalarFallback: this.configService.get("CSRF_LEGACY_SCALAR_FALLBACK", { infer: true }),
+    });
+    if (!tokenIsValid) {
       throw new ForbiddenException("CSRF token is invalid.");
     }
     return true;

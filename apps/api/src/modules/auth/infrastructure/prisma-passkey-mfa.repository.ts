@@ -275,6 +275,9 @@ export class PrismaPasskeyMfaRepository implements PasskeyMfaRepository {
         where: { userId: user.id, revokedAt: null },
         data: { revokedAt: now },
       });
+      await transaction.identityCsrfToken.deleteMany({
+        where: { identitySession: { userId: user.id } },
+      });
       await transaction.identityAuditLog.create({
         data: {
           action: enabling ? "PASSKEY_MFA_ENABLED" : "PASSKEY_MFA_DISABLED",

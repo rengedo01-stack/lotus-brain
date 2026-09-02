@@ -213,5 +213,7 @@ test("normal global guards bypass only the dedicated activation boundary after i
   assert.equal(await new AuthorizationGuard(reflector, {
     async hasAllPermissions() { throw new Error("authorization must not run"); },
   }).canActivate(context(request)), true);
-  assert.equal(new CsrfGuard(reflector).canActivate(context(request)), true);
+  assert.equal(await new CsrfGuard(reflector, {
+    async isSessionCsrfTokenValid() { throw new Error("normal CSRF validation must not run"); },
+  }, config()).canActivate(context(request)), true);
 });

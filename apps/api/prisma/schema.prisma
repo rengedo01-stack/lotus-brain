@@ -302,11 +302,25 @@ model IdentitySession {
   ipAddress                   String?
 
   user                           User                            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  csrfTokens                     IdentityCsrfToken[]
   webAuthnRegistrationChallenges WebAuthnRegistrationChallenge[]
   webAuthnStepUpChallenges       WebAuthnStepUpChallenge[]
 
   @@index([userId, revokedAt, expiresAt])
   @@index([expiresAt, revokedAt])
+}
+
+model IdentityCsrfToken {
+  id                String   @id @default(cuid())
+  identitySessionId String
+  tokenHash         String   @unique
+  issuedAt          DateTime @default(now())
+  expiresAt         DateTime
+
+  identitySession IdentitySession @relation(fields: [identitySessionId], references: [id], onDelete: Cascade)
+
+  @@index([identitySessionId, issuedAt, id])
+  @@index([expiresAt])
 }
 
 model EmailVerificationToken {

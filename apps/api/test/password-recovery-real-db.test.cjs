@@ -55,7 +55,7 @@ if (databaseUrl === undefined) {
     }
 
     async function createSession(user, overrides = {}) {
-      return prisma.identitySession.create({
+      const session = await prisma.identitySession.create({
         data: {
           userId: user.id,
           tokenHash: hashSecret(makeOpaqueToken()),
@@ -66,6 +66,16 @@ if (databaseUrl === undefined) {
           ...overrides,
         },
       });
+      if (session.activatedAt !== null) {
+        await prisma.identityCsrfToken.create({
+          data: {
+            identitySessionId: session.id,
+            tokenHash: session.csrfTokenHash,
+            expiresAt: session.expiresAt,
+          },
+        });
+      }
+      return session;
     }
 
     async function createRecoveryToken(user, rawToken = makeOpaqueToken(), overrides = {}) {
@@ -146,6 +156,7 @@ if (databaseUrl === undefined) {
       assert.ok((await prisma.passwordRecoveryToken.findUniqueOrThrow({ where: { id: stored.id } })).consumedAt);
       assert.ok((await prisma.passwordRecoveryToken.findUniqueOrThrow({ where: { id: sibling.stored.id } })).invalidatedAt);
       assert.equal(await prisma.identitySession.count({ where: { userId: eligible.id, revokedAt: null } }), 0);
+      assert.equal(await prisma.identityCsrfToken.count({ where: { identitySession: { userId: eligible.id } } }), 0);
       const resetAudit = await prisma.identityAuditLog.findFirstOrThrow({
         where: { action: "PASSWORD_RESET_COMPLETED", targetUserId: eligible.id },
       });

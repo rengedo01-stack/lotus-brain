@@ -280,6 +280,9 @@ export class PrismaRecoveryChannelRepository implements RecoveryChannelRepositor
         where: { userId: token.userId, revokedAt: null },
         data: { revokedAt: now },
       });
+      await transaction.identityCsrfToken.deleteMany({
+        where: { identitySession: { userId: token.userId } },
+      });
       await transaction.identityAuditLog.create({
         data: {
           action: "PASSWORD_RESET_COMPLETED",

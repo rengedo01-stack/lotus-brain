@@ -55,7 +55,7 @@ if (databaseUrl === undefined) {
 
     async function createSession(user, suffix, overrides = {}) {
       const current = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-      return prisma.identitySession.create({
+      const session = await prisma.identitySession.create({
         data: {
           userId: user.id,
           tokenHash: `${fixture}-${suffix}-token`,
@@ -67,6 +67,16 @@ if (databaseUrl === undefined) {
           ...overrides,
         },
       });
+      if (session.activatedAt !== null) {
+        await prisma.identityCsrfToken.create({
+          data: {
+            identitySessionId: session.id,
+            tokenHash: session.csrfTokenHash,
+            expiresAt: session.expiresAt,
+          },
+        });
+      }
+      return session;
     }
 
     try {
@@ -110,6 +120,7 @@ if (databaseUrl === undefined) {
       assert.equal(enabled.authenticationPolicyVersion, 2);
       assert.ok((await prisma.identitySession.findUniqueOrThrow({ where: { id: oldSession.id } })).revokedAt);
       assert.ok((await prisma.identitySession.findUniqueOrThrow({ where: { id: pendingBeforeEnable.id } })).revokedAt);
+      assert.equal(await prisma.identityCsrfToken.count({ where: { identitySession: { userId: user.id } } }), 0);
       assert.equal(await prisma.identityAuditLog.count({ where: { action: "PASSKEY_MFA_ENABLED", targetUserId: user.id } }), 1);
       assert.equal(await prisma.notificationOutbox.count({ where: { kind: "PASSKEY_MFA_ENABLED", userId: user.id } }), 1);
       assertExactMfaStatus(await mfa.getMfaStatus(user.id), {
@@ -235,6 +246,7 @@ if (databaseUrl === undefined) {
       assert.equal(disabledMfa.authenticationPolicyVersion, 3);
       assert.ok((await prisma.identitySession.findUniqueOrThrow({ where: { id: disableSession.id } })).revokedAt);
       assert.ok((await prisma.identitySession.findUniqueOrThrow({ where: { id: pendingBeforeDisable.id } })).revokedAt);
+      assert.equal(await prisma.identityCsrfToken.count({ where: { identitySession: { userId: user.id } } }), 0);
       assert.equal(await prisma.identityAuditLog.count({ where: { action: "PASSKEY_MFA_DISABLED", targetUserId: user.id } }), 1);
       assert.equal(await prisma.notificationOutbox.count({ where: { kind: "PASSKEY_MFA_DISABLED", userId: user.id } }), 1);
       assertExactMfaStatus(await mfa.getMfaStatus(user.id), {
@@ -296,6 +308,7 @@ if (databaseUrl === undefined) {
       assert.equal(recovered.authenticationPolicyVersion, 3);
       assert.ok((await prisma.webAuthnCredential.findUniqueOrThrow({ where: { id: recoveryCredential.id } })).revokedAt);
       assert.equal(await prisma.identitySession.count({ where: { userId: recoveryUser.id, revokedAt: null } }), 0);
+      assert.equal(await prisma.identityCsrfToken.count({ where: { identitySession: { userId: recoveryUser.id } } }), 0);
       assert.equal(await prisma.identityAuditLog.count({ where: { action: "PASSKEYS_RESET_BY_RECOVERY", targetUserId: recoveryUser.id } }), 1);
       assert.equal(await prisma.notificationOutbox.count({ where: { kind: "AUTHENTICATORS_RESET_BY_RECOVERY", userId: recoveryUser.id } }), 1);
     } finally {

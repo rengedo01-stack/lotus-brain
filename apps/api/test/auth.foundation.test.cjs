@@ -328,23 +328,29 @@ test("session guard rejects revoked, expired, missing-user, or missing sessions"
   }
 });
 
-function makeCsrfGuard() {
+function makeCsrfGuard(isTokenValid = async ({ csrfTokenHash }) => csrfTokenHash === hashSecret("csrf-token")) {
   return new CsrfGuard({
     getAllAndOverride() {
       return false;
     },
+  }, {
+    isSessionCsrfTokenValid: isTokenValid,
+  }, {
+    get(key) {
+      return key === "CSRF_LEGACY_SCALAR_FALLBACK" ? false : undefined;
+    },
   });
 }
 
-test("csrf guard returns 403 for missing or invalid tokens", () => {
+test("csrf guard returns 403 for missing or invalid tokens", async () => {
   const guard = makeCsrfGuard();
   const session = makeSession();
 
-  assert.throws(
+  await assert.rejects(
     () => guard.canActivate(makeHttpContext(makeSessionRequest({ method: "POST", authSession: session }))),
     ForbiddenException,
   );
-  assert.throws(
+  await assert.rejects(
     () => guard.canActivate(makeHttpContext(makeSessionRequest({
       method: "POST",
       authSession: session,
@@ -354,19 +360,40 @@ test("csrf guard returns 403 for missing or invalid tokens", () => {
   );
 });
 
-test("csrf guard accepts a valid token and keeps unauthenticated state changes at 401", () => {
+test("csrf guard accepts a valid token and keeps unauthenticated state changes at 401", async () => {
   const guard = makeCsrfGuard();
   const session = makeSession();
 
-  assert.equal(guard.canActivate(makeHttpContext(makeSessionRequest({
+  assert.equal(await guard.canActivate(makeHttpContext(makeSessionRequest({
     method: "POST",
     authSession: session,
     headers: { "x-csrf-token": "csrf-token" },
   }))), true);
-  assert.throws(
+  await assert.rejects(
     () => guard.canActivate(makeHttpContext(makeSessionRequest({ method: "POST" }))),
     UnauthorizedException,
   );
+});
+
+test("csrf guard never accepts a scalar proof unless the migration fallback is explicitly enabled", async () => {
+  const calls = [];
+  const guard = new CsrfGuard({ getAllAndOverride() { return false; } }, {
+    async isSessionCsrfTokenValid(input) {
+      calls.push(input);
+      return input.allowLegacyScalarFallback;
+    },
+  }, {
+    get(key) { return key === "CSRF_LEGACY_SCALAR_FALLBACK"; },
+  });
+  const session = makeSession();
+  assert.equal(await guard.canActivate(makeHttpContext(makeSessionRequest({
+    method: "POST",
+    authSession: session,
+    headers: { "x-csrf-token": "csrf-token" },
+  }))), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].sessionId, session.id);
+  assert.equal(calls[0].allowLegacyScalarFallback, true);
 });
 
 function makeAuthorizationGuard({ isPublic = false, isAuthenticatedOnly = false, permissions, evaluate } = {}) {
