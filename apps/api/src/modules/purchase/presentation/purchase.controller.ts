@@ -31,6 +31,7 @@ import {
 } from "../application/purchase-draft.errors";
 import { CreatePurchaseDto } from "./dto/create-purchase.dto";
 import { UpdatePurchaseDto } from "./dto/update-purchase.dto";
+import { postedPurchaseResponseSchema } from "./purchase-response.schemas";
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
 
@@ -83,7 +84,7 @@ export class PurchaseController {
   @RequirePermissions(Permissions.PURCHASE_POST)
   @HttpCode(200)
   @ApiOperation({ summary: "Post a purchase and apply its price and inventory effects" })
-  @ApiOkResponse({ description: "The purchase was posted." })
+  @ApiOkResponse({ description: "The purchase was posted.", schema: postedPurchaseResponseSchema })
   async postPurchase(@Param("id") purchaseId: string): Promise<PostedPurchaseResponse> {
     try {
       return await this.postPurchaseUseCase.execute(purchaseId);
