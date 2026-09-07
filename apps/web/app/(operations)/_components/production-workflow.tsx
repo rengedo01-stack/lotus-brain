@@ -8,11 +8,11 @@ import {
   formatProductionTimestamp,
   initialProductionCreateValues,
   isActiveRecipeList,
-  isPostedProductionResult,
+  isAmbiguousProductionPostingError,
   isProduction,
-  mergePostedProductionResult,
   productionCreatePayload,
   productionFormFromProduction,
+  requestProductionPosting,
   productionStatusLabel,
   productionUpdatePayload,
   validateActualQuantity,
@@ -290,6 +290,18 @@ export function ProductionDetailPage({ productionId }: Readonly<{ productionId: 
     if (error instanceof ApiError && error.kind === "conflict") setReloadRequired(true);
   }
 
+  function recordAmbiguousPost(error: unknown) {
+    const kind = handleProductionError(error, refreshAuthentication);
+    if (kind === "unauthorized") return;
+    if (isAmbiguousProductionPostingError(error)) {
+      setReloadRequired(true);
+      setPostedDetailsPendingReload(false);
+      setActionError("計上結果を確認できません。再計上は行わず、最新状態を再読み込みしてから続けてください。");
+      return;
+    }
+    setActionError(productionErrorMessage(error));
+  }
+
   async function confirm() {
     if (action !== null || reloadRequired || state.status !== "ready" || state.production.status !== "DRAFT") return;
     setAction("confirm");
@@ -316,15 +328,11 @@ export function ProductionDetailPage({ productionId }: Readonly<{ productionId: 
     const production = state.production;
     setAction("post");
     try {
-      const posted = await api.request<unknown>(`/productions/${encodeURIComponent(productionId)}/post`, { method: "POST", body: { actualQuantity: actualQuantity.trim() } });
-      if (!isPostedProductionResult(posted, productionId)) throw new ApiError("server");
-      // POST intentionally returns only lifecycle fields. Merge its validated
-      // authority into the already-rendered immutable detail, without a GET
-      // that could fail after the database transaction has committed.
-      setState({ status: "ready", production: mergePostedProductionResult(production, posted) });
+      const posted = await requestProductionPosting(api, production, actualQuantity.trim());
+      setState({ status: "ready", production: posted });
       setPostedDetailsPendingReload(true);
     } catch (error: unknown) {
-      recordActionFailure(error);
+      recordAmbiguousPost(error);
     } finally {
       setAction(null);
     }

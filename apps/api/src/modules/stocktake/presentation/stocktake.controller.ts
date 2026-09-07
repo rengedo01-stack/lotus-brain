@@ -15,8 +15,15 @@ import { InvalidStocktakeError, StocktakeConflictError, StocktakeNotFoundError }
 import { ConfirmStocktakeUseCase, CreateStocktakeUseCase, GetStocktakeUseCase, PostStocktakeUseCase, UpdateStocktakeUseCase } from "../application/stocktake.use-cases";
 import { CreateStocktakeDto } from "./dto/create-stocktake.dto";
 import { UpdateStocktakeDto } from "./dto/update-stocktake.dto";
+import { postedStocktakeResponseSchema } from "./stocktake-response.schemas";
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
+
+type PostedStocktakeResponse = {
+  completedAt: Date;
+  id: string;
+  status: "POSTED";
+};
 
 @ApiTags("stocktakes")
 @Controller("stocktakes")
@@ -61,8 +68,8 @@ export class StocktakeController {
   @RequirePermissions(Permissions.STOCKTAKE_POST)
   @HttpCode(200)
   @ApiOperation({ summary: "Post a confirmed stocktake" })
-  @ApiOkResponse({ description: "The stocktake was posted." })
-  post(@Param("id") id: string) {
+  @ApiOkResponse({ description: "The stocktake was posted.", schema: postedStocktakeResponseSchema })
+  post(@Param("id") id: string): Promise<PostedStocktakeResponse> {
     return this.run(() => this.postStocktakeUseCase.execute(id));
   }
 

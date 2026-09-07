@@ -18,8 +18,6 @@ if (databaseUrl === undefined) {
     const { NestFactory } = require("@nestjs/core");
     const { ValidationPipe } = require("@nestjs/common");
     const cookieParser = require("cookie-parser");
-    const { AppModule } = require("../dist/app.module.js");
-
     const hash = (value) => createHash("sha256").update(value).digest("hex");
 
     test("production PostgreSQL and HTTP proof preserves lifecycle, snapshots, permissions, concurrency, and rollback", async () => {
@@ -31,6 +29,7 @@ if (databaseUrl === undefined) {
       process.env.WEBAUTHN_RP_ID = "localhost";
       process.env.WEBAUTHN_RP_NAME = "Lotus BRAIN";
       process.env.LOG_LEVEL = "error";
+      process.env.CSRF_LEGACY_SCALAR_FALLBACK = "false";
 
       const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
       const fixture = `pr005e1-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -63,6 +62,9 @@ if (databaseUrl === undefined) {
         new Promise((_, reject) => setTimeout(() => reject(new Error("concurrent lifecycle request timed out")), 10_000)),
       ]);
       const startApp = async () => {
+        // Load the application only after this test's isolated database and
+        // table-backed CSRF configuration have been installed.
+        const { AppModule } = require("../dist/app.module.js");
         app = await NestFactory.create(AppModule, { logger: false });
         app.use(cookieParser());
         app.setGlobalPrefix("api/v1");
@@ -128,7 +130,7 @@ if (databaseUrl === undefined) {
           data: { email: `${fixture}@example.test`, displayName: "Production tester", passwordHash: "not-used" },
         });
         await prisma.userRole.create({ data: { userId: user.id, roleId: "rbac-role-system-admin" } });
-        await prisma.identitySession.create({
+        const session = await prisma.identitySession.create({
           data: {
             userId: user.id,
             tokenHash: hash(sessionToken),
@@ -136,6 +138,14 @@ if (databaseUrl === undefined) {
             credentialVersion: 1,
             authenticationPolicyVersion: 1,
             expiresAt: new Date(Date.now() + 60_000),
+            activatedAt: new Date(),
+          },
+        });
+        await prisma.identityCsrfToken.create({
+          data: {
+            identitySessionId: session.id,
+            tokenHash: hash(csrfToken),
+            expiresAt: session.expiresAt,
           },
         });
 
@@ -162,6 +172,7 @@ if (databaseUrl === undefined) {
             credentialVersion: 1,
             authenticationPolicyVersion: 1,
             expiresAt: new Date(Date.now() + 60_000),
+            activatedAt: new Date(),
           },
         });
         assert.equal((await fetch(`${baseUrl}/api/v1/productions/missing`, { headers: { cookie: `lotus_session=${deniedToken}` } })).status, 403);
@@ -204,9 +215,17 @@ if (databaseUrl === undefined) {
           where: { productId_unitId: { productId: ingredient.id, unitId: kilogram.id } },
           data: { factorToBaseUnit: "500.000000000" },
         });
-        assert.equal((await request(`/productions/${created.body.id}/post`, { method: "POST", body: { actualQuantity: "3.000000000" } })).status, 200);
+        const postedResponse = await json(await request(`/productions/${created.body.id}/post`, { method: "POST", body: { actualQuantity: "3.000000000" } }));
+        assert.equal(postedResponse.response.status, 200, JSON.stringify(postedResponse.body));
+        assert.deepEqual(Object.keys(postedResponse.body).sort(), ["actualQuantity", "id", "postedAt", "status"]);
+        assert.equal(postedResponse.body.id, created.body.id);
+        assert.equal(postedResponse.body.status, "POSTED");
+        assert.equal(postedResponse.body.actualQuantity, "3");
+        assert.equal(new Date(postedResponse.body.postedAt).toISOString(), postedResponse.body.postedAt);
         const posted = await prisma.production.findUniqueOrThrow({ where: { id: created.body.id }, include: { consumptions: true, outputInventoryHistory: true } });
         assert.equal(posted.status, "POSTED");
+        assert.equal(posted.actualQuantity.toString(), postedResponse.body.actualQuantity);
+        assert.equal(posted.postedAt.toISOString(), postedResponse.body.postedAt);
         assert.equal(posted.outputConversionFactorSnapshot.toString(), "1000");
         assert.equal(posted.outputInventoryHistory.quantityDelta.toString(), "3000");
         assert.equal(posted.consumptions[0].conversionFactorSnapshot.toString(), "1000");

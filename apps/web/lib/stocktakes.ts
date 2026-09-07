@@ -1,3 +1,5 @@
+import { ApiError, type ApiClient } from "./api-client.ts";
+
 export const STOCKTAKE_STATUSES = ["DRAFT", "CONFIRMED", "POSTED", "CANCELLED"] as const;
 
 export type StocktakeStatus = (typeof STOCKTAKE_STATUSES)[number];
@@ -23,6 +25,14 @@ export type Stocktake = {
   updatedAt: string;
 };
 
+export type PostedStocktakeResult = {
+  completedAt: string;
+  id: string;
+  status: "POSTED";
+};
+
+export type StocktakePostingApi = Pick<ApiClient, "request">;
+
 export type StocktakeLineFormValues = {
   countedQuantity: string;
   note: string;
@@ -38,6 +48,7 @@ export type StocktakeFormValues = {
 export type StocktakeFieldErrors = Record<string, string>;
 
 const DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+const POSTED_STOCKTAKE_RESULT_KEYS = ["id", "status", "completedAt"] as const;
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -45,6 +56,22 @@ function isString(value: unknown): value is string {
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || isString(value);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactlyKeys(value: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expectedKeys.length
+    && expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  if (!isString(value)) return false;
+  const timestamp = new Date(value);
+  return !Number.isNaN(timestamp.getTime()) && timestamp.toISOString() === value;
 }
 
 function isStocktakeStatus(value: unknown): value is StocktakeStatus {
@@ -79,6 +106,42 @@ export function isStocktake(value: unknown): value is Stocktake {
     Array.isArray(stocktake.items) &&
     stocktake.items.every(isStocktakeItem)
   );
+}
+
+export function isPostedStocktakeResult(value: unknown, stocktakeId: string): value is PostedStocktakeResult {
+  return isPlainRecord(value)
+    && hasExactlyKeys(value, POSTED_STOCKTAKE_RESULT_KEYS)
+    && isString(value.id)
+    && value.id.trim().length > 0
+    && value.id === stocktakeId
+    && value.status === "POSTED"
+    && isIsoTimestamp(value.completedAt);
+}
+
+export function mergePostedStocktakeResult(stocktake: Stocktake, posted: PostedStocktakeResult): Stocktake {
+  return { ...stocktake, completedAt: posted.completedAt, id: posted.id, status: posted.status };
+}
+
+/**
+ * The server's post response is the sole lifecycle authority. Keeping this
+ * request read-after-write free avoids presenting a committed stocktake as
+ * retryable when a subsequent read fails.
+ */
+export async function requestStocktakePosting(
+  api: StocktakePostingApi,
+  stocktake: Stocktake,
+): Promise<Stocktake> {
+  const payload = await api.request<unknown>(`/stocktakes/${encodeURIComponent(stocktake.id)}/post`, {
+    method: "POST",
+    expectedStatus: 200,
+  });
+  if (!isPostedStocktakeResult(payload, stocktake.id)) throw new ApiError("server");
+  return mergePostedStocktakeResult(stocktake, payload);
+}
+
+export function isAmbiguousStocktakePostingError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return true;
+  return error.kind === "conflict" || error.kind === "server" || error.kind === "network";
 }
 
 export function emptyStocktakeLine(rowKey: string): StocktakeLineFormValues {
