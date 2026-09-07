@@ -1,3 +1,5 @@
+import { ApiError, type ApiClient } from "./api-client.ts";
+
 export const PURCHASE_STATUSES = ["DRAFT", "CONFIRMED", "POSTED", "CANCELLED"] as const;
 
 export type PurchaseStatus = (typeof PURCHASE_STATUSES)[number];
@@ -29,6 +31,14 @@ export type Purchase = {
   updatedAt: string;
 };
 
+export type PostedPurchaseResult = {
+  id: string;
+  postedAt: string;
+  status: "POSTED";
+};
+
+export type PurchasePostingApi = Pick<ApiClient, "request">;
+
 export type PurchaseLineFormValues = {
   productId: string;
   quantity: string;
@@ -50,9 +60,26 @@ export type PurchaseFieldErrors = Record<string, string>;
 
 const DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const POSTED_PURCHASE_RESULT_KEYS = ["id", "status", "postedAt"] as const;
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactlyKeys(value: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expectedKeys.length
+    && expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const timestamp = new Date(value);
+  return !Number.isNaN(timestamp.getTime()) && timestamp.toISOString() === value;
 }
 
 function isPurchaseStatus(value: unknown): value is PurchaseStatus {
@@ -97,6 +124,52 @@ export function isPurchase(value: unknown): value is Purchase {
     Array.isArray(purchase.items) &&
     purchase.items.every(isPurchaseItem)
   );
+}
+
+/**
+ * The posting endpoint deliberately returns only these lifecycle fields. The
+ * response is authoritative only when it exactly matches the existing API
+ * contract; callers must not infer inventory, pricing, or accounting details.
+ */
+export function isPostedPurchaseResult(value: unknown, purchaseId: string): value is PostedPurchaseResult {
+  return isRecord(value)
+    && hasExactlyKeys(value, POSTED_PURCHASE_RESULT_KEYS)
+    && typeof value.id === "string"
+    && value.id.trim().length > 0
+    && value.id === purchaseId
+    && value.status === "POSTED"
+    && isIsoTimestamp(value.postedAt);
+}
+
+export function mergePostedPurchaseResult(purchase: Purchase, posted: PostedPurchaseResult): Purchase {
+  return { ...purchase, id: posted.id, postedAt: posted.postedAt, status: posted.status };
+}
+
+/**
+ * A valid posting response is the lifecycle authority. In particular, do not
+ * add a read-after-write request here: a later read failure must never make a
+ * committed inventory/price posting look retryable.
+ */
+export async function requestPurchasePosting(
+  api: PurchasePostingApi,
+  purchase: Purchase,
+): Promise<Purchase> {
+  const payload = await api.request<unknown>(`/purchases/${encodeURIComponent(purchase.id)}/post`, {
+    method: "POST",
+    expectedStatus: 200,
+  });
+  if (!isPostedPurchaseResult(payload, purchase.id)) throw new ApiError("server");
+  return mergePostedPurchaseResult(purchase, payload);
+}
+
+/**
+ * A response can be ambiguous after the request crosses the network boundary.
+ * These outcomes require an explicit read before any further purchase mutation;
+ * they are never an invitation to automatically post again.
+ */
+export function isAmbiguousPurchasePostingError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return true;
+  return error.kind === "conflict" || error.kind === "server" || error.kind === "network";
 }
 
 export function emptyPurchaseLine(rowKey: string): PurchaseLineFormValues {

@@ -8,6 +8,9 @@ const {
   InvalidPurchaseItemError,
   PurchasePostingConflictError,
 } = require("../dist/modules/purchase/application/purchase-posting.errors.js");
+const {
+  postedPurchaseResponseSchema,
+} = require("../dist/modules/purchase/presentation/purchase-response.schemas.js");
 
 const makePurchase = (overrides = {}) => ({
   id: "purchase-1",
@@ -81,6 +84,19 @@ test("posts all price and inventory effects in the required order", async () => 
     "inventory:item-2",
     "log",
   ]);
+});
+
+test("documents the exact existing purchase posting lifecycle response", () => {
+  assert.deepEqual(postedPurchaseResponseSchema, {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "status", "postedAt"],
+    properties: {
+      id: { type: "string", minLength: 1 },
+      status: { type: "string", enum: ["POSTED"] },
+      postedAt: { type: "string", format: "date-time" },
+    },
+  });
 });
 
 test("does not commit partial work when a later write fails", async () => {

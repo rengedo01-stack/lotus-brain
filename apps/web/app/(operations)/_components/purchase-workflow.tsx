@@ -9,7 +9,9 @@ import {
   emptyPurchaseLine,
   formatPurchaseDate,
   formatPurchaseTimestamp,
+  isAmbiguousPurchasePostingError,
   isPurchase,
+  requestPurchasePosting,
   purchaseFormFromPurchase,
   purchasePayload,
   purchaseStatusLabel,
@@ -309,6 +311,7 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
   const [retryKey, setRetryKey] = useState(0);
   const [action, setAction] = useState<"confirm" | "post" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [reloadRequired, setReloadRequired] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -326,7 +329,7 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
   }, [api, purchaseId, refreshAuthentication, retryKey]);
 
   async function confirm() {
-    if (action !== null) return;
+    if (action !== null || reloadRequired) return;
     setAction("confirm");
     setActionError(null);
     try {
@@ -345,28 +348,47 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
   }
 
   async function post() {
-    if (action !== null) return;
+    if (action !== null || reloadRequired) return;
     setAction("post");
     setActionError(null);
+
+    let latest: Purchase;
     try {
-      const latest = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}`);
-      if (!isPurchase(latest)) throw new ApiError("server");
+      latest = await requestPurchase(api, purchaseId);
       setState({ status: "ready", purchase: latest });
-      if (latest.status !== "DRAFT" && latest.status !== "CONFIRMED") return;
-      const posted = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}/post`, { method: "POST" });
-      if (
-        typeof posted !== "object" || posted === null ||
-        (posted as Record<string, unknown>).id !== purchaseId ||
-        (posted as Record<string, unknown>).status !== "POSTED"
-      ) throw new ApiError("server");
-      const refreshed = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}`);
-      if (!isPurchase(refreshed)) throw new ApiError("server");
-      setState({ status: "ready", purchase: refreshed });
     } catch (error: unknown) {
       if (!protectedPurchaseError(error, refreshAuthentication)) setActionError(purchaseErrorMessage(error));
+      setAction(null);
+      return;
+    }
+
+    if (latest.status !== "DRAFT" && latest.status !== "CONFIRMED") {
+      setAction(null);
+      return;
+    }
+
+    try {
+      const posted = await requestPurchasePosting(api, latest);
+      setState({ status: "ready", purchase: posted });
+    } catch (error: unknown) {
+      if (protectedPurchaseError(error, refreshAuthentication)) return;
+      if (isAmbiguousPurchasePostingError(error)) {
+        setReloadRequired(true);
+        setActionError("計上結果を確認できません。再計上は行わず、最新状態を再読み込みしてから続けてください。");
+        return;
+      }
+      setActionError(purchaseErrorMessage(error));
     } finally {
       setAction(null);
     }
+  }
+
+  function reloadPurchase() {
+    if (action !== null) return;
+    setActionError(null);
+    setReloadRequired(false);
+    setState({ status: "loading" });
+    setRetryKey((current) => current + 1);
   }
 
   if (state.status === "loading") return <p className="text-sm text-slate-700" role="status">仕入情報を読み込んでいます…</p>;
@@ -389,16 +411,17 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
         </div>
         <p className="mt-5 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">下書きは編集できます。確認後は編集できません。既存APIの契約により、下書きまたは確認済みの仕入を計上できます。計上済み・取消済みは再計上できません。</p>
         <div className="mt-5 flex flex-wrap gap-3">
-          {purchase.status === "DRAFT" && permissions.has("purchase.write") && (
+          {!reloadRequired && purchase.status === "DRAFT" && permissions.has("purchase.write") && (
             <Link className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/purchases/${encodeURIComponent(purchase.id)}/edit`}>下書きを編集</Link>
           )}
-          {purchase.status === "DRAFT" && permissions.has("purchase.confirm") && (
+          {!reloadRequired && purchase.status === "DRAFT" && permissions.has("purchase.confirm") && (
             <button className="rounded-md border border-amber-400 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700" disabled={action !== null} onClick={() => void confirm()} type="button">{action === "confirm" ? "確認しています…" : "仕入を確認"}</button>
           )}
-          {(purchase.status === "DRAFT" || purchase.status === "CONFIRMED") && permissions.has("purchase.post") && (
+          {!reloadRequired && (purchase.status === "DRAFT" || purchase.status === "CONFIRMED") && permissions.has("purchase.post") && (
             <button className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700" disabled={action !== null} onClick={() => void post()} type="button">{action === "post" ? "計上しています…" : "仕入を計上"}</button>
           )}
         </div>
+        {reloadRequired && <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4" role="alert"><p className="text-sm text-amber-950">計上結果が不明なため、この画面の変更操作を停止しています。最新状態を確認するまで再計上しないでください。</p><button className="mt-3 rounded-md border border-amber-300 px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100" onClick={reloadPurchase} type="button">最新状態を再読み込み</button></div>}
         <FormError message={actionError} />
         <dl className="mt-8 grid gap-x-8 gap-y-6 border-t border-slate-200 pt-6 text-sm sm:grid-cols-2">
           <DetailItem label="仕入日" value={formatPurchaseDate(purchase.purchaseDate)} />
