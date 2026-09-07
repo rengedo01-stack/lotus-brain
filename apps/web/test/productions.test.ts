@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ApiError, createApiClient } from "../lib/api-client.ts";
 import {
+  isAmbiguousProductionPostingError,
   isActiveRecipeList,
   isPostedProductionResult,
   isProduction,
@@ -8,8 +10,10 @@ import {
   productionCreatePayload,
   productionFormFromProduction,
   productionUpdatePayload,
+  requestProductionPosting,
   validateActualQuantity,
   validateProductionCreate,
+  type ProductionPostingApi,
   type Production,
 } from "../lib/productions.ts";
 
@@ -80,14 +84,78 @@ test("production validation accepts decimal strings without number conversion an
   assert.equal(validateProductionCreate({ recipeId: "", productionDate: "not-a-date", plannedQuantity: "1.1234567890", note: "" }).recipeId, "有効なレシピを入力してください。");
 });
 
-test("production and lifecycle response guards require string decimals and safe post result shape", () => {
+test("production and lifecycle response guards require string decimals and exact post result shape", () => {
   assert.equal(isProduction(production), true);
   assert.equal(isProduction({ ...production, plannedQuantity: 1 }), false);
   assert.equal(isProduction({ ...production, output: { ...production.output, conversionFactor: "factor" } }), false);
   assert.equal(isProduction({ ...production, consumptions: [{ ...production.consumptions[0], amountSnapshot: 0 }] }), false);
-  assert.equal(isPostedProductionResult({ id: "production-1", status: "POSTED", postedAt: "2026-08-23T01:00:00.000Z", actualQuantity: "3.000000000" }, "production-1"), true);
-  assert.equal(isPostedProductionResult({ id: "production-1", status: "POSTED", postedAt: "2026-08-23T01:00:00.000Z", actualQuantity: 3 }, "production-1"), false);
-  assert.equal(isPostedProductionResult({ id: "production-1", status: "POSTED", postedAt: "2026-08-23T01:00:00.000Z", actualQuantity: "not-a-decimal" }, "production-1"), false);
+  const posted = { id: "production-1", status: "POSTED", postedAt: "2026-08-23T01:00:00.000Z", actualQuantity: "3.000000000" } as const;
+  assert.equal(isPostedProductionResult(posted, "production-1"), true);
+  assert.equal(isPostedProductionResult({ ...posted, extra: true }, "production-1"), false);
+  assert.equal(isPostedProductionResult({ id: "production-1", status: "POSTED", postedAt: posted.postedAt }, "production-1"), false);
+  assert.equal(isPostedProductionResult({ ...posted, id: "different-production" }, "production-1"), false);
+  assert.equal(isPostedProductionResult({ ...posted, id: "" }, "production-1"), false);
+  assert.equal(isPostedProductionResult({ ...posted, status: "CONFIRMED" }, "production-1"), false);
+  assert.equal(isPostedProductionResult({ ...posted, postedAt: "2026-08-23" }, "production-1"), false);
+  assert.equal(isPostedProductionResult({ ...posted, postedAt: null }, "production-1"), false);
+  assert.equal(isPostedProductionResult({ ...posted, actualQuantity: 3 }, "production-1"), false);
+  assert.equal(isPostedProductionResult({ ...posted, actualQuantity: "not-a-decimal" }, "production-1"), false);
+  assert.equal(isPostedProductionResult([], "production-1"), false);
+});
+
+test("production posting uses exact HTTP 200 and its authoritative lifecycle body without a follow-up read", async () => {
+  const calls: Array<{ options: unknown; path: string }> = [];
+  const api: ProductionPostingApi = {
+    async request<T>(path: string, options?: unknown): Promise<T> {
+      calls.push({ path, options });
+      return { id: production.id, status: "POSTED", postedAt: "2026-08-23T01:00:00.000Z", actualQuantity: "3" } as T;
+    },
+  };
+
+  const posted = await requestProductionPosting(api, production, "3");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.path, `/productions/${production.id}/post`);
+  assert.deepEqual(calls[0]?.options, { method: "POST", body: { actualQuantity: "3" }, expectedStatus: 200 });
+  assert.equal(posted.status, "POSTED");
+  assert.equal(posted.actualQuantity, "3");
+  assert.equal(posted.consumptions, production.consumptions);
+});
+
+test("production posting rejects unexpected success statuses and malformed JSON", async (t) => {
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
+  t.after(() => { process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl; });
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  for (const status of [201, 202, 204]) {
+    globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+      ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+      : status === 204
+        ? new Response(null, { status })
+        : new Response(JSON.stringify({ id: production.id, status: "POSTED", postedAt: "2026-08-23T01:00:00.000Z", actualQuantity: "3" }), { status, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => requestProductionPosting(createApiClient(), production, "3"),
+      (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === status,
+    );
+  }
+
+  globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+    ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+    : new Response("not json", { status: 200, headers: { "content-type": "application/json" } });
+  await assert.rejects(
+    () => requestProductionPosting(createApiClient(), production, "3"),
+    (error: unknown) => error instanceof ApiError && error.kind === "server",
+  );
+});
+
+test("ambiguous production posting results require explicit reconciliation", () => {
+  assert.equal(isAmbiguousProductionPostingError(new ApiError("server", 201)), true);
+  assert.equal(isAmbiguousProductionPostingError(new ApiError("network")), true);
+  assert.equal(isAmbiguousProductionPostingError(new ApiError("conflict", 409)), true);
+  assert.equal(isAmbiguousProductionPostingError(new ApiError("validation", 422)), false);
+  assert.equal(isAmbiguousProductionPostingError(new ApiError("forbidden", 403)), false);
+  assert.equal(isAmbiguousProductionPostingError(new ApiError("unauthorized", 401)), false);
 });
 
 test("a partial post response updates only authoritative lifecycle fields", () => {

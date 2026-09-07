@@ -27,8 +27,16 @@ import {
 import { CreateProductionDto } from "./dto/create-production.dto";
 import { PostProductionDto } from "./dto/post-production.dto";
 import { UpdateProductionDto } from "./dto/update-production.dto";
+import { postedProductionResponseSchema } from "./production-response.schemas";
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
+
+type PostedProductionResponse = {
+  actualQuantity: string;
+  id: string;
+  postedAt: Date;
+  status: "POSTED";
+};
 
 @ApiTags("productions")
 @Controller("productions")
@@ -73,8 +81,8 @@ export class ProductionController {
   @RequirePermissions(Permissions.PRODUCTION_POST)
   @HttpCode(200)
   @ApiOperation({ summary: "Post a confirmed Production and apply stock and cost effects" })
-  @ApiOkResponse({ description: "The production was posted." })
-  async postProduction(@Param("id") id: string, @Body() dto: PostProductionDto) {
+  @ApiOkResponse({ description: "The production was posted.", schema: postedProductionResponseSchema })
+  async postProduction(@Param("id") id: string, @Body() dto: PostProductionDto): Promise<PostedProductionResponse> {
     try { return await this.postProductionUseCase.execute(id, dto.actualQuantity); }
     catch (error: unknown) {
       if (error instanceof ProductionNotFoundError) throw new NotFoundException(error.message);

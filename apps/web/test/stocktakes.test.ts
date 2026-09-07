@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ApiError, createApiClient } from "../lib/api-client.ts";
 import {
+  isAmbiguousStocktakePostingError,
+  isPostedStocktakeResult,
   isStocktake,
+  mergePostedStocktakeResult,
+  requestStocktakePosting,
   stocktakeFormFromStocktake,
   stocktakePayload,
   validateStocktakeForm,
+  type StocktakePostingApi,
   type Stocktake,
 } from "../lib/stocktakes.ts";
 
@@ -65,4 +71,74 @@ test("stocktake response guard rejects malformed lifecycle and decimal payloads"
   assert.equal(isStocktake({ ...stocktake, status: "COMPLETED" }), false);
   assert.equal(isStocktake({ ...stocktake, items: [{ ...stocktake.items[0], countedQuantity: 1 }] }), false);
   assert.equal(isStocktake({ ...stocktake, completedAt: 1 }), false);
+});
+
+test("stocktake posting response requires exact lifecycle keys and a canonical completion timestamp", () => {
+  const posted = { id: stocktake.id, status: "POSTED", completedAt: "2026-08-22T01:02:03.000Z" } as const;
+  assert.equal(isPostedStocktakeResult(posted, stocktake.id), true);
+  assert.equal(isPostedStocktakeResult({ ...posted, extra: true }, stocktake.id), false);
+  assert.equal(isPostedStocktakeResult({ id: stocktake.id, status: "POSTED" }, stocktake.id), false);
+  assert.equal(isPostedStocktakeResult({ ...posted, id: "different-stocktake" }, stocktake.id), false);
+  assert.equal(isPostedStocktakeResult({ ...posted, status: "CONFIRMED" }, stocktake.id), false);
+  assert.equal(isPostedStocktakeResult({ ...posted, completedAt: "2026-08-22" }, stocktake.id), false);
+  assert.equal(isPostedStocktakeResult({ ...posted, completedAt: null }, stocktake.id), false);
+  assert.equal(isPostedStocktakeResult([], stocktake.id), false);
+
+  const merged = mergePostedStocktakeResult(stocktake, posted);
+  assert.equal(merged.status, "POSTED");
+  assert.equal(merged.completedAt, posted.completedAt);
+  assert.equal(merged.items, stocktake.items);
+});
+
+test("stocktake posting uses exact HTTP 200 as lifecycle authority without a follow-up read", async () => {
+  const calls: Array<{ options: unknown; path: string }> = [];
+  const api: StocktakePostingApi = {
+    async request<T>(path: string, options?: unknown): Promise<T> {
+      calls.push({ path, options });
+      return { id: stocktake.id, status: "POSTED", completedAt: "2026-08-22T01:02:03.000Z" } as T;
+    },
+  };
+
+  const posted = await requestStocktakePosting(api, stocktake);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.path, `/stocktakes/${stocktake.id}/post`);
+  assert.deepEqual(calls[0]?.options, { method: "POST", expectedStatus: 200 });
+  assert.equal(posted.status, "POSTED");
+});
+
+test("stocktake posting rejects unexpected success statuses and malformed JSON", async (t) => {
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
+  t.after(() => { process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl; });
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  for (const status of [201, 202, 204]) {
+    globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+      ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+      : status === 204
+        ? new Response(null, { status })
+        : new Response(JSON.stringify({ id: stocktake.id, status: "POSTED", completedAt: "2026-08-22T01:02:03.000Z" }), { status, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => requestStocktakePosting(createApiClient(), stocktake),
+      (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === status,
+    );
+  }
+
+  globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+    ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+    : new Response("not json", { status: 200, headers: { "content-type": "application/json" } });
+  await assert.rejects(
+    () => requestStocktakePosting(createApiClient(), stocktake),
+    (error: unknown) => error instanceof ApiError && error.kind === "server",
+  );
+});
+
+test("ambiguous stocktake posting results require explicit reconciliation", () => {
+  assert.equal(isAmbiguousStocktakePostingError(new ApiError("server", 201)), true);
+  assert.equal(isAmbiguousStocktakePostingError(new ApiError("network")), true);
+  assert.equal(isAmbiguousStocktakePostingError(new ApiError("conflict", 409)), true);
+  assert.equal(isAmbiguousStocktakePostingError(new ApiError("validation", 422)), false);
+  assert.equal(isAmbiguousStocktakePostingError(new ApiError("forbidden", 403)), false);
+  assert.equal(isAmbiguousStocktakePostingError(new ApiError("unauthorized", 401)), false);
 });

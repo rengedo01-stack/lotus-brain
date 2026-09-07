@@ -10,7 +10,9 @@ import {
   emptyStocktakeForm,
   emptyStocktakeLine,
   formatStocktakeTimestamp,
+  isAmbiguousStocktakePostingError,
   isStocktake,
+  requestStocktakePosting,
   stocktakeFormFromStocktake,
   stocktakePayload,
   stocktakeStatusLabel,
@@ -93,12 +95,6 @@ async function requestStocktake(api: ApiClient, stocktakeId: string): Promise<St
   const payload = await api.request<unknown>(`/stocktakes/${encodeURIComponent(stocktakeId)}`);
   if (!isStocktake(payload)) throw new ApiError("server");
   return payload;
-}
-
-function isPostedStocktakeResult(value: unknown, stocktakeId: string): value is { id: string; status: "POSTED"; completedAt: string } {
-  if (typeof value !== "object" || value === null) return false;
-  const result = value as Record<string, unknown>;
-  return result.id === stocktakeId && result.status === "POSTED" && typeof result.completedAt === "string";
 }
 
 export function StocktakeWorkspacePage() {
@@ -313,12 +309,17 @@ export function StocktakeDetailPage({ stocktakeId }: Readonly<{ stocktakeId: str
   const [retryKey, setRetryKey] = useState(0);
   const [action, setAction] = useState<"confirm" | "post" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [reloadRequired, setReloadRequired] = useState(false);
   const { state: mastersState } = useStocktakeMasters(permissions.has("master.read"));
 
   useEffect(() => {
     let active = true;
     void requestStocktake(api, stocktakeId).then((stocktake) => {
-      if (active) setState({ status: "ready", stocktake });
+      if (active) {
+        setState({ status: "ready", stocktake });
+        setActionError(null);
+        setReloadRequired(false);
+      }
     }).catch((error: unknown) => {
       if (!active || protectedStocktakeError(error, refreshAuthentication)) return;
       if (error instanceof ApiError && error.kind === "not_found") {
@@ -331,7 +332,7 @@ export function StocktakeDetailPage({ stocktakeId }: Readonly<{ stocktakeId: str
   }, [api, refreshAuthentication, retryKey, stocktakeId]);
 
   async function confirm() {
-    if (action !== null) return;
+    if (action !== null || reloadRequired) return;
     setAction("confirm");
     setActionError(null);
     try {
@@ -349,20 +350,23 @@ export function StocktakeDetailPage({ stocktakeId }: Readonly<{ stocktakeId: str
   }
 
   async function post() {
-    if (action !== null) return;
+    if (action !== null || reloadRequired) return;
     setAction("post");
     setActionError(null);
     try {
       const latest = await requestStocktake(api, stocktakeId);
       setState({ status: "ready", stocktake: latest });
       if (latest.status !== "CONFIRMED") return;
-      const posted = await api.request<unknown>(`/stocktakes/${encodeURIComponent(stocktakeId)}/post`, { method: "POST" });
-      if (!isPostedStocktakeResult(posted, stocktakeId)) throw new ApiError("server");
-      // POST is the lifecycle authority. Avoid a follow-up GET: a rate limit
-      // after a successful post must not make the UI look retryable.
-      setState({ status: "ready", stocktake: { ...latest, status: "POSTED", completedAt: posted.completedAt } });
+      const posted = await requestStocktakePosting(api, latest);
+      setState({ status: "ready", stocktake: posted });
     } catch (error: unknown) {
-      if (!protectedStocktakeError(error, refreshAuthentication)) setActionError(stocktakeErrorMessage(error));
+      if (protectedStocktakeError(error, refreshAuthentication)) return;
+      if (isAmbiguousStocktakePostingError(error)) {
+        setReloadRequired(true);
+        setActionError("計上結果を確認できません。再計上は行わず、最新状態を再読み込みしてから続けてください。");
+      } else {
+        setActionError(stocktakeErrorMessage(error));
+      }
     } finally {
       setAction(null);
     }
@@ -374,6 +378,10 @@ export function StocktakeDetailPage({ stocktakeId }: Readonly<{ stocktakeId: str
 
   const { stocktake } = state;
   const masters = mastersState.status === "ready" ? mastersState.masters : null;
+  function reloadLatest() {
+    setState({ status: "loading" });
+    setRetryKey((current) => current + 1);
+  }
   return (
     <section aria-labelledby="stocktake-detail-title" className="max-w-5xl">
       <StocktakeNavigation />
@@ -387,6 +395,7 @@ export function StocktakeDetailPage({ stocktakeId }: Readonly<{ stocktakeId: str
           <StocktakeStatusBadge status={stocktake.status} />
         </div>
         <p className="mt-5 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">下書きは編集できます。確認後は編集できません。確認済みのみを計上でき、計上済み・取消済みは読み取り専用です。差異計算、在庫更新、履歴記録はサーバーが一度だけ実行します。</p>
+        {reloadRequired ? <section className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4"><p className="text-sm text-amber-950" role="alert">状態が更新されています。操作を再実行せず、最新状態を確認してください。</p><button className="mt-3 rounded-md border border-amber-300 px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700" onClick={reloadLatest} type="button">最新状態を再読み込み</button></section> : <>
         <div className="mt-5 flex flex-wrap gap-3">
           {stocktake.status === "DRAFT" && permissions.has("stocktake.write") && permissions.has("master.read") && (
             <Link className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/stocktakes/${encodeURIComponent(stocktake.id)}/edit`}>下書きを編集</Link>
@@ -398,6 +407,7 @@ export function StocktakeDetailPage({ stocktakeId }: Readonly<{ stocktakeId: str
             <button className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700" disabled={action !== null} onClick={() => void post()} type="button">{action === "post" ? "計上しています…" : "棚卸を計上"}</button>
           )}
         </div>
+        </>}
         <FormError message={actionError} />
         <dl className="mt-8 grid gap-x-8 gap-y-6 border-t border-slate-200 pt-6 text-sm sm:grid-cols-2">
           <DetailItem label="メモ" value={stocktake.note ?? "—"} />

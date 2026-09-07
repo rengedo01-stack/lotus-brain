@@ -1,3 +1,5 @@
+import { ApiError, type ApiClient } from "./api-client.ts";
+
 export const PRODUCTION_STATUSES = ["DRAFT", "CONFIRMED", "POSTED", "CANCELLED"] as const;
 
 export type ProductionStatus = (typeof PRODUCTION_STATUSES)[number];
@@ -44,6 +46,8 @@ export type PostedProductionResult = {
   status: "POSTED";
 };
 
+export type ProductionPostingApi = Pick<ApiClient, "request">;
+
 export type ActiveRecipe = {
   id: string;
   items: Array<{ id: string; productId: string; quantity: string; sortOrder: number; unitId: string }>;
@@ -69,6 +73,7 @@ export type ProductionFieldErrors = Record<string, string>;
 const DECIMAL_24_9 = /^(?:0|[1-9]\d{0,14})(?:\.\d{1,9})?$/;
 const POST_DECIMAL = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const DECIMAL_RESPONSE = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+const POSTED_PRODUCTION_RESULT_KEYS = ["id", "status", "postedAt", "actualQuantity"] as const;
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -80,6 +85,22 @@ function isNullableString(value: unknown): value is string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactlyKeys(value: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expectedKeys.length
+    && expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  if (!isString(value)) return false;
+  const timestamp = new Date(value);
+  return !Number.isNaN(timestamp.getTime()) && timestamp.toISOString() === value;
 }
 
 function isProductionStatus(value: unknown): value is ProductionStatus {
@@ -153,13 +174,50 @@ export function isActiveRecipeList(value: unknown): value is ActiveRecipe[] {
 }
 
 export function isPostedProductionResult(value: unknown, productionId: string): value is PostedProductionResult {
-  return isRecord(value) && value.id === productionId && value.status === "POSTED" && isString(value.postedAt) && isDecimalString(value.actualQuantity);
+  return isPlainRecord(value)
+    && hasExactlyKeys(value, POSTED_PRODUCTION_RESULT_KEYS)
+    && isString(value.id)
+    && value.id.trim().length > 0
+    && value.id === productionId
+    && value.status === "POSTED"
+    && isIsoTimestamp(value.postedAt)
+    && isDecimalString(value.actualQuantity);
 }
 
 // The post endpoint intentionally returns only these authoritative lifecycle
 // fields. Callers must not manufacture changed consumption or costing details.
 export function mergePostedProductionResult(production: Production, posted: PostedProductionResult): Production {
   return { ...production, actualQuantity: posted.actualQuantity, postedAt: posted.postedAt, status: posted.status };
+}
+
+/**
+ * Posting has irreversible inventory and costing effects. Its lifecycle-only
+ * response is authoritative only when it exactly matches the API contract;
+ * do not add a read-after-write request that could make a committed posting
+ * look retryable.
+ */
+export async function requestProductionPosting(
+  api: ProductionPostingApi,
+  production: Production,
+  actualQuantity: string,
+): Promise<Production> {
+  const payload = await api.request<unknown>(`/productions/${encodeURIComponent(production.id)}/post`, {
+    method: "POST",
+    body: { actualQuantity },
+    expectedStatus: 200,
+  });
+  if (!isPostedProductionResult(payload, production.id)) throw new ApiError("server");
+  return mergePostedProductionResult(production, payload);
+}
+
+/**
+ * A post may have crossed the network boundary even when its result cannot be
+ * trusted. The user must reconcile with an authoritative reload before any
+ * further lifecycle action; never automatically post again.
+ */
+export function isAmbiguousProductionPostingError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return true;
+  return error.kind === "conflict" || error.kind === "server" || error.kind === "network";
 }
 
 function isPositiveDecimal(value: string, pattern: RegExp): boolean {
