@@ -31,6 +31,33 @@ export type Purchase = {
   updatedAt: string;
 };
 
+/**
+ * The list projection intentionally excludes financial values, line items,
+ * notes, and inventory/price-history references. Those remain detail-only.
+ */
+export type PurchaseListItem = {
+  id: string;
+  status: PurchaseStatus;
+  purchaseDate: string;
+  documentNumber: string | null;
+  postedAt: string | null;
+  cancelledAt: string | null;
+  supplier: { code: string; name: string };
+};
+
+export type PurchaseListPage = {
+  items: PurchaseListItem[];
+  nextCursor: string | null;
+};
+
+export type PurchaseListFilters = {
+  status?: PurchaseStatus;
+  from?: string;
+  to?: string;
+  supplierCode?: string;
+  documentNumber?: string;
+};
+
 export type PostedPurchaseResult = {
   id: string;
   postedAt: string;
@@ -38,6 +65,7 @@ export type PostedPurchaseResult = {
 };
 
 export type PurchasePostingApi = Pick<ApiClient, "request">;
+export type PurchaseListApi = Pick<ApiClient, "request">;
 
 export type PurchaseLineFormValues = {
   productId: string;
@@ -61,6 +89,9 @@ export type PurchaseFieldErrors = Record<string, string>;
 const DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const POSTED_PURCHASE_RESULT_KEYS = ["id", "status", "postedAt"] as const;
+const PURCHASE_LIST_ITEM_KEYS = ["id", "status", "purchaseDate", "documentNumber", "postedAt", "cancelledAt", "supplier"] as const;
+const PURCHASE_LIST_SUPPLIER_KEYS = ["code", "name"] as const;
+const PURCHASE_LIST_PAGE_KEYS = ["items", "nextCursor"] as const;
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -80,6 +111,10 @@ function isIsoTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const timestamp = new Date(value);
   return !Number.isNaN(timestamp.getTime()) && timestamp.toISOString() === value;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
 }
 
 function isPurchaseStatus(value: unknown): value is PurchaseStatus {
@@ -124,6 +159,56 @@ export function isPurchase(value: unknown): value is Purchase {
     Array.isArray(purchase.items) &&
     purchase.items.every(isPurchaseItem)
   );
+}
+
+function isPurchaseListItem(value: unknown): value is PurchaseListItem {
+  if (!isRecord(value) || !hasExactlyKeys(value, PURCHASE_LIST_ITEM_KEYS)) return false;
+  if (!isRecord(value.supplier) || !hasExactlyKeys(value.supplier, PURCHASE_LIST_SUPPLIER_KEYS)) return false;
+  return (
+    isNonEmptyString(value.id)
+    && isPurchaseStatus(value.status)
+    && isIsoTimestamp(value.purchaseDate)
+    && (value.documentNumber === null || isString(value.documentNumber))
+    && (value.postedAt === null || isIsoTimestamp(value.postedAt))
+    && (value.cancelledAt === null || isIsoTimestamp(value.cancelledAt))
+    && isNonEmptyString(value.supplier.code)
+    && isNonEmptyString(value.supplier.name)
+  );
+}
+
+/**
+ * The operational list is a Lotus-owned API trust boundary. Any unexpected
+ * status/body shape must leave the UI in an error state rather than rendering
+ * a partial or potentially stale list.
+ */
+export function isPurchaseListPage(value: unknown): value is PurchaseListPage {
+  return isRecord(value)
+    && hasExactlyKeys(value, PURCHASE_LIST_PAGE_KEYS)
+    && Array.isArray(value.items)
+    && value.items.every(isPurchaseListItem)
+    && (value.nextCursor === null || isNonEmptyString(value.nextCursor));
+}
+
+export function purchaseListPath(filters: PurchaseListFilters, cursor?: string): string {
+  const query = new URLSearchParams();
+  query.set("limit", "50");
+  if (filters.status !== undefined) query.set("status", filters.status);
+  if (filters.from !== undefined && filters.from.length > 0) query.set("from", filters.from);
+  if (filters.to !== undefined && filters.to.length > 0) query.set("to", filters.to);
+  if (filters.supplierCode !== undefined && filters.supplierCode.length > 0) query.set("supplierCode", filters.supplierCode);
+  if (filters.documentNumber !== undefined && filters.documentNumber.length > 0) query.set("documentNumber", filters.documentNumber);
+  if (cursor !== undefined) query.set("cursor", cursor);
+  return `/purchases?${query.toString()}`;
+}
+
+export async function requestPurchaseList(
+  api: PurchaseListApi,
+  filters: PurchaseListFilters,
+  cursor?: string,
+): Promise<PurchaseListPage> {
+  const payload = await api.request<unknown>(purchaseListPath(filters, cursor), { expectedStatus: 200 });
+  if (!isPurchaseListPage(payload)) throw new ApiError("server");
+  return payload;
 }
 
 /**

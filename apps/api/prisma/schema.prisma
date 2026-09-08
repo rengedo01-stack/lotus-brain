@@ -703,6 +703,8 @@ model Purchase {
   @@unique([supplierId, documentNumber])
   @@index([supplierId, purchaseDate])
   @@index([status, purchaseDate])
+  @@index([purchaseDate(sort: Desc), id(sort: Desc)])
+  @@index([documentNumber, purchaseDate(sort: Desc), id(sort: Desc)])
 }
 
 model PurchaseItem {

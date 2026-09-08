@@ -11,7 +11,9 @@ import {
   formatPurchaseTimestamp,
   isAmbiguousPurchasePostingError,
   isPurchase,
+  requestPurchaseList,
   requestPurchasePosting,
+  PURCHASE_STATUSES,
   purchaseFormFromPurchase,
   purchasePayload,
   purchaseStatusLabel,
@@ -19,6 +21,8 @@ import {
   type Purchase,
   type PurchaseFieldErrors,
   type PurchaseFormValues,
+  type PurchaseListFilters,
+  type PurchaseListPage,
   type PurchaseLineFormValues,
 } from "@/lib/purchases";
 import { isSupplierList, isUnitList, type Supplier, type Unit } from "@/lib/master-data";
@@ -42,6 +46,12 @@ type PurchaseState =
   | { status: "loading" }
   | { status: "ready"; purchase: Purchase }
   | { status: "not_found" }
+  | { status: "error"; message: string };
+
+type PurchaseListState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; page: PurchaseListPage }
   | { status: "error"; message: string };
 
 function protectedPurchaseError(error: unknown, refreshAuthentication: () => void): boolean {
@@ -103,9 +113,30 @@ async function requestPurchase(api: ApiClient, purchaseId: string): Promise<Purc
 
 export function PurchaseWorkspacePage() {
   const router = useRouter();
-  const { permissions } = useOperationalApp();
+  const { api, permissions, refreshAuthentication } = useOperationalApp();
   const [purchaseId, setPurchaseId] = useState("");
   const [lookupError, setLookupError] = useState<string | null>(null);
+  const [draftFilters, setDraftFilters] = useState<{ status: "" | Purchase["status"]; from: string; to: string; supplierCode: string; documentNumber: string }>({ status: "", from: "", to: "", supplierCode: "", documentNumber: "" });
+  const [filters, setFilters] = useState<PurchaseListFilters>({});
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [retryKey, setRetryKey] = useState(0);
+  const [listState, setListState] = useState<PurchaseListState>(() => permissions.has("purchase.read") ? { status: "loading" } : { status: "idle" });
+  const canRead = permissions.has("purchase.read");
+
+  useEffect(() => {
+    if (!canRead) {
+      return;
+    }
+
+    let active = true;
+    void requestPurchaseList(api, filters, cursor).then((page) => {
+      if (active) setListState({ status: "ready", page });
+    }).catch((error: unknown) => {
+      if (!active || protectedPurchaseError(error, refreshAuthentication)) return;
+      setListState({ status: "error", message: purchaseErrorMessage(error) });
+    });
+    return () => { active = false; };
+  }, [api, canRead, cursor, filters, refreshAuthentication, retryKey]);
 
   function openPurchase(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -117,12 +148,25 @@ export function PurchaseWorkspacePage() {
     router.push(`/purchases/${encodeURIComponent(id)}`);
   }
 
+  function applyFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCursor(undefined);
+    setListState({ status: "loading" });
+    setFilters({
+      status: draftFilters.status || undefined,
+      from: draftFilters.from.trim() || undefined,
+      to: draftFilters.to.trim() || undefined,
+      supplierCode: draftFilters.supplierCode.trim() || undefined,
+      documentNumber: draftFilters.documentNumber.trim() || undefined,
+    });
+  }
+
   return (
-    <section aria-labelledby="purchases-title" className="max-w-3xl">
+    <section aria-labelledby="purchases-title" className="max-w-6xl">
       <PurchaseNavigation />
       <p className="text-sm font-medium text-blue-700">仕入</p>
-      <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950" id="purchases-title">仕入ワークスペース</h1>
-      <p className="mt-3 text-sm text-slate-700">仕入を下書きで登録し、確認または計上まで進めます。現在のAPIには仕入一覧がないため、登録後の詳細画面または仕入IDから既存の仕入を開きます。</p>
+      <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950" id="purchases-title">仕入一覧</h1>
+      <p className="mt-3 text-sm text-slate-700">既存の仕入を検索し、詳細画面から確認・計上のワークフローへ進めます。金額や明細は一覧に表示しません。</p>
       <div className="mt-8 grid gap-5 sm:grid-cols-2">
         <section className="rounded-xl bg-white p-6 shadow-sm" aria-labelledby="purchase-create-card-title">
           <h2 className="text-xl font-bold text-slate-950" id="purchase-create-card-title">新しい仕入</h2>
@@ -147,7 +191,98 @@ export function PurchaseWorkspacePage() {
           )}
         </section>
       </div>
+      {canRead ? (
+        <>
+          <form className="mt-8 flex flex-wrap items-end gap-3 rounded-xl bg-white p-4 shadow-sm" noValidate onSubmit={applyFilters}>
+            <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="purchase-list-status">状態
+              <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="purchase-list-status" onChange={(event) => setDraftFilters((value) => ({ ...value, status: event.target.value as "" | Purchase["status"] }))} value={draftFilters.status}>
+                <option value="">すべて</option>
+                {PURCHASE_STATUSES.map((status) => <option key={status} value={status}>{purchaseStatusLabel(status)}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="purchase-list-from">開始日時（UTC）
+              <input className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="purchase-list-from" onChange={(event) => setDraftFilters((value) => ({ ...value, from: event.target.value }))} placeholder="2026-09-01T00:00:00.000Z" value={draftFilters.from} />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="purchase-list-to">終了日時（UTC）
+              <input className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="purchase-list-to" onChange={(event) => setDraftFilters((value) => ({ ...value, to: event.target.value }))} placeholder="2026-09-30T23:59:59.999Z" value={draftFilters.to} />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="purchase-list-supplier-code">仕入先コード（完全一致）
+              <input className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="purchase-list-supplier-code" onChange={(event) => setDraftFilters((value) => ({ ...value, supplierCode: event.target.value }))} value={draftFilters.supplierCode} />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="purchase-list-document-number">伝票番号（完全一致）
+              <input className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="purchase-list-document-number" onChange={(event) => setDraftFilters((value) => ({ ...value, documentNumber: event.target.value }))} value={draftFilters.documentNumber} />
+            </label>
+            <button className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" type="submit">適用</button>
+          </form>
+          <PurchaseListBody
+            state={listState}
+            onNext={(nextCursor) => { setListState({ status: "loading" }); setCursor(nextCursor); }}
+            onRetry={() => { setListState({ status: "loading" }); setRetryKey((value) => value + 1); }}
+          />
+        </>
+      ) : (
+        <section className="mt-8 max-w-xl rounded-xl border border-amber-200 bg-amber-50 p-6" aria-labelledby="purchase-read-required-title">
+          <h2 className="text-xl font-bold text-amber-950" id="purchase-read-required-title">仕入参照権限がありません</h2>
+          <p className="mt-3 text-sm text-amber-900">一覧と既存仕入の表示には仕入参照権限が必要です。</p>
+        </section>
+      )}
     </section>
+  );
+}
+
+function PurchaseListBody({ onNext, onRetry, state }: Readonly<{
+  state: PurchaseListState;
+  onNext(cursor: string): void;
+  onRetry(): void;
+}>) {
+  if (state.status === "loading" || state.status === "idle") {
+    return <p className="mt-8 text-sm text-slate-700" role="status">仕入一覧を読み込んでいます…</p>;
+  }
+  if (state.status === "error") {
+    return (
+      <section className="mt-8 max-w-xl rounded-xl border border-red-200 bg-red-50 p-6" aria-labelledby="purchase-list-error-title">
+        <h2 className="text-xl font-semibold text-red-950" id="purchase-list-error-title">仕入一覧を表示できません</h2>
+        <p className="mt-3 text-sm text-red-900" role="alert">{state.message}</p>
+        <button className="mt-5 rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-900 hover:bg-red-100" onClick={onRetry} type="button">再試行</button>
+      </section>
+    );
+  }
+  if (state.page.items.length === 0) {
+    return <p className="mt-8 rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-700">条件に一致する仕入はありません。</p>;
+  }
+
+  return (
+    <div className="mt-8">
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <thead className="bg-slate-50 text-left text-slate-700">
+            <tr>
+              <th className="px-4 py-3 font-semibold">仕入日</th>
+              <th className="px-4 py-3 font-semibold">状態</th>
+              <th className="px-4 py-3 font-semibold">仕入先</th>
+              <th className="px-4 py-3 font-semibold">伝票番号</th>
+              <th className="px-4 py-3 font-semibold">計上日時</th>
+              <th className="px-4 py-3"><span className="sr-only">詳細</span></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {state.page.items.map((purchase) => (
+              <tr key={purchase.id}>
+                <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatPurchaseDate(purchase.purchaseDate)}</td>
+                <td className="px-4 py-3"><PurchaseStatusBadge status={purchase.status} /></td>
+                <td className="px-4 py-3 text-slate-950"><span className="font-mono text-xs text-slate-700">{purchase.supplier.code}</span><span className="ml-2">{purchase.supplier.name}</span></td>
+                <td className="px-4 py-3 text-slate-700">{purchase.documentNumber ?? "—"}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatPurchaseTimestamp(purchase.postedAt)}</td>
+                <td className="px-4 py-3 text-right"><Link className="font-medium text-blue-700 underline-offset-2 hover:underline" href={`/purchases/${encodeURIComponent(purchase.id)}`}>詳細</Link></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {state.page.nextCursor !== null && (
+        <button className="mt-4 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-white" onClick={() => onNext(state.page.nextCursor!)} type="button">次のページ</button>
+      )}
+    </div>
   );
 }
 
