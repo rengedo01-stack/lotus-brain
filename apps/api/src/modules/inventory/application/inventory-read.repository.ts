@@ -1,0 +1,74 @@
+import type { InventoryTransactionType, MasterStatus } from "../../../generated/prisma/client";
+
+export type InventoryUnitView = {
+  code: string;
+  name: string;
+  symbol: string;
+};
+
+export type InventoryProductView = {
+  id: string;
+  code: string;
+  name: string;
+  status: MasterStatus;
+  isDeleted: boolean;
+};
+
+export type CurrentInventoryView = {
+  product: InventoryProductView;
+  quantity: string;
+  inventoryUnit: InventoryUnitView;
+  updatedAt: Date;
+};
+
+export type InventoryHistoryView = {
+  id: string;
+  type: InventoryTransactionType;
+  quantityDelta: string;
+  quantityAfter: string;
+  occurredAt: Date;
+  inventoryUnit: InventoryUnitView;
+};
+
+export type CurrentInventoryCursor = {
+  productCode: string;
+  productId: string;
+};
+
+export type InventoryHistoryCursor = {
+  occurredAt: Date;
+  id: string;
+};
+
+export type ListCurrentInventoryQuery = {
+  productCode?: string;
+  limit: number;
+  cursor?: CurrentInventoryCursor;
+};
+
+export type ListInventoryHistoryQuery = {
+  productId: string;
+  type?: InventoryTransactionType;
+  from?: Date;
+  to?: Date;
+  limit: number;
+  cursor?: InventoryHistoryCursor;
+};
+
+export type CurrentInventoryPage = {
+  items: CurrentInventoryView[];
+  nextCursor: CurrentInventoryCursor | null;
+};
+
+export type InventoryHistoryPage = {
+  currentInventory: CurrentInventoryView;
+  items: InventoryHistoryView[];
+  nextCursor: InventoryHistoryCursor | null;
+};
+
+export interface InventoryReadRepository {
+  listCurrentInventory(query: ListCurrentInventoryQuery): Promise<CurrentInventoryPage>;
+  listInventoryHistory(query: ListInventoryHistoryQuery): Promise<InventoryHistoryPage | null>;
+}
+
+export const INVENTORY_READ_REPOSITORY = Symbol("INVENTORY_READ_REPOSITORY");

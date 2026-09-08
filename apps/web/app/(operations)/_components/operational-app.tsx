@@ -224,6 +224,7 @@ function Navigation({ permissions }: Readonly<{ permissions: ReadonlySet<string>
     <nav aria-label="業務ナビゲーション" className="flex gap-1 overflow-x-auto px-3 pb-4 md:flex-col md:overflow-visible">
       <NavigationLink href="/" label="ホーム" />
       {hasPermission("master.read") && <NavigationLink href="/master/products" label="マスター" />}
+      {hasPermission("inventory.read") && <NavigationLink href="/inventory" label="在庫" />}
       {hasPermission("purchase.read") && <NavigationLink href="/purchases" label="仕入" />}
       {hasPermission("stocktake.read") && <NavigationLink href="/stocktakes" label="棚卸" />}
       {hasPermission("production.read") && <NavigationLink href="/productions" label="生産" />}

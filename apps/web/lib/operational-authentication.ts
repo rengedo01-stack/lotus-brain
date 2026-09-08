@@ -19,6 +19,7 @@ export type OperationalPermissionCode =
   | "identity.manage"
   | "master.read"
   | "master.write"
+  | "inventory.read"
   | "purchase.read"
   | "purchase.write"
   | "purchase.confirm"
@@ -42,6 +43,7 @@ const KNOWN_OPERATIONAL_PERMISSION_CODES = new Set<OperationalPermissionCode>([
   "identity.manage",
   "master.read",
   "master.write",
+  "inventory.read",
   "purchase.read",
   "purchase.write",
   "purchase.confirm",

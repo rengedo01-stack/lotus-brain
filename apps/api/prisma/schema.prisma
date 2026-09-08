@@ -671,6 +671,8 @@ model InventoryHistory {
   inventoryUnit                 Unit                     @relation("InventoryHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
   @@index([inventoryId, occurredAt])
+  @@index([inventoryId, occurredAt(sort: Desc), id(sort: Desc)])
+  @@index([inventoryId, type, occurredAt(sort: Desc), id(sort: Desc)])
   @@index([inventoryUnitId, occurredAt])
   @@index([type, occurredAt])
 }
