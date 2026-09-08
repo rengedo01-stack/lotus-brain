@@ -4,9 +4,13 @@ import {
   isAmbiguousPurchasePostingError,
   isPostedPurchaseResult,
   isPurchase,
+  isPurchaseListPage,
   mergePostedPurchaseResult,
+  purchaseListPath,
   purchaseFormFromPurchase,
   purchasePayload,
+  requestPurchaseList,
+  type PurchaseListApi,
   requestPurchasePosting,
   validatePurchaseForm,
   type PostedPurchaseResult,
@@ -40,6 +44,19 @@ const purchase: Purchase = {
   }],
 };
 
+const purchaseListPage = {
+  items: [{
+    id: "purchase-list-1",
+    status: "POSTED",
+    purchaseDate: "2026-08-21T00:00:00.000Z",
+    documentNumber: "PO-001",
+    postedAt: "2026-08-21T01:02:03.000Z",
+    cancelledAt: null,
+    supplier: { code: "SUP-001", name: "仕入先" },
+  }],
+  nextCursor: "opaque-cursor",
+};
+
 test("purchase create/update payload preserves decimal strings and excludes UI/server item identity", () => {
   const form = purchaseFormFromPurchase(purchase);
   const payload = purchasePayload(form);
@@ -69,6 +86,72 @@ test("purchase response guards reject malformed lifecycle payloads", () => {
   assert.equal(isPurchase(purchase), true);
   assert.equal(isPurchase({ ...purchase, status: "SAVED" }), false);
   assert.equal(isPurchase({ ...purchase, items: [{ ...purchase.items[0], quantity: 1 }] }), false);
+});
+
+test("purchase list accepts only the exact, non-financial page contract", () => {
+  assert.equal(isPurchaseListPage(purchaseListPage), true);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, extra: true }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0], subtotal: "100" }] }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0], supplier: { ...purchaseListPage.items[0].supplier, id: "supplier-id" } }] }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0], status: "SAVED" }] }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0], purchaseDate: "2026-08-21" }] }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0], postedAt: "not-a-timestamp" }] }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, nextCursor: "" }), false);
+  assert.equal(isPurchaseListPage([]), false);
+});
+
+test("purchase list paths retain all exact filters and opaque cursors", () => {
+  const path = purchaseListPath({
+    status: "CONFIRMED",
+    from: "2026-08-01T00:00:00.000Z",
+    to: "2026-08-31T23:59:59.999Z",
+    supplierCode: " SUP-001 ",
+    documentNumber: "PO-001",
+  }, "cursor-value");
+  const url = new URL(path, "https://web.example.test");
+  assert.equal(url.pathname, "/purchases");
+  assert.equal(url.searchParams.get("limit"), "50");
+  assert.equal(url.searchParams.get("status"), "CONFIRMED");
+  assert.equal(url.searchParams.get("from"), "2026-08-01T00:00:00.000Z");
+  assert.equal(url.searchParams.get("to"), "2026-08-31T23:59:59.999Z");
+  assert.equal(url.searchParams.get("supplierCode"), " SUP-001 ");
+  assert.equal(url.searchParams.get("documentNumber"), "PO-001");
+  assert.equal(url.searchParams.get("cursor"), "cursor-value");
+});
+
+test("purchase list uses exact HTTP 200 and never turns malformed responses into a list", async (t) => {
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
+  t.after(() => { process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl; });
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const calls: Array<{ options: unknown; path: string }> = [];
+  const api: PurchaseListApi = {
+    async request<T>(path: string, options?: unknown): Promise<T> {
+      calls.push({ path, options });
+      return purchaseListPage as T;
+    },
+  };
+  const page = await requestPurchaseList(api, { status: "POSTED" }, "cursor-value");
+  assert.equal(page.items[0]?.id, "purchase-list-1");
+  assert.deepEqual(calls, [{ path: "/purchases?limit=50&status=POSTED&cursor=cursor-value", options: { expectedStatus: 200 } }]);
+
+  for (const status of [201, 202, 204]) {
+    globalThis.fetch = async () => status === 204
+      ? new Response(null, { status })
+      : new Response(JSON.stringify(purchaseListPage), { status, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => requestPurchaseList(createApiClient(), {}),
+      (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === status,
+    );
+  }
+
+  globalThis.fetch = async () => new Response(JSON.stringify({ ...purchaseListPage, extra: true }), { headers: { "content-type": "application/json" } });
+  await assert.rejects(
+    () => requestPurchaseList(createApiClient(), {}),
+    (error: unknown) => error instanceof ApiError && error.kind === "server",
+  );
 });
 
 test("purchase posting response requires the exact authoritative lifecycle contract", () => {
