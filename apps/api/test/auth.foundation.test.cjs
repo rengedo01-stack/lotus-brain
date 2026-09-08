@@ -19,6 +19,7 @@ const { PurchaseController } = require("../dist/modules/purchase/presentation/pu
 const { ProductionController } = require("../dist/modules/production/presentation/production.controller.js");
 const { RecipeController } = require("../dist/modules/recipe/presentation/recipe.controller.js");
 const { StocktakeController } = require("../dist/modules/stocktake/presentation/stocktake.controller.js");
+const { InventoryController } = require("../dist/modules/inventory/presentation/inventory.controller.js");
 const { AuthController } = require("../dist/modules/auth/presentation/auth.controller.js");
 const {
   hashSecret,
@@ -420,7 +421,7 @@ test("permission registry is fixed and RequirePermissions rejects unknown codes"
   assert.deepEqual(ALL_PERMISSION_CODES, [
     "authorization.read", "authorization.manage",
     "identity.read", "identity.manage",
-    "master.read", "master.write", "purchase.read", "purchase.write", "purchase.confirm", "purchase.post",
+    "master.read", "master.write", "inventory.read", "purchase.read", "purchase.write", "purchase.confirm", "purchase.post",
     "production.read", "production.write", "production.confirm", "production.post",
     "stocktake.read", "stocktake.write", "stocktake.confirm", "stocktake.post",
   ]);
@@ -509,6 +510,8 @@ test("every existing business endpoint has the exact required permission", () =>
     [StocktakeController, "update", Permissions.STOCKTAKE_WRITE],
     [StocktakeController, "confirm", Permissions.STOCKTAKE_CONFIRM],
     [StocktakeController, "post", Permissions.STOCKTAKE_POST],
+    [InventoryController, "listCurrentInventory", Permissions.INVENTORY_READ],
+    [InventoryController, "listInventoryHistory", Permissions.INVENTORY_READ],
   ];
   for (const [controller, methodName, expectedPermission] of assertions) {
     assert.deepEqual(

@@ -28,6 +28,7 @@ import { StocktakeModule } from "./modules/stocktake/stocktake.module";
 import { RecipeModule } from "./modules/recipe/recipe.module";
 import { IdentityModule } from "./modules/identity/identity.module";
 import { NotificationModule } from "./modules/notification/notification.module";
+import { InventoryModule } from "./modules/inventory/inventory.module";
 
 @Module({
   imports: [
@@ -99,6 +100,7 @@ import { NotificationModule } from "./modules/notification/notification.module";
     AuthorizationModule,
     IdentityModule,
     NotificationModule,
+    InventoryModule,
     MasterModule,
     PurchaseModule,
     ProductionModule,
