@@ -29,6 +29,7 @@ import { RecipeModule } from "./modules/recipe/recipe.module";
 import { IdentityModule } from "./modules/identity/identity.module";
 import { NotificationModule } from "./modules/notification/notification.module";
 import { InventoryModule } from "./modules/inventory/inventory.module";
+import { ReplenishmentPolicyModule } from "./modules/replenishment/replenishment-policy.module";
 
 @Module({
   imports: [
@@ -101,6 +102,7 @@ import { InventoryModule } from "./modules/inventory/inventory.module";
     IdentityModule,
     NotificationModule,
     InventoryModule,
+    ReplenishmentPolicyModule,
     MasterModule,
     PurchaseModule,
     ProductionModule,

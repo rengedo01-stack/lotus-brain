@@ -199,6 +199,7 @@ model Product {
   inventoryUnit Unit @relation("ProductInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
   unitConversions           ProductUnitConversion[]
+  replenishmentPolicy       ReplenishmentPolicy?
   priceMasters              PriceMaster[]
   inventory                 Inventory?
   purchaseItems             PurchaseItem[]            @relation("PurchaseItemProductInventoryUnit")
@@ -215,6 +216,21 @@ model Product {
   @@index([status, deletedAt])
   @@index([baseUnitId])
   @@index([inventoryUnitId])
+}
+
+model ReplenishmentPolicy {
+  id                   String   @id @default(cuid())
+  productId            String   @unique
+  // A human-managed replenishment threshold, always expressed in the Product
+  // inventory unit. It is not an order quantity or a projected-inventory value.
+  reorderPointQuantity Decimal  @db.Decimal(24, 9)
+  // This increments for every current-value edit so callers can prevent lost
+  // updates. Future recommendations can snapshot this version if required.
+  version              Int      @default(1)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 }
 
 model ProductUnitConversion {

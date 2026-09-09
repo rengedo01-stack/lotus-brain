@@ -20,6 +20,7 @@ const { ProductionController } = require("../dist/modules/production/presentatio
 const { RecipeController } = require("../dist/modules/recipe/presentation/recipe.controller.js");
 const { StocktakeController } = require("../dist/modules/stocktake/presentation/stocktake.controller.js");
 const { InventoryController } = require("../dist/modules/inventory/presentation/inventory.controller.js");
+const { ReplenishmentPolicyController } = require("../dist/modules/replenishment/presentation/replenishment-policy.controller.js");
 const { AuthController } = require("../dist/modules/auth/presentation/auth.controller.js");
 const {
   hashSecret,
@@ -512,6 +513,9 @@ test("every existing business endpoint has the exact required permission", () =>
     [StocktakeController, "post", Permissions.STOCKTAKE_POST],
     [InventoryController, "listCurrentInventory", Permissions.INVENTORY_READ],
     [InventoryController, "listInventoryHistory", Permissions.INVENTORY_READ],
+    [ReplenishmentPolicyController, "get", Permissions.MASTER_READ],
+    [ReplenishmentPolicyController, "create", Permissions.MASTER_WRITE],
+    [ReplenishmentPolicyController, "update", Permissions.MASTER_WRITE],
   ];
   for (const [controller, methodName, expectedPermission] of assertions) {
     assert.deepEqual(
