@@ -10,9 +10,11 @@ import {
   isActiveRecipeList,
   isAmbiguousProductionPostingError,
   isProduction,
+  requestProductionList,
   productionCreatePayload,
   productionFormFromProduction,
   requestProductionPosting,
+  PRODUCTION_STATUSES,
   productionStatusLabel,
   productionUpdatePayload,
   validateActualQuantity,
@@ -23,6 +25,8 @@ import {
   type ProductionCreateValues,
   type ProductionFieldErrors,
   type ProductionFormValues,
+  type ProductionListFilters,
+  type ProductionListPage,
   type ProductionStatus,
 } from "@/lib/productions";
 import { Field, FormError, SelectInput, TextArea, TextInput } from "./master-ui";
@@ -37,6 +41,11 @@ type ProductionState =
 type ActiveRecipesState =
   | { status: "loading" }
   | { status: "ready"; recipes: ActiveRecipe[] }
+  | { status: "error"; message: string };
+
+type ProductionListState =
+  | { status: "idle" | "loading" }
+  | { status: "ready"; page: ProductionListPage }
   | { status: "error"; message: string };
 
 type LifecycleAction = "confirm" | "post" | null;
@@ -95,11 +104,28 @@ function useActiveRecipes(shouldLoad: boolean): { retry(): void; state: ActiveRe
 
 export function ProductionWorkspacePage() {
   const router = useRouter();
-  const { permissions } = useOperationalApp();
+  const { api, permissions, refreshAuthentication } = useOperationalApp();
   const [productionId, setProductionId] = useState("");
   const [lookupError, setLookupError] = useState<string | null>(null);
+  const [draftFilters, setDraftFilters] = useState<{ status: "" | ProductionStatus; from: string; to: string; recipeId: string; outputProductIdSnapshot: string }>({ status: "", from: "", to: "", recipeId: "", outputProductIdSnapshot: "" });
+  const [filters, setFilters] = useState<ProductionListFilters>({});
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [retryKey, setRetryKey] = useState(0);
+  const [listState, setListState] = useState<ProductionListState>(() => permissions.has("production.read") ? { status: "loading" } : { status: "idle" });
   const canRead = permissions.has("production.read");
   const canCreate = permissions.has("production.write") && permissions.has("master.read");
+
+  useEffect(() => {
+    if (!canRead) return;
+    let active = true;
+    void requestProductionList(api, filters, cursor).then((page) => {
+      if (active) setListState({ status: "ready", page });
+    }).catch((error: unknown) => {
+      if (!active || handleProductionError(error, refreshAuthentication) === "unauthorized") return;
+      setListState({ status: "error", message: productionErrorMessage(error) });
+    });
+    return () => { active = false; };
+  }, [api, canRead, cursor, filters, refreshAuthentication, retryKey]);
 
   function openProduction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -111,14 +137,25 @@ export function ProductionWorkspacePage() {
     router.push(`/productions/${encodeURIComponent(id)}`);
   }
 
-  if (!canRead) return <ProductionReadAccessRequired />;
+  function applyFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCursor(undefined);
+    setListState({ status: "loading" });
+    setFilters({
+      status: draftFilters.status || undefined,
+      from: draftFilters.from.trim() || undefined,
+      to: draftFilters.to.trim() || undefined,
+      recipeId: draftFilters.recipeId.trim() || undefined,
+      outputProductIdSnapshot: draftFilters.outputProductIdSnapshot.trim() || undefined,
+    });
+  }
 
   return (
-    <section aria-labelledby="productions-title" className="max-w-3xl">
+    <section aria-labelledby="productions-title" className="max-w-6xl">
       <ProductionNavigation />
       <p className="text-sm font-medium text-blue-700">生産</p>
-      <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950" id="productions-title">生産ワークスペース</h1>
-      <p className="mt-3 text-sm text-slate-700">有効なレシピから生産下書きを作成し、確認後に計上します。生産一覧APIはないため、作成後の詳細画面または生産IDから既存の生産を開きます。</p>
+      <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950" id="productions-title">生産一覧</h1>
+      <p className="mt-3 text-sm text-slate-700">既存の生産を検索し、詳細画面から確認・計上のワークフローへ進めます。出力商品は生産時に保存されたIDだけを表示し、現在のマスター情報は参照しません。</p>
       <div className="mt-8 grid gap-5 sm:grid-cols-2">
         <section aria-labelledby="production-create-card-title" className="rounded-xl bg-white p-6 shadow-sm">
           <h2 className="text-xl font-bold text-slate-950" id="production-create-card-title">新しい生産</h2>
@@ -127,16 +164,86 @@ export function ProductionWorkspacePage() {
         </section>
         <section aria-labelledby="production-open-card-title" className="rounded-xl bg-white p-6 shadow-sm">
           <h2 className="text-xl font-bold text-slate-950" id="production-open-card-title">既存の生産を開く</h2>
-          <form className="mt-4" noValidate onSubmit={openProduction}>
+          {canRead ? <form className="mt-4" noValidate onSubmit={openProduction}>
             <Field error={lookupError ?? undefined} htmlFor="production-id" label="生産ID" required>
               <TextInput aria-describedby={lookupError === null ? undefined : "production-id-error"} id="production-id" onChange={(event) => { setProductionId(event.target.value); setLookupError(null); }} value={productionId} />
             </Field>
             <button className="mt-4 rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" type="submit">詳細を開く</button>
-          </form>
+          </form> : <p className="mt-2 text-sm text-slate-600">既存生産の表示には生産参照権限が必要です。</p>}
         </section>
       </div>
+      {canRead ? <>
+        <form className="mt-8 flex flex-wrap items-end gap-3 rounded-xl bg-white p-4 shadow-sm" noValidate onSubmit={applyFilters}>
+          <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="production-list-status">状態
+            <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="production-list-status" onChange={(event) => setDraftFilters((value) => ({ ...value, status: event.target.value as "" | ProductionStatus }))} value={draftFilters.status}>
+              <option value="">すべて</option>
+              {PRODUCTION_STATUSES.map((status) => <option key={status} value={status}>{productionStatusLabel(status)}</option>)}
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="production-list-from">開始日時（UTC）
+            <input className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="production-list-from" onChange={(event) => setDraftFilters((value) => ({ ...value, from: event.target.value }))} placeholder="2026-09-01T00:00:00.000Z" value={draftFilters.from} />
+          </label>
+          <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="production-list-to">終了日時（UTC）
+            <input className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="production-list-to" onChange={(event) => setDraftFilters((value) => ({ ...value, to: event.target.value }))} placeholder="2026-09-30T23:59:59.999Z" value={draftFilters.to} />
+          </label>
+          <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="production-list-recipe-id">レシピID（完全一致）
+            <input className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="production-list-recipe-id" onChange={(event) => setDraftFilters((value) => ({ ...value, recipeId: event.target.value }))} value={draftFilters.recipeId} />
+          </label>
+          <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="production-list-output-product-id">出力商品ID（完全一致）
+            <input className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="production-list-output-product-id" onChange={(event) => setDraftFilters((value) => ({ ...value, outputProductIdSnapshot: event.target.value }))} value={draftFilters.outputProductIdSnapshot} />
+          </label>
+          <button className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" type="submit">適用</button>
+        </form>
+        <ProductionListBody
+          state={listState}
+          onNext={(nextCursor) => { setListState({ status: "loading" }); setCursor(nextCursor); }}
+          onRetry={() => { setListState({ status: "loading" }); setRetryKey((value) => value + 1); }}
+        />
+      </> : <ProductionReadAccessRequired />}
     </section>
   );
+}
+
+function ProductionListBody({ onNext, onRetry, state }: Readonly<{
+  state: ProductionListState;
+  onNext(cursor: string): void;
+  onRetry(): void;
+}>) {
+  if (state.status === "loading" || state.status === "idle") {
+    return <p className="mt-8 text-sm text-slate-700" role="status">生産一覧を読み込んでいます…</p>;
+  }
+  if (state.status === "error") {
+    return <section className="mt-8 max-w-xl rounded-xl border border-red-200 bg-red-50 p-6" aria-labelledby="production-list-error-title">
+      <h2 className="text-xl font-semibold text-red-950" id="production-list-error-title">生産一覧を表示できません</h2>
+      <p className="mt-3 text-sm text-red-900" role="alert">{state.message}</p>
+      <button className="mt-5 rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-900 hover:bg-red-100" onClick={onRetry} type="button">再試行</button>
+    </section>;
+  }
+  // Keep the discriminated-union boundary explicit: only a completed,
+  // validated page can reach the operational table.
+  if (state.status !== "ready") return null;
+  const { page } = state;
+  if (page.items.length === 0) {
+    return <p className="mt-8 rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-700">条件に一致する生産はありません。</p>;
+  }
+  return <div className="mt-8">
+    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <thead className="bg-slate-50 text-left text-slate-700"><tr>
+          <th className="px-4 py-3 font-semibold">生産日</th><th className="px-4 py-3 font-semibold">状態</th><th className="px-4 py-3 font-semibold">出力商品ID</th><th className="px-4 py-3 font-semibold">レシピ</th><th className="px-4 py-3 font-semibold">計上日時</th><th className="px-4 py-3"><span className="sr-only">詳細</span></th>
+        </tr></thead>
+        <tbody className="divide-y divide-slate-100">{page.items.map((production) => <tr key={production.id}>
+          <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatProductionTimestamp(production.productionDate)}</td>
+          <td className="px-4 py-3"><ProductionStatusBadge status={production.status} /></td>
+          <td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{production.outputProductIdSnapshot}</td>
+          <td className="px-4 py-3 text-slate-700"><span className="font-mono text-xs">{production.recipe.id}</span><span className="ml-2">rev.{production.recipe.revision}</span></td>
+          <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatProductionTimestamp(production.postedAt)}</td>
+          <td className="px-4 py-3 text-right"><Link className="font-medium text-blue-700 underline-offset-2 hover:underline" href={`/productions/${encodeURIComponent(production.id)}`}>詳細</Link></td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+    {page.nextCursor !== null && <button className="mt-4 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-white" onClick={() => onNext(page.nextCursor!)} type="button">次のページ</button>}
+  </div>;
 }
 
 export function ProductionCreatePage() {

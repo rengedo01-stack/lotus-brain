@@ -39,6 +39,33 @@ export type Production = {
   updatedAt: string;
 };
 
+/**
+ * List entries contain only Production-owned identifiers and lifecycle data.
+ * Product and Recipe master values are intentionally not fetched or exposed.
+ */
+export type ProductionListItem = {
+  id: string;
+  status: ProductionStatus;
+  productionDate: string;
+  outputProductIdSnapshot: string;
+  recipe: { id: string; rootRecipeId: string; revision: number };
+  postedAt: string | null;
+  cancelledAt: string | null;
+};
+
+export type ProductionListPage = {
+  items: ProductionListItem[];
+  nextCursor: string | null;
+};
+
+export type ProductionListFilters = {
+  status?: ProductionStatus;
+  from?: string;
+  to?: string;
+  recipeId?: string;
+  outputProductIdSnapshot?: string;
+};
+
 export type PostedProductionResult = {
   actualQuantity: string;
   id: string;
@@ -47,6 +74,7 @@ export type PostedProductionResult = {
 };
 
 export type ProductionPostingApi = Pick<ApiClient, "request">;
+export type ProductionListApi = Pick<ApiClient, "request">;
 
 export type ActiveRecipe = {
   id: string;
@@ -74,6 +102,9 @@ const DECIMAL_24_9 = /^(?:0|[1-9]\d{0,14})(?:\.\d{1,9})?$/;
 const POST_DECIMAL = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const DECIMAL_RESPONSE = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const POSTED_PRODUCTION_RESULT_KEYS = ["id", "status", "postedAt", "actualQuantity"] as const;
+const PRODUCTION_LIST_ITEM_KEYS = ["id", "status", "productionDate", "outputProductIdSnapshot", "recipe", "postedAt", "cancelledAt"] as const;
+const PRODUCTION_LIST_RECIPE_KEYS = ["id", "rootRecipeId", "revision"] as const;
+const PRODUCTION_LIST_PAGE_KEYS = ["items", "nextCursor"] as const;
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -103,8 +134,16 @@ function isIsoTimestamp(value: unknown): value is string {
   return !Number.isNaN(timestamp.getTime()) && timestamp.toISOString() === value;
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
 function isProductionStatus(value: unknown): value is ProductionStatus {
   return PRODUCTION_STATUSES.includes(value as ProductionStatus);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function isDecimalString(value: unknown): value is string {
@@ -151,6 +190,54 @@ export function isProduction(value: unknown): value is Production {
     Array.isArray(value.consumptions) &&
     value.consumptions.every(isProductionConsumption)
   );
+}
+
+function isProductionListItem(value: unknown): value is ProductionListItem {
+  if (!isPlainRecord(value) || !hasExactlyKeys(value, PRODUCTION_LIST_ITEM_KEYS)) return false;
+  if (!isPlainRecord(value.recipe) || !hasExactlyKeys(value.recipe, PRODUCTION_LIST_RECIPE_KEYS)) return false;
+  return (
+    isNonEmptyString(value.id)
+    && isProductionStatus(value.status)
+    && isIsoTimestamp(value.productionDate)
+    && isNonEmptyString(value.outputProductIdSnapshot)
+    && isNonEmptyString(value.recipe.id)
+    && isNonEmptyString(value.recipe.rootRecipeId)
+    && isPositiveInteger(value.recipe.revision)
+    && (value.postedAt === null || isIsoTimestamp(value.postedAt))
+    && (value.cancelledAt === null || isIsoTimestamp(value.cancelledAt))
+  );
+}
+
+/** The list response is an operational API trust boundary. */
+export function isProductionListPage(value: unknown): value is ProductionListPage {
+  return isPlainRecord(value)
+    && hasExactlyKeys(value, PRODUCTION_LIST_PAGE_KEYS)
+    && Array.isArray(value.items)
+    && value.items.every(isProductionListItem)
+    && new Set(value.items.map((item) => item.id)).size === value.items.length
+    && (value.nextCursor === null || isNonEmptyString(value.nextCursor));
+}
+
+export function productionListPath(filters: ProductionListFilters, cursor?: string): string {
+  const query = new URLSearchParams();
+  query.set("limit", "50");
+  if (filters.status !== undefined) query.set("status", filters.status);
+  if (filters.from !== undefined && filters.from.length > 0) query.set("from", filters.from);
+  if (filters.to !== undefined && filters.to.length > 0) query.set("to", filters.to);
+  if (filters.recipeId !== undefined && filters.recipeId.length > 0) query.set("recipeId", filters.recipeId);
+  if (filters.outputProductIdSnapshot !== undefined && filters.outputProductIdSnapshot.length > 0) query.set("outputProductIdSnapshot", filters.outputProductIdSnapshot);
+  if (cursor !== undefined) query.set("cursor", cursor);
+  return `/productions?${query.toString()}`;
+}
+
+export async function requestProductionList(
+  api: ProductionListApi,
+  filters: ProductionListFilters,
+  cursor?: string,
+): Promise<ProductionListPage> {
+  const payload = await api.request<unknown>(productionListPath(filters, cursor), { expectedStatus: 200 });
+  if (!isProductionListPage(payload)) throw new ApiError("server");
+  return payload;
 }
 
 function isActiveRecipe(value: unknown): value is ActiveRecipe {

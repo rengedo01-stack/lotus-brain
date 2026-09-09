@@ -846,6 +846,9 @@ model Production {
   @@index([outputProductIdSnapshot])
   @@index([outputUnitIdSnapshot])
   @@index([status, productionDate])
+  @@index([productionDate(sort: Desc), id(sort: Desc)])
+  @@index([recipeId, productionDate(sort: Desc), id(sort: Desc)])
+  @@index([outputProductIdSnapshot, productionDate(sort: Desc), id(sort: Desc)])
 }
 
 model ProductionLog {
