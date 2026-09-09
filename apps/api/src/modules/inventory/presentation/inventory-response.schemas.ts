@@ -49,6 +49,46 @@ export const currentInventoryPageResponseSchema = {
   },
 };
 
+const inventorySupplyProductSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["id", "code", "name"],
+  properties: {
+    id: { type: "string" as const, minLength: 1 },
+    code: { type: "string" as const, minLength: 1 },
+    name: { type: "string" as const, minLength: 1 },
+  },
+};
+
+export const inventorySupplyContextItemSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: [
+    "product",
+    "inventoryUnit",
+    "currentQuantity",
+    "draftPurchaseQuantity",
+    "confirmedPurchaseQuantity",
+  ],
+  properties: {
+    product: inventorySupplyProductSchema,
+    inventoryUnit: inventoryUnitSchema,
+    currentQuantity: decimalStringSchema,
+    draftPurchaseQuantity: decimalStringSchema,
+    confirmedPurchaseQuantity: decimalStringSchema,
+  },
+};
+
+export const inventorySupplyContextPageResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["items", "nextCursor"],
+  properties: {
+    items: { type: "array" as const, items: inventorySupplyContextItemSchema },
+    nextCursor: { oneOf: [{ type: "string" as const }, { type: "null" as const }] },
+  },
+};
+
 export const inventoryHistoryItemSchema = {
   type: "object" as const,
   additionalProperties: false,

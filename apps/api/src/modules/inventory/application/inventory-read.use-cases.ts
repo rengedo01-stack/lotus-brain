@@ -17,6 +17,15 @@ export class ListCurrentInventoryUseCase {
 }
 
 @Injectable()
+export class ListInventorySupplyContextUseCase {
+  constructor(@Inject(INVENTORY_READ_REPOSITORY) private readonly repository: InventoryReadRepository) {}
+
+  execute(query: ListCurrentInventoryQuery) {
+    return this.repository.listSupplyContext(query);
+  }
+}
+
+@Injectable()
 export class ListInventoryHistoryUseCase {
   constructor(@Inject(INVENTORY_READ_REPOSITORY) private readonly repository: InventoryReadRepository) {}
 

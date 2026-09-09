@@ -736,6 +736,7 @@ model PurchaseItem {
   inventoryHistory InventoryHistory? @relation("InventoryHistorySourcePurchaseItem")
 
   @@unique([purchaseId, lineNumber])
+  @@index([purchaseId, productId])
   @@index([productId])
   @@index([unitId])
 }
