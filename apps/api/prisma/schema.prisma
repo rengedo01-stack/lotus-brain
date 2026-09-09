@@ -224,6 +224,10 @@ model ReplenishmentPolicy {
   // A human-managed replenishment threshold, always expressed in the Product
   // inventory unit. It is not an order quantity or a projected-inventory value.
   reorderPointQuantity Decimal  @db.Decimal(24, 9)
+  // A separately managed planning target in the same inventory unit. It is
+  // neither an order quantity nor a projected-inventory value; null means the
+  // operator has not configured a target.
+  targetStockQuantity  Decimal? @db.Decimal(24, 9)
   // This increments for every current-value edit so callers can prevent lost
   // updates. Future recommendations can snapshot this version if required.
   version              Int      @default(1)

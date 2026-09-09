@@ -9,6 +9,7 @@ import {
   replenishmentPolicyPath,
   updateReplenishmentPolicy,
   validateReorderPointQuantity,
+  validateTargetStockQuantity,
   type ReplenishmentPolicyApi,
 } from "../lib/replenishment-policy.ts";
 
@@ -16,6 +17,7 @@ const policy = {
   id: "policy-1",
   productId: "product-1",
   reorderPointQuantity: "12.500000000",
+  targetStockQuantity: "20.000000000",
   version: 2,
   createdAt: "2026-09-09T00:00:00.000Z",
   updatedAt: "2026-09-09T01:00:00.000Z",
@@ -43,6 +45,8 @@ test("replenishment policy accepts only its exact context and authoritative muta
   assert.equal(isReplenishmentPolicyContext({ ...context, policy: null }), true);
   assert.equal(isReplenishmentPolicy({ ...policy, extra: true }), false);
   assert.equal(isReplenishmentPolicy({ ...policy, reorderPointQuantity: 1 }), false);
+  assert.equal(isReplenishmentPolicy({ ...policy, targetStockQuantity: 1 }), false);
+  assert.equal(isReplenishmentPolicy({ ...policy, targetStockQuantity: "-1" }), false);
 });
 
 test("replenishment policy sends exact statuses and updates only from response authority", async () => {
@@ -57,13 +61,22 @@ test("replenishment policy sends exact statuses and updates only from response a
   };
   assert.equal(replenishmentPolicyPath("product/1"), "/products/product%2F1/replenishment-policy");
   assert.equal((await requestReplenishmentPolicyContext(api, "product-1")).policy?.version, 2);
-  assert.equal((await createReplenishmentPolicy(api, "product-1", "0")).version, 1);
-  assert.equal((await updateReplenishmentPolicy(api, "product-1", "12.5", 2)).version, 3);
+  assert.equal((await createReplenishmentPolicy(api, "product-1", "0", null)).version, 1);
+  assert.equal((await updateReplenishmentPolicy(api, "product-1", "12.5", "20", 2)).version, 3);
   assert.deepEqual(calls, [
     { path: "/products/product-1/replenishment-policy", options: { expectedStatus: 200 } },
-    { path: "/products/product-1/replenishment-policy", options: { method: "POST", body: { reorderPointQuantity: "0" }, expectedStatus: 201 } },
-    { path: "/products/product-1/replenishment-policy", options: { method: "PATCH", body: { reorderPointQuantity: "12.5", expectedVersion: 2 }, expectedStatus: 200 } },
+    { path: "/products/product-1/replenishment-policy", options: { method: "POST", body: { reorderPointQuantity: "0", targetStockQuantity: null }, expectedStatus: 201 } },
+    { path: "/products/product-1/replenishment-policy", options: { method: "PATCH", body: { reorderPointQuantity: "12.5", targetStockQuantity: "20", expectedVersion: 2 }, expectedStatus: 200 } },
   ]);
+});
+
+test("target stock keeps null distinct from zero and never uses floating-point comparison", () => {
+  assert.equal(validateTargetStockQuantity("5", null), null);
+  assert.equal(validateTargetStockQuantity("0", "0"), null);
+  assert.equal(validateTargetStockQuantity("5", "5.000000000"), null);
+  assert.equal(validateTargetStockQuantity("5", "4.999999999"), "目標在庫は発注点以上で設定してください。");
+  assert.equal(validateTargetStockQuantity("0", "100000000000000.123456789"), null);
+  assert.notEqual(validateTargetStockQuantity("0", ""), null);
 });
 
 test("replenishment policy rejects unexpected 2xx or malformed server responses", async (t) => {

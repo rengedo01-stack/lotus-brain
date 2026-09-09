@@ -3,11 +3,12 @@ const timestampSchema = { type: "string" as const, format: "date-time" };
 export const replenishmentPolicySchema = {
   type: "object" as const,
   additionalProperties: false,
-  required: ["id", "productId", "reorderPointQuantity", "version", "createdAt", "updatedAt"],
+  required: ["id", "productId", "reorderPointQuantity", "targetStockQuantity", "version", "createdAt", "updatedAt"],
   properties: {
     id: { type: "string" as const, minLength: 1 },
     productId: { type: "string" as const, minLength: 1 },
     reorderPointQuantity: { type: "string" as const, pattern: "^(?:0|[1-9][0-9]{0,14})(?:\\.[0-9]{1,9})?$" },
+    targetStockQuantity: { oneOf: [{ type: "string" as const, pattern: "^(?:0|[1-9][0-9]{0,14})(?:\\.[0-9]{1,9})?$" }, { type: "null" as const }] },
     version: { type: "integer" as const, minimum: 1 },
     createdAt: timestampSchema,
     updatedAt: timestampSchema,

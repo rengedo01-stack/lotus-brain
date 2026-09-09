@@ -40,6 +40,7 @@ export class PrismaReplenishmentPolicyRepository implements ReplenishmentPolicyR
 
   async create(productId: string, input: CreateReplenishmentPolicyInput): Promise<ReplenishmentPolicyView | "NOT_FOUND" | "CONFLICT"> {
     const reorderPointQuantity = this.parseReorderPoint(input.reorderPointQuantity);
+    const targetStockQuantity = this.parseTargetStock(input.targetStockQuantity, reorderPointQuantity);
     return this.prisma.$transaction(async (tx) => {
       const product = await this.lockProduct(tx, productId);
       if (product === null) return "NOT_FOUND";
@@ -47,7 +48,7 @@ export class PrismaReplenishmentPolicyRepository implements ReplenishmentPolicyR
       const existing = await tx.replenishmentPolicy.findUnique({ where: { productId } });
       if (existing !== null) return "CONFLICT";
       const created = await tx.replenishmentPolicy.create({
-        data: { productId, reorderPointQuantity },
+        data: { productId, reorderPointQuantity, targetStockQuantity },
       });
       return this.mapPolicy(created);
     });
@@ -55,6 +56,7 @@ export class PrismaReplenishmentPolicyRepository implements ReplenishmentPolicyR
 
   async update(productId: string, input: UpdateReplenishmentPolicyInput): Promise<ReplenishmentPolicyView | "NOT_FOUND" | "CONFLICT"> {
     const reorderPointQuantity = this.parseReorderPoint(input.reorderPointQuantity);
+    const targetStockQuantity = this.parseTargetStock(input.targetStockQuantity, reorderPointQuantity);
     return this.prisma.$transaction(async (tx) => {
       const product = await this.lockProduct(tx, productId);
       if (product === null) return "NOT_FOUND";
@@ -64,7 +66,7 @@ export class PrismaReplenishmentPolicyRepository implements ReplenishmentPolicyR
       if (current.version !== input.expectedVersion) return "CONFLICT";
       const updated = await tx.replenishmentPolicy.update({
         where: { id: current.id },
-        data: { reorderPointQuantity, version: { increment: 1 } },
+        data: { reorderPointQuantity, targetStockQuantity, version: { increment: 1 } },
       });
       return this.mapPolicy(updated);
     });
@@ -85,8 +87,21 @@ export class PrismaReplenishmentPolicyRepository implements ReplenishmentPolicyR
   }
 
   private parseReorderPoint(value: string): Prisma.Decimal {
+    return this.parseNonNegativeQuantity(value, "reorderPointQuantity");
+  }
+
+  private parseTargetStock(value: string | null, reorderPointQuantity: Prisma.Decimal): Prisma.Decimal | null {
+    if (value === null) return null;
+    const targetStockQuantity = this.parseNonNegativeQuantity(value, "targetStockQuantity");
+    if (targetStockQuantity.lessThan(reorderPointQuantity)) {
+      throw new ReplenishmentPolicyValidationError("targetStockQuantity must be greater than or equal to reorderPointQuantity.");
+    }
+    return targetStockQuantity;
+  }
+
+  private parseNonNegativeQuantity(value: string, field: string): Prisma.Decimal {
     if (!/^(?:0|[1-9][0-9]{0,14})(?:\.[0-9]{1,9})?$/.test(value)) {
-      throw new ReplenishmentPolicyValidationError("reorderPointQuantity must be a non-negative Decimal(24,9) string.");
+      throw new ReplenishmentPolicyValidationError(`${field} must be a non-negative Decimal(24,9) string.`);
     }
     return new Prisma.Decimal(value);
   }
@@ -95,6 +110,7 @@ export class PrismaReplenishmentPolicyRepository implements ReplenishmentPolicyR
     id: string;
     productId: string;
     reorderPointQuantity: Prisma.Decimal;
+    targetStockQuantity: Prisma.Decimal | null;
     version: number;
     createdAt: Date;
     updatedAt: Date;
@@ -103,6 +119,7 @@ export class PrismaReplenishmentPolicyRepository implements ReplenishmentPolicyR
       id: value.id,
       productId: value.productId,
       reorderPointQuantity: value.reorderPointQuantity.toString(),
+      targetStockQuantity: value.targetStockQuantity?.toString() ?? null,
       version: value.version,
       createdAt: value.createdAt,
       updatedAt: value.updatedAt,

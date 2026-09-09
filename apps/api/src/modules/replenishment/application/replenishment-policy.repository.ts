@@ -4,6 +4,7 @@ export type ReplenishmentPolicyView = {
   id: string;
   productId: string;
   reorderPointQuantity: string;
+  targetStockQuantity: string | null;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -29,6 +30,7 @@ export type ReplenishmentPolicyContextView = {
 
 export type CreateReplenishmentPolicyInput = {
   reorderPointQuantity: string;
+  targetStockQuantity: string | null;
 };
 
 export type UpdateReplenishmentPolicyInput = CreateReplenishmentPolicyInput & {

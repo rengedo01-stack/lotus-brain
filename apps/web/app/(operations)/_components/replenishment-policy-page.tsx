@@ -8,6 +8,7 @@ import {
   requestReplenishmentPolicyContext,
   updateReplenishmentPolicy,
   validateReorderPointQuantity,
+  validateTargetStockQuantity,
   type ReplenishmentPolicyContext,
 } from "@/lib/replenishment-policy";
 import { formatOperationalDate } from "@/lib/products";
@@ -24,7 +25,8 @@ export function ReplenishmentPolicyPage({ productId }: Readonly<{ productId: str
   const { api, permissions, refreshAuthentication } = useOperationalApp();
   const [state, setState] = useState<PageState>({ status: "loading" });
   const [retryKey, setRetryKey] = useState(0);
-  const [quantity, setQuantity] = useState("");
+  const [reorderPointQuantity, setReorderPointQuantity] = useState("");
+  const [targetStockQuantity, setTargetStockQuantity] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -32,7 +34,8 @@ export function ReplenishmentPolicyPage({ productId }: Readonly<{ productId: str
     let active = true;
     void requestReplenishmentPolicyContext(api, productId).then((context) => {
       if (!active) return;
-      setQuantity(context.policy?.reorderPointQuantity ?? "");
+      setReorderPointQuantity(context.policy?.reorderPointQuantity ?? "");
+      setTargetStockQuantity(context.policy?.targetStockQuantity ?? "");
       setState({ status: "ready", context });
     }).catch((error: unknown) => {
       if (!active || (error instanceof ApiError && error.kind === "unauthorized")) return;
@@ -52,18 +55,21 @@ export function ReplenishmentPolicyPage({ productId }: Readonly<{ productId: str
 
   async function submit() {
     if (state.status !== "ready" || isSubmitting) return;
-    const nextQuantity = quantity.trim();
-    const validationError = validateReorderPointQuantity(nextQuantity);
+    const nextReorderPointQuantity = reorderPointQuantity.trim();
+    const nextTargetStockQuantity = targetStockQuantity.trim() === "" ? null : targetStockQuantity.trim();
+    const validationError = validateReorderPointQuantity(nextReorderPointQuantity)
+      ?? validateTargetStockQuantity(nextReorderPointQuantity, nextTargetStockQuantity);
     setFormError(validationError);
     if (validationError !== null) return;
     setIsSubmitting(true);
     try {
       const policy = state.context.policy === null
-        ? await createReplenishmentPolicy(api, productId, nextQuantity)
-        : await updateReplenishmentPolicy(api, productId, nextQuantity, state.context.policy.version);
+        ? await createReplenishmentPolicy(api, productId, nextReorderPointQuantity, nextTargetStockQuantity)
+        : await updateReplenishmentPolicy(api, productId, nextReorderPointQuantity, nextTargetStockQuantity, state.context.policy.version);
       // The server mutation response is the sole lifecycle authority. Do not
       // issue a follow-up GET merely to infer whether the save succeeded.
-      setQuantity(policy.reorderPointQuantity);
+      setReorderPointQuantity(policy.reorderPointQuantity);
+      setTargetStockQuantity(policy.targetStockQuantity ?? "");
       setState({ status: "ready", context: { ...state.context, policy } });
       setFormError(null);
     } catch (error: unknown) {
@@ -111,7 +117,12 @@ export function ReplenishmentPolicyPage({ productId }: Readonly<{ productId: str
           {formError !== null && <p className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900" role="alert">{formError}</p>}
           <label className="mt-5 grid max-w-sm gap-1 text-sm font-medium text-slate-800" htmlFor="reorder-point-quantity">
             補充点（{product.inventoryUnit.symbol}）
-            <input className="rounded-md border border-slate-300 px-3 py-2 text-slate-950" id="reorder-point-quantity" inputMode="decimal" onChange={(event) => setQuantity(event.target.value)} value={quantity} />
+            <input className="rounded-md border border-slate-300 px-3 py-2 text-slate-950" id="reorder-point-quantity" inputMode="decimal" onChange={(event) => setReorderPointQuantity(event.target.value)} value={reorderPointQuantity} />
+          </label>
+          <label className="mt-5 grid max-w-sm gap-1 text-sm font-medium text-slate-800" htmlFor="target-stock-quantity">
+            目標在庫（{product.inventoryUnit.symbol}）
+            <input className="rounded-md border border-slate-300 px-3 py-2 text-slate-950" id="target-stock-quantity" inputMode="decimal" onChange={(event) => setTargetStockQuantity(event.target.value)} value={targetStockQuantity} />
+            <span className="text-xs font-normal text-slate-600">補充判断時に目標とする在庫数量です。自動的な発注数量ではありません。</span>
           </label>
           <button className="mt-5 rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" disabled={isSubmitting} type="submit">{isSubmitting ? "保存しています…" : policy === null ? "補充点を設定" : "変更を保存"}</button>
         </form>
@@ -120,7 +131,7 @@ export function ReplenishmentPolicyPage({ productId }: Readonly<{ productId: str
           {permissions.has("master.write") ? "無効または削除済みの商品には補充ポリシーを設定・変更できません。" : "補充ポリシーの変更にはマスター更新権限が必要です。"}
         </section>
       )}
-      {policy !== null && <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">現在の設定</h2><p className="mt-3 text-sm text-slate-700">補充点: <span className="font-medium text-slate-950">{policy.reorderPointQuantity} {product.inventoryUnit.symbol}</span></p><p className="mt-2 text-xs text-slate-600">保存バージョン: {policy.version}</p></section>}
+      {policy !== null && <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">現在の設定</h2><p className="mt-3 text-sm text-slate-700">補充点: <span className="font-medium text-slate-950">{policy.reorderPointQuantity} {product.inventoryUnit.symbol}</span></p><p className="mt-2 text-sm text-slate-700">目標在庫: <span className="font-medium text-slate-950">{policy.targetStockQuantity === null ? "未設定" : `${policy.targetStockQuantity} ${product.inventoryUnit.symbol}`}</span></p><p className="mt-2 text-xs text-slate-600">保存バージョン: {policy.version}</p></section>}
     </section>
   );
 }
