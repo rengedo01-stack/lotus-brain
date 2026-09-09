@@ -4,11 +4,11 @@ import type { InventoryTransactionType } from "../../../generated/prisma/client"
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
 import { InventoryReadNotFoundError } from "../application/inventory-read.errors";
-import { ListCurrentInventoryUseCase, ListInventoryHistoryUseCase, ListInventorySupplyContextUseCase } from "../application/inventory-read.use-cases";
+import { ListCurrentInventoryUseCase, ListInventoryHistoryUseCase, ListInventorySupplyContextUseCase, ListReplenishmentCandidatesUseCase } from "../application/inventory-read.use-cases";
 import type { CurrentInventoryCursor, InventoryHistoryCursor } from "../application/inventory-read.repository";
 import { ListCurrentInventoryQueryDto } from "./dto/list-current-inventory-query.dto";
 import { ListInventoryHistoryQueryDto } from "./dto/list-inventory-history-query.dto";
-import { currentInventoryPageResponseSchema, inventoryHistoryPageResponseSchema, inventorySupplyContextPageResponseSchema } from "./inventory-response.schemas";
+import { currentInventoryPageResponseSchema, inventoryHistoryPageResponseSchema, inventorySupplyContextPageResponseSchema, replenishmentCandidatePageResponseSchema } from "./inventory-response.schemas";
 
 type CurrentCursorPayload = { v: 1; productCode: string; productId: string; filterProductCode: string | null };
 type HistoryCursorPayload = {
@@ -28,6 +28,7 @@ export class InventoryController {
     private readonly listCurrentInventoryUseCase: ListCurrentInventoryUseCase,
     private readonly listInventoryHistoryUseCase: ListInventoryHistoryUseCase,
     private readonly listInventorySupplyContextUseCase: ListInventorySupplyContextUseCase,
+    private readonly listReplenishmentCandidatesUseCase: ListReplenishmentCandidatesUseCase,
   ) {}
 
   @Get()
@@ -59,6 +60,26 @@ export class InventoryController {
   async listSupplyContext(@Query() query: ListCurrentInventoryQueryDto) {
     const cursor = query.cursor === undefined ? undefined : this.decodeCurrentCursor(query.cursor, query.productCode);
     const page = await this.listInventorySupplyContextUseCase.execute({
+      productCode: query.productCode,
+      limit: query.limit,
+      cursor,
+    });
+    return {
+      items: page.items,
+      nextCursor: page.nextCursor === null ? null : this.encodeCurrentCursor(page.nextCursor, query.productCode),
+    };
+  }
+
+  @Get("replenishment-candidates")
+  @Header("Cache-Control", "private, no-store")
+  @RequirePermissions(Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ)
+  @ApiOperation({ summary: "List products whose current recorded inventory is at or below their configured replenishment point" })
+  @ApiOkResponse({ description: "Replenishment candidate observations and independent unposted-purchase facts were returned.", schema: replenishmentCandidatePageResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "inventory.read, purchase.read, and master.read are all required." })
+  async listReplenishmentCandidates(@Query() query: ListCurrentInventoryQueryDto) {
+    const cursor = query.cursor === undefined ? undefined : this.decodeCurrentCursor(query.cursor, query.productCode);
+    const page = await this.listReplenishmentCandidatesUseCase.execute({
       productCode: query.productCode,
       limit: query.limit,
       cursor,

@@ -89,6 +89,37 @@ export const inventorySupplyContextPageResponseSchema = {
   },
 };
 
+export const replenishmentCandidateItemSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: [
+    "product",
+    "inventoryUnit",
+    "currentQuantity",
+    "reorderPointQuantity",
+    "draftPurchaseQuantity",
+    "confirmedPurchaseQuantity",
+  ],
+  properties: {
+    product: inventorySupplyProductSchema,
+    inventoryUnit: inventoryUnitSchema,
+    currentQuantity: decimalStringSchema,
+    reorderPointQuantity: decimalStringSchema,
+    draftPurchaseQuantity: decimalStringSchema,
+    confirmedPurchaseQuantity: decimalStringSchema,
+  },
+};
+
+export const replenishmentCandidatePageResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["items", "nextCursor"],
+  properties: {
+    items: { type: "array" as const, items: replenishmentCandidateItemSchema },
+    nextCursor: { oneOf: [{ type: "string" as const }, { type: "null" as const }] },
+  },
+};
+
 export const inventoryHistoryItemSchema = {
   type: "object" as const,
   additionalProperties: false,

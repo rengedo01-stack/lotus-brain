@@ -11,6 +11,8 @@ import {
   type InventorySupplyContextView,
   type ListCurrentInventoryQuery,
   type ListInventoryHistoryQuery,
+  type ReplenishmentCandidatePage,
+  type ReplenishmentCandidateView,
 } from "../application/inventory-read.repository";
 
 type InventoryWithProduct = Prisma.InventoryGetPayload<{
@@ -20,6 +22,17 @@ type InventoryWithProduct = Prisma.InventoryGetPayload<{
 type HistoryWithUnit = Prisma.InventoryHistoryGetPayload<{
   include: { inventoryUnit: true };
 }>;
+
+type ReplenishmentCandidateRow = {
+  productId: string;
+  productCode: string;
+  productName: string;
+  inventoryUnitCode: string;
+  inventoryUnitName: string;
+  inventoryUnitSymbol: string;
+  currentQuantity: Prisma.Decimal;
+  reorderPointQuantity: Prisma.Decimal;
+};
 
 @Injectable()
 export class PrismaInventoryReadRepository implements InventoryReadRepository {
@@ -116,6 +129,81 @@ export class PrismaInventoryReadRepository implements InventoryReadRepository {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 
+  async listReplenishmentCandidates(query: ListCurrentInventoryQuery): Promise<ReplenishmentCandidatePage> {
+    return this.prisma.$transaction(async (tx) => {
+      const predicates: Prisma.Sql[] = [
+        Prisma.sql`product."status" = 'ACTIVE'`,
+        Prisma.sql`product."deletedAt" IS NULL`,
+        Prisma.sql`inventory."quantity" <= policy."reorderPointQuantity"`,
+      ];
+      if (query.productCode !== undefined) {
+        predicates.push(Prisma.sql`product."code" = ${query.productCode}`);
+      }
+      if (query.cursor !== undefined) {
+        predicates.push(Prisma.sql`(
+          product."code" > ${query.cursor.productCode}
+          OR (product."code" = ${query.cursor.productCode} AND inventory."productId" > ${query.cursor.productId})
+        )`);
+      }
+
+      // The database, not JavaScript, evaluates the Decimal predicate before
+      // keyset pagination. A policy that has not been configured cannot join
+      // this query, so it is never silently treated as zero.
+      const rows = await tx.$queryRaw<ReplenishmentCandidateRow[]>(Prisma.sql`
+        SELECT
+          inventory."productId" AS "productId",
+          product."code" AS "productCode",
+          product."name" AS "productName",
+          unit."code" AS "inventoryUnitCode",
+          unit."name" AS "inventoryUnitName",
+          unit."symbol" AS "inventoryUnitSymbol",
+          inventory."quantity" AS "currentQuantity",
+          policy."reorderPointQuantity" AS "reorderPointQuantity"
+        FROM "Inventory" AS inventory
+        INNER JOIN "Product" AS product ON product."id" = inventory."productId"
+        INNER JOIN "ReplenishmentPolicy" AS policy ON policy."productId" = inventory."productId"
+        INNER JOIN "Unit" AS unit ON unit."id" = product."inventoryUnitId"
+        WHERE ${Prisma.join(predicates, " AND ")}
+        ORDER BY product."code" ASC, inventory."productId" ASC
+        LIMIT ${query.limit + 1}
+      `);
+      const pageRows = rows.slice(0, query.limit);
+      const productIds = pageRows.map((row) => row.productId);
+      const [draftRows, confirmedRows] = await Promise.all([
+        tx.purchaseItem.groupBy({
+          by: ["productId"],
+          where: {
+            productId: { in: productIds },
+            purchase: { is: { status: "DRAFT" } },
+          },
+          _sum: { quantity: true },
+        }),
+        tx.purchaseItem.groupBy({
+          by: ["productId"],
+          where: {
+            productId: { in: productIds },
+            purchase: { is: { status: "CONFIRMED" } },
+          },
+          _sum: { quantity: true },
+        }),
+      ]);
+      const draftByProductId = new Map(draftRows.map((row) => [row.productId, row._sum.quantity?.toString() ?? "0"]));
+      const confirmedByProductId = new Map(confirmedRows.map((row) => [row.productId, row._sum.quantity?.toString() ?? "0"]));
+      const last = pageRows.at(-1);
+
+      return {
+        items: pageRows.map((row) => this.mapReplenishmentCandidate(
+          row,
+          draftByProductId.get(row.productId) ?? "0",
+          confirmedByProductId.get(row.productId) ?? "0",
+        )),
+        nextCursor: rows.length > query.limit && last !== undefined
+          ? { productCode: last.productCode, productId: last.productId }
+          : null,
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
+
   async listInventoryHistory(query: ListInventoryHistoryQuery): Promise<InventoryHistoryPage | null> {
     const inventory = await this.prisma.inventory.findUnique({
       where: { productId: query.productId },
@@ -195,6 +283,29 @@ export class PrismaInventoryReadRepository implements InventoryReadRepository {
         symbol: row.product.inventoryUnit.symbol,
       },
       currentQuantity: row.quantity.toString(),
+      draftPurchaseQuantity,
+      confirmedPurchaseQuantity,
+    };
+  }
+
+  private mapReplenishmentCandidate(
+    row: ReplenishmentCandidateRow,
+    draftPurchaseQuantity: string,
+    confirmedPurchaseQuantity: string,
+  ): ReplenishmentCandidateView {
+    return {
+      product: {
+        id: row.productId,
+        code: row.productCode,
+        name: row.productName,
+      },
+      inventoryUnit: {
+        code: row.inventoryUnitCode,
+        name: row.inventoryUnitName,
+        symbol: row.inventoryUnitSymbol,
+      },
+      currentQuantity: row.currentQuantity.toString(),
+      reorderPointQuantity: row.reorderPointQuantity.toString(),
       draftPurchaseQuantity,
       confirmedPurchaseQuantity,
     };
