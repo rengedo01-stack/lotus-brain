@@ -98,6 +98,9 @@ export function ProductDetailPage({ productId }: Readonly<{ productId: string }>
           <Link className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/master/products/${encodeURIComponent(product.id)}/unit-conversions`}>
             単位換算
           </Link>
+          <Link className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/master/products/${encodeURIComponent(product.id)}/replenishment-policy`}>
+            補充ポリシー
+          </Link>
           {permissions.has("master.write") && (
             <Link className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/master/products/${encodeURIComponent(product.id)}/edit`}>
               商品を編集
