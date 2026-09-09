@@ -11,16 +11,17 @@ import { replenishmentPolicyContextSchema, replenishmentPolicySchema } from "./r
 const createPolicyRequestSchema = {
   type: "object" as const,
   additionalProperties: false,
-  required: ["reorderPointQuantity"],
+  required: ["reorderPointQuantity", "targetStockQuantity"],
   properties: {
     reorderPointQuantity: { type: "string" as const, pattern: "^(?:0|[1-9][0-9]{0,14})(?:\\.[0-9]{1,9})?$" },
+    targetStockQuantity: { oneOf: [{ type: "string" as const, pattern: "^(?:0|[1-9][0-9]{0,14})(?:\\.[0-9]{1,9})?$" }, { type: "null" as const }] },
   },
 };
 
 const updatePolicyRequestSchema = {
   type: "object" as const,
   additionalProperties: false,
-  required: ["reorderPointQuantity", "expectedVersion"],
+  required: ["reorderPointQuantity", "targetStockQuantity", "expectedVersion"],
   properties: {
     ...createPolicyRequestSchema.properties,
     expectedVersion: { type: "integer" as const, minimum: 1 },

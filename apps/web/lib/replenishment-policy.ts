@@ -4,6 +4,7 @@ export type ReplenishmentPolicy = {
   id: string;
   productId: string;
   reorderPointQuantity: string;
+  targetStockQuantity: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -41,10 +42,11 @@ export async function createReplenishmentPolicy(
   api: ReplenishmentPolicyApi,
   productId: string,
   reorderPointQuantity: string,
+  targetStockQuantity: string | null,
 ): Promise<ReplenishmentPolicy> {
   const payload = await api.request<unknown>(replenishmentPolicyPath(productId), {
     method: "POST",
-    body: { reorderPointQuantity },
+    body: { reorderPointQuantity, targetStockQuantity },
     expectedStatus: 201,
   });
   if (!isReplenishmentPolicy(payload)) throw new ApiError("server");
@@ -55,11 +57,12 @@ export async function updateReplenishmentPolicy(
   api: ReplenishmentPolicyApi,
   productId: string,
   reorderPointQuantity: string,
+  targetStockQuantity: string | null,
   expectedVersion: number,
 ): Promise<ReplenishmentPolicy> {
   const payload = await api.request<unknown>(replenishmentPolicyPath(productId), {
     method: "PATCH",
-    body: { reorderPointQuantity, expectedVersion },
+    body: { reorderPointQuantity, targetStockQuantity, expectedVersion },
     expectedStatus: 200,
   });
   if (!isReplenishmentPolicy(payload)) throw new ApiError("server");
@@ -73,6 +76,20 @@ export function validateReorderPointQuantity(value: string): string | null {
   return null;
 }
 
+export function validateTargetStockQuantity(
+  reorderPointQuantity: string,
+  targetStockQuantity: string | null,
+): string | null {
+  if (targetStockQuantity === null) return null;
+  if (!decimalPattern.test(targetStockQuantity)) {
+    return "目標在庫は0以上・小数点以下9桁以内の数量で入力してください。";
+  }
+  if (compareQuantities(targetStockQuantity, reorderPointQuantity) < 0) {
+    return "目標在庫は発注点以上で設定してください。";
+  }
+  return null;
+}
+
 export function isReplenishmentPolicyContext(value: unknown): value is ReplenishmentPolicyContext {
   return isRecord(value)
     && hasExactlyKeys(value, ["product", "policy"])
@@ -82,10 +99,11 @@ export function isReplenishmentPolicyContext(value: unknown): value is Replenish
 
 export function isReplenishmentPolicy(value: unknown): value is ReplenishmentPolicy {
   return isRecord(value)
-    && hasExactlyKeys(value, ["id", "productId", "reorderPointQuantity", "version", "createdAt", "updatedAt"])
+    && hasExactlyKeys(value, ["id", "productId", "reorderPointQuantity", "targetStockQuantity", "version", "createdAt", "updatedAt"])
     && isNonEmptyString(value.id)
     && isNonEmptyString(value.productId)
     && isDecimalString(value.reorderPointQuantity)
+    && (value.targetStockQuantity === null || isDecimalString(value.targetStockQuantity))
     && typeof value.version === "number"
     && Number.isInteger(value.version)
     && value.version > 0
@@ -114,6 +132,16 @@ function isInventoryUnit(value: unknown): value is ReplenishmentPolicyContext["p
 
 function isDecimalString(value: unknown): value is string {
   return typeof value === "string" && decimalPattern.test(value);
+}
+
+function compareQuantities(left: string, right: string): number {
+  const normalize = (value: string): bigint => {
+    const [integer, fraction = ""] = value.split(".");
+    return BigInt(`${integer}${fraction.padEnd(9, "0")}`);
+  };
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  return normalizedLeft === normalizedRight ? 0 : normalizedLeft > normalizedRight ? 1 : -1;
 }
 
 function isSerializedDateTime(value: unknown): value is string {

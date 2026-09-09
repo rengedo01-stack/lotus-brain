@@ -71,20 +71,21 @@ if (databaseUrl === undefined) {
       try {
         const unit = await prisma.unit.create({ data: { code: `${fixture}-EA`, name: "PR-006C4 each", symbol: "ea", dimension: "COUNT", status: "ACTIVE" } });
         const createProduct = async (suffix, quantity, reorderPointQuantity, options = {}) => {
+          const { targetStockQuantity, ...productOptions } = options;
           const product = await prisma.product.create({
             data: {
               code: `${fixture}-${suffix}`,
               name: `PR-006C4 ${suffix}`,
               baseUnitId: unit.id,
               inventoryUnitId: unit.id,
-              ...options,
+              ...productOptions,
             },
           });
           if (quantity !== null) await prisma.inventory.create({ data: { productId: product.id, quantity } });
-          if (reorderPointQuantity !== null) await prisma.replenishmentPolicy.create({ data: { productId: product.id, reorderPointQuantity } });
+          if (reorderPointQuantity !== null) await prisma.replenishmentPolicy.create({ data: { productId: product.id, reorderPointQuantity, targetStockQuantity: targetStockQuantity ?? null } });
           return product;
         };
-        const exact = await createProduct("A-EXACT", "5.000000000", "5.000000000");
+        const exact = await createProduct("A-EXACT", "5.000000000", "5.000000000", { targetStockQuantity: "100.000000000" });
         const below = await createProduct("B-BELOW", "4.999000000", "5.000000000");
         const above = await createProduct("C-ABOVE", "5.001000000", "5.000000000");
         const zero = await createProduct("D-ZERO", "0", "0");
