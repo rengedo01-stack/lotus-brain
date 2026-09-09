@@ -17,6 +17,9 @@ export type InventorySupplyContext = {
 };
 export type InventorySupplyContextPage = { items: InventorySupplyContext[]; nextCursor: string | null };
 export type InventorySupplyContextApi = { request<T>(path: string, options?: ApiRequestOptions): Promise<T> };
+export type ReplenishmentCandidate = InventorySupplyContext & { reorderPointQuantity: string };
+export type ReplenishmentCandidatePage = { items: ReplenishmentCandidate[]; nextCursor: string | null };
+export type ReplenishmentCandidateApi = { request<T>(path: string, options?: ApiRequestOptions): Promise<T> };
 
 const transactionTypes = new Set<InventoryTransactionType>(["RECEIPT", "CONSUMPTION", "PRODUCTION_RECEIPT", "STOCKTAKE_ADJUSTMENT", "MANUAL_ADJUSTMENT"]);
 const decimalPattern = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
@@ -34,6 +37,14 @@ export function isInventorySupplyContextPage(value: unknown): value is Inventory
     && hasExactlyKeys(value, ["items", "nextCursor"])
     && Array.isArray(value.items)
     && value.items.every(isInventorySupplyContext)
+    && isCursor(value.nextCursor);
+}
+
+export function isReplenishmentCandidatePage(value: unknown): value is ReplenishmentCandidatePage {
+  return isRecord(value)
+    && hasExactlyKeys(value, ["items", "nextCursor"])
+    && Array.isArray(value.items)
+    && value.items.every(isReplenishmentCandidate)
     && isCursor(value.nextCursor);
 }
 
@@ -60,6 +71,13 @@ export function inventorySupplyContextPath(productCode?: string, cursor?: string
   return `/inventory/supply-context?${query.toString()}`;
 }
 
+export function replenishmentCandidatePath(productCode?: string, cursor?: string): string {
+  const query = new URLSearchParams(); query.set("limit", "50");
+  if (productCode !== undefined && productCode.length > 0) query.set("productCode", productCode);
+  if (cursor !== undefined) query.set("cursor", cursor);
+  return `/inventory/replenishment-candidates?${query.toString()}`;
+}
+
 export async function requestInventorySupplyContext(
   api: InventorySupplyContextApi,
   productCode?: string,
@@ -67,6 +85,16 @@ export async function requestInventorySupplyContext(
 ): Promise<InventorySupplyContextPage> {
   const payload = await api.request<unknown>(inventorySupplyContextPath(productCode, cursor), { expectedStatus: 200 });
   if (!isInventorySupplyContextPage(payload)) throw new ApiError("server");
+  return payload;
+}
+
+export async function requestReplenishmentCandidates(
+  api: ReplenishmentCandidateApi,
+  productCode?: string,
+  cursor?: string,
+): Promise<ReplenishmentCandidatePage> {
+  const payload = await api.request<unknown>(replenishmentCandidatePath(productCode, cursor), { expectedStatus: 200 });
+  if (!isReplenishmentCandidatePage(payload)) throw new ApiError("server");
   return payload;
 }
 
@@ -79,6 +107,7 @@ export function inventoryProductStateLabel(product: InventoryProduct): string { 
 function isCurrentInventory(value: unknown): value is CurrentInventory { return isRecord(value) && hasExactlyKeys(value, ["product", "quantity", "inventoryUnit", "updatedAt"]) && isInventoryProduct(value.product) && isDecimalString(value.quantity) && isInventoryUnit(value.inventoryUnit) && isSerializedDateTime(value.updatedAt); }
 function isInventoryHistory(value: unknown): value is InventoryHistory { return isRecord(value) && hasExactlyKeys(value, ["id", "type", "quantityDelta", "quantityAfter", "occurredAt", "inventoryUnit"]) && isNonEmptyString(value.id) && transactionTypes.has(value.type as InventoryTransactionType) && isDecimalString(value.quantityDelta) && isDecimalString(value.quantityAfter) && isSerializedDateTime(value.occurredAt) && isInventoryUnit(value.inventoryUnit); }
 function isInventorySupplyContext(value: unknown): value is InventorySupplyContext { return isRecord(value) && hasExactlyKeys(value, ["product", "inventoryUnit", "currentQuantity", "draftPurchaseQuantity", "confirmedPurchaseQuantity"]) && isInventorySupplyProduct(value.product) && isInventoryUnit(value.inventoryUnit) && isDecimalString(value.currentQuantity) && isDecimalString(value.draftPurchaseQuantity) && isDecimalString(value.confirmedPurchaseQuantity); }
+function isReplenishmentCandidate(value: unknown): value is ReplenishmentCandidate { return isRecord(value) && hasExactlyKeys(value, ["product", "inventoryUnit", "currentQuantity", "reorderPointQuantity", "draftPurchaseQuantity", "confirmedPurchaseQuantity"]) && isInventorySupplyProduct(value.product) && isInventoryUnit(value.inventoryUnit) && isDecimalString(value.currentQuantity) && isDecimalString(value.reorderPointQuantity) && isDecimalString(value.draftPurchaseQuantity) && isDecimalString(value.confirmedPurchaseQuantity); }
 function isInventoryProduct(value: unknown): value is InventoryProduct { return isRecord(value) && hasExactlyKeys(value, ["id", "code", "name", "status", "isDeleted"]) && isNonEmptyString(value.id) && isNonEmptyString(value.code) && isNonEmptyString(value.name) && (value.status === "ACTIVE" || value.status === "INACTIVE") && typeof value.isDeleted === "boolean"; }
 function isInventorySupplyProduct(value: unknown): value is InventorySupplyProduct { return isRecord(value) && hasExactlyKeys(value, ["id", "code", "name"]) && isNonEmptyString(value.id) && isNonEmptyString(value.code) && isNonEmptyString(value.name); }
 function isInventoryUnit(value: unknown): value is InventoryUnit { return isRecord(value) && hasExactlyKeys(value, ["code", "name", "symbol"]) && isNonEmptyString(value.code) && isNonEmptyString(value.name) && isNonEmptyString(value.symbol); }

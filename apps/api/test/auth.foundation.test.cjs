@@ -525,6 +525,12 @@ test("every existing business endpoint has the exact required permission", () =>
     );
   }
 
+  assert.deepEqual(
+    Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, InventoryController.prototype.listReplenishmentCandidates),
+    [Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ],
+    "InventoryController.listReplenishmentCandidates",
+  );
+
   for (const methodName of ["me", "permissions", "csrf", "logout"]) {
     assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, AuthController.prototype[methodName]), true);
   }

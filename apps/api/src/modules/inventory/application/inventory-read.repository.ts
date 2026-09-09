@@ -78,6 +78,25 @@ export type InventorySupplyContextPage = {
   nextCursor: CurrentInventoryCursor | null;
 };
 
+/**
+ * A replenishment candidate is deliberately a narrow observation, not an
+ * order recommendation. The two purchase quantities remain independent facts
+ * and never participate in the candidate predicate.
+ */
+export type ReplenishmentCandidateView = {
+  product: Pick<InventoryProductView, "id" | "code" | "name">;
+  inventoryUnit: InventoryUnitView;
+  currentQuantity: string;
+  reorderPointQuantity: string;
+  draftPurchaseQuantity: string;
+  confirmedPurchaseQuantity: string;
+};
+
+export type ReplenishmentCandidatePage = {
+  items: ReplenishmentCandidateView[];
+  nextCursor: CurrentInventoryCursor | null;
+};
+
 export type InventoryHistoryPage = {
   currentInventory: CurrentInventoryView;
   items: InventoryHistoryView[];
@@ -87,6 +106,7 @@ export type InventoryHistoryPage = {
 export interface InventoryReadRepository {
   listCurrentInventory(query: ListCurrentInventoryQuery): Promise<CurrentInventoryPage>;
   listSupplyContext(query: ListCurrentInventoryQuery): Promise<InventorySupplyContextPage>;
+  listReplenishmentCandidates(query: ListCurrentInventoryQuery): Promise<ReplenishmentCandidatePage>;
   listInventoryHistory(query: ListInventoryHistoryQuery): Promise<InventoryHistoryPage | null>;
 }
 
