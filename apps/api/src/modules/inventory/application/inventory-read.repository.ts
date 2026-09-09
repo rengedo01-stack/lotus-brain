@@ -60,6 +60,24 @@ export type CurrentInventoryPage = {
   nextCursor: CurrentInventoryCursor | null;
 };
 
+/**
+ * These figures deliberately remain independent facts. In particular, neither
+ * pending purchase quantity is an expected receipt or an available-inventory
+ * calculation.
+ */
+export type InventorySupplyContextView = {
+  product: Pick<InventoryProductView, "id" | "code" | "name">;
+  inventoryUnit: InventoryUnitView;
+  currentQuantity: string;
+  draftPurchaseQuantity: string;
+  confirmedPurchaseQuantity: string;
+};
+
+export type InventorySupplyContextPage = {
+  items: InventorySupplyContextView[];
+  nextCursor: CurrentInventoryCursor | null;
+};
+
 export type InventoryHistoryPage = {
   currentInventory: CurrentInventoryView;
   items: InventoryHistoryView[];
@@ -68,6 +86,7 @@ export type InventoryHistoryPage = {
 
 export interface InventoryReadRepository {
   listCurrentInventory(query: ListCurrentInventoryQuery): Promise<CurrentInventoryPage>;
+  listSupplyContext(query: ListCurrentInventoryQuery): Promise<InventorySupplyContextPage>;
   listInventoryHistory(query: ListInventoryHistoryQuery): Promise<InventoryHistoryPage | null>;
 }
 

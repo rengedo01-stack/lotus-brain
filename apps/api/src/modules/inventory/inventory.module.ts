@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { PrismaModule } from "../../prisma/prisma.module";
-import { ListCurrentInventoryUseCase, ListInventoryHistoryUseCase } from "./application/inventory-read.use-cases";
+import { ListCurrentInventoryUseCase, ListInventoryHistoryUseCase, ListInventorySupplyContextUseCase } from "./application/inventory-read.use-cases";
 import { INVENTORY_READ_REPOSITORY } from "./application/inventory-read.repository";
 import { PrismaInventoryReadRepository } from "./infrastructure/prisma-inventory-read.repository";
 import { InventoryController } from "./presentation/inventory.controller";
@@ -10,6 +10,7 @@ import { InventoryController } from "./presentation/inventory.controller";
   controllers: [InventoryController],
   providers: [
     ListCurrentInventoryUseCase,
+    ListInventorySupplyContextUseCase,
     ListInventoryHistoryUseCase,
     { provide: INVENTORY_READ_REPOSITORY, useClass: PrismaInventoryReadRepository },
   ],

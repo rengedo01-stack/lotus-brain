@@ -1,14 +1,14 @@
-import { BadRequestException, Controller, Get, NotFoundException, Param, Query } from "@nestjs/common";
+import { BadRequestException, Controller, Get, Header, NotFoundException, Param, Query } from "@nestjs/common";
 import { ApiCookieAuth, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import type { InventoryTransactionType } from "../../../generated/prisma/client";
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
 import { InventoryReadNotFoundError } from "../application/inventory-read.errors";
-import { ListCurrentInventoryUseCase, ListInventoryHistoryUseCase } from "../application/inventory-read.use-cases";
+import { ListCurrentInventoryUseCase, ListInventoryHistoryUseCase, ListInventorySupplyContextUseCase } from "../application/inventory-read.use-cases";
 import type { CurrentInventoryCursor, InventoryHistoryCursor } from "../application/inventory-read.repository";
 import { ListCurrentInventoryQueryDto } from "./dto/list-current-inventory-query.dto";
 import { ListInventoryHistoryQueryDto } from "./dto/list-inventory-history-query.dto";
-import { currentInventoryPageResponseSchema, inventoryHistoryPageResponseSchema } from "./inventory-response.schemas";
+import { currentInventoryPageResponseSchema, inventoryHistoryPageResponseSchema, inventorySupplyContextPageResponseSchema } from "./inventory-response.schemas";
 
 type CurrentCursorPayload = { v: 1; productCode: string; productId: string; filterProductCode: string | null };
 type HistoryCursorPayload = {
@@ -27,6 +27,7 @@ export class InventoryController {
   constructor(
     private readonly listCurrentInventoryUseCase: ListCurrentInventoryUseCase,
     private readonly listInventoryHistoryUseCase: ListInventoryHistoryUseCase,
+    private readonly listInventorySupplyContextUseCase: ListInventorySupplyContextUseCase,
   ) {}
 
   @Get()
@@ -38,6 +39,26 @@ export class InventoryController {
   async listCurrentInventory(@Query() query: ListCurrentInventoryQueryDto) {
     const cursor = query.cursor === undefined ? undefined : this.decodeCurrentCursor(query.cursor, query.productCode);
     const page = await this.listCurrentInventoryUseCase.execute({
+      productCode: query.productCode,
+      limit: query.limit,
+      cursor,
+    });
+    return {
+      items: page.items,
+      nextCursor: page.nextCursor === null ? null : this.encodeCurrentCursor(page.nextCursor, query.productCode),
+    };
+  }
+
+  @Get("supply-context")
+  @Header("Cache-Control", "private, no-store")
+  @RequirePermissions(Permissions.INVENTORY_READ, Permissions.PURCHASE_READ)
+  @ApiOperation({ summary: "List independent current-inventory and unposted-purchase facts" })
+  @ApiOkResponse({ description: "Recorded current inventory and independently reported unposted purchase quantities were returned.", schema: inventorySupplyContextPageResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "Both inventory.read and purchase.read are required." })
+  async listSupplyContext(@Query() query: ListCurrentInventoryQueryDto) {
+    const cursor = query.cursor === undefined ? undefined : this.decodeCurrentCursor(query.cursor, query.productCode);
+    const page = await this.listInventorySupplyContextUseCase.execute({
       productCode: query.productCode,
       limit: query.limit,
       cursor,
