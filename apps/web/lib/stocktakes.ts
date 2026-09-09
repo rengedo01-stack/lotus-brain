@@ -32,6 +32,31 @@ export type PostedStocktakeResult = {
 };
 
 export type StocktakePostingApi = Pick<ApiClient, "request">;
+export type StocktakeListApi = Pick<ApiClient, "request">;
+
+/**
+ * The collection is intentionally a Stocktake-header view. It excludes notes,
+ * line items, Product data, quantities, and all inventory/costing data.
+ */
+export type StocktakeListItem = {
+  id: string;
+  status: StocktakeStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StocktakeListPage = {
+  items: StocktakeListItem[];
+  nextCursor: string | null;
+};
+
+export type StocktakeListFilters = {
+  status?: StocktakeStatus;
+  createdFrom?: string;
+  createdTo?: string;
+};
 
 export type StocktakeLineFormValues = {
   countedQuantity: string;
@@ -49,6 +74,8 @@ export type StocktakeFieldErrors = Record<string, string>;
 
 const DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const POSTED_STOCKTAKE_RESULT_KEYS = ["id", "status", "completedAt"] as const;
+const STOCKTAKE_LIST_ITEM_KEYS = ["id", "status", "startedAt", "completedAt", "createdAt", "updatedAt"] as const;
+const STOCKTAKE_LIST_PAGE_KEYS = ["items", "nextCursor"] as const;
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -116,6 +143,48 @@ export function isPostedStocktakeResult(value: unknown, stocktakeId: string): va
     && value.id === stocktakeId
     && value.status === "POSTED"
     && isIsoTimestamp(value.completedAt);
+}
+
+function isStocktakeListItem(value: unknown): value is StocktakeListItem {
+  if (!isPlainRecord(value) || !hasExactlyKeys(value, STOCKTAKE_LIST_ITEM_KEYS)) return false;
+  return (
+    isString(value.id) && value.id.trim().length > 0
+    && isStocktakeStatus(value.status)
+    && (value.startedAt === null || isIsoTimestamp(value.startedAt))
+    && (value.completedAt === null || isIsoTimestamp(value.completedAt))
+    && isIsoTimestamp(value.createdAt)
+    && isIsoTimestamp(value.updatedAt)
+  );
+}
+
+/** A strict operational trust boundary for the narrow Stocktake-header list. */
+export function isStocktakeListPage(value: unknown): value is StocktakeListPage {
+  return isPlainRecord(value)
+    && hasExactlyKeys(value, STOCKTAKE_LIST_PAGE_KEYS)
+    && Array.isArray(value.items)
+    && value.items.every(isStocktakeListItem)
+    && new Set(value.items.map((item) => item.id)).size === value.items.length
+    && (value.nextCursor === null || (isString(value.nextCursor) && value.nextCursor.length > 0));
+}
+
+export function stocktakeListPath(filters: StocktakeListFilters, cursor?: string): string {
+  const query = new URLSearchParams();
+  query.set("limit", "50");
+  if (filters.status !== undefined) query.set("status", filters.status);
+  if (filters.createdFrom !== undefined && filters.createdFrom.length > 0) query.set("createdFrom", filters.createdFrom);
+  if (filters.createdTo !== undefined && filters.createdTo.length > 0) query.set("createdTo", filters.createdTo);
+  if (cursor !== undefined) query.set("cursor", cursor);
+  return `/stocktakes?${query.toString()}`;
+}
+
+export async function requestStocktakeList(
+  api: StocktakeListApi,
+  filters: StocktakeListFilters,
+  cursor?: string,
+): Promise<StocktakeListPage> {
+  const payload = await api.request<unknown>(stocktakeListPath(filters, cursor), { expectedStatus: 200 });
+  if (!isStocktakeListPage(payload)) throw new ApiError("server");
+  return payload;
 }
 
 export function mergePostedStocktakeResult(stocktake: Stocktake, posted: PostedStocktakeResult): Stocktake {

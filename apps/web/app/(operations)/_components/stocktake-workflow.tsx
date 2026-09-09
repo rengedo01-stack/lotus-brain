@@ -12,6 +12,7 @@ import {
   formatStocktakeTimestamp,
   isAmbiguousStocktakePostingError,
   isStocktake,
+  requestStocktakeList,
   requestStocktakePosting,
   stocktakeFormFromStocktake,
   stocktakePayload,
@@ -20,6 +21,8 @@ import {
   type Stocktake,
   type StocktakeFieldErrors,
   type StocktakeFormValues,
+  type StocktakeListFilters,
+  type StocktakeListPage,
   type StocktakeLineFormValues,
   type StocktakeStatus,
 } from "@/lib/stocktakes";
@@ -41,6 +44,11 @@ type StocktakeState =
   | { status: "loading" }
   | { status: "ready"; stocktake: Stocktake }
   | { status: "not_found" }
+  | { status: "error"; message: string };
+
+type StocktakeListState =
+  | { status: "idle" | "loading" }
+  | { status: "ready"; page: StocktakeListPage }
   | { status: "error"; message: string };
 
 function protectedStocktakeError(error: unknown, refreshAuthentication: () => void): boolean {
@@ -99,11 +107,28 @@ async function requestStocktake(api: ApiClient, stocktakeId: string): Promise<St
 
 export function StocktakeWorkspacePage() {
   const router = useRouter();
-  const { permissions } = useOperationalApp();
+  const { api, permissions, refreshAuthentication } = useOperationalApp();
   const [stocktakeId, setStocktakeId] = useState("");
   const [lookupError, setLookupError] = useState<string | null>(null);
+  const [draftFilters, setDraftFilters] = useState<{ status: "" | StocktakeStatus; createdFrom: string; createdTo: string }>({ status: "", createdFrom: "", createdTo: "" });
+  const [filters, setFilters] = useState<StocktakeListFilters>({});
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [retryKey, setRetryKey] = useState(0);
+  const [listState, setListState] = useState<StocktakeListState>(() => permissions.has("stocktake.read") ? { status: "loading" } : { status: "idle" });
   const canRead = permissions.has("stocktake.read");
   const canCreate = permissions.has("stocktake.write") && canRead && permissions.has("master.read");
+
+  useEffect(() => {
+    if (!canRead) return;
+    let active = true;
+    void requestStocktakeList(api, filters, cursor).then((page) => {
+      if (active) setListState({ status: "ready", page });
+    }).catch((error: unknown) => {
+      if (!active || protectedStocktakeError(error, refreshAuthentication)) return;
+      setListState({ status: "error", message: stocktakeErrorMessage(error) });
+    });
+    return () => { active = false; };
+  }, [api, canRead, cursor, filters, refreshAuthentication, retryKey]);
 
   function openStocktake(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,12 +140,23 @@ export function StocktakeWorkspacePage() {
     router.push(`/stocktakes/${encodeURIComponent(id)}`);
   }
 
+  function applyFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCursor(undefined);
+    setListState({ status: "loading" });
+    setFilters({
+      status: draftFilters.status || undefined,
+      createdFrom: draftFilters.createdFrom.trim() || undefined,
+      createdTo: draftFilters.createdTo.trim() || undefined,
+    });
+  }
+
   return (
-    <section aria-labelledby="stocktakes-title" className="max-w-3xl">
+    <section aria-labelledby="stocktakes-title" className="max-w-6xl">
       <StocktakeNavigation />
       <p className="text-sm font-medium text-blue-700">棚卸</p>
-      <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950" id="stocktakes-title">棚卸ワークスペース</h1>
-      <p className="mt-3 text-sm text-slate-700">棚卸を下書きで登録し、確認後に計上します。既存APIには棚卸一覧がないため、登録後の詳細画面または棚卸IDから既存の棚卸を開きます。</p>
+      <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950" id="stocktakes-title">棚卸一覧</h1>
+      <p className="mt-3 text-sm text-slate-700">既存の棚卸を検索し、詳細画面から確認・計上のワークフローへ進めます。一覧には棚卸headerのライフサイクル情報だけを表示し、商品・数量・差異・原価・在庫情報は表示しません。</p>
       <div className="mt-8 grid gap-5 sm:grid-cols-2">
         <section className="rounded-xl bg-white p-6 shadow-sm" aria-labelledby="stocktake-create-card-title">
           <h2 className="text-xl font-bold text-slate-950" id="stocktake-create-card-title">新しい棚卸</h2>
@@ -145,8 +181,69 @@ export function StocktakeWorkspacePage() {
           )}
         </section>
       </div>
+      {canRead ? <>
+        <form className="mt-8 flex flex-wrap items-end gap-3 rounded-xl bg-white p-4 shadow-sm" noValidate onSubmit={applyFilters}>
+          <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="stocktake-list-status">状態
+            <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="stocktake-list-status" onChange={(event) => setDraftFilters((value) => ({ ...value, status: event.target.value as "" | StocktakeStatus }))} value={draftFilters.status}>
+              <option value="">すべて</option>
+              {["DRAFT", "CONFIRMED", "POSTED", "CANCELLED"].map((status) => <option key={status} value={status}>{stocktakeStatusLabel(status as StocktakeStatus)}</option>)}
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="stocktake-list-created-from">作成日時（UTC）開始
+            <input className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="stocktake-list-created-from" onChange={(event) => setDraftFilters((value) => ({ ...value, createdFrom: event.target.value }))} placeholder="2026-09-01T00:00:00.000Z" value={draftFilters.createdFrom} />
+          </label>
+          <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="stocktake-list-created-to">作成日時（UTC）終了
+            <input className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="stocktake-list-created-to" onChange={(event) => setDraftFilters((value) => ({ ...value, createdTo: event.target.value }))} placeholder="2026-09-30T23:59:59.999Z" value={draftFilters.createdTo} />
+          </label>
+          <button className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" type="submit">適用</button>
+        </form>
+        <StocktakeListBody
+          state={listState}
+          onNext={(nextCursor) => { setListState({ status: "loading" }); setCursor(nextCursor); }}
+          onRetry={() => { setListState({ status: "loading" }); setRetryKey((value) => value + 1); }}
+        />
+      </> : <StocktakeReadAccessRequired />}
     </section>
   );
+}
+
+function StocktakeListBody({ onNext, onRetry, state }: Readonly<{
+  state: StocktakeListState;
+  onNext(cursor: string): void;
+  onRetry(): void;
+}>) {
+  if (state.status === "loading" || state.status === "idle") {
+    return <p className="mt-8 text-sm text-slate-700" role="status">棚卸一覧を読み込んでいます…</p>;
+  }
+  if (state.status === "error") {
+    return <section className="mt-8 max-w-xl rounded-xl border border-red-200 bg-red-50 p-6" aria-labelledby="stocktake-list-error-title">
+      <h2 className="text-xl font-semibold text-red-950" id="stocktake-list-error-title">棚卸一覧を表示できません</h2>
+      <p className="mt-3 text-sm text-red-900" role="alert">{state.message}</p>
+      <button className="mt-5 rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-900 hover:bg-red-100" onClick={onRetry} type="button">再試行</button>
+    </section>;
+  }
+  if (state.status !== "ready") return null;
+  const { page } = state;
+  if (page.items.length === 0) {
+    return <p className="mt-8 rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-700">条件に一致する棚卸はありません。</p>;
+  }
+  return <div className="mt-8">
+    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <thead className="bg-slate-50 text-left text-slate-700"><tr>
+          <th className="px-4 py-3 font-semibold">作成日時</th><th className="px-4 py-3 font-semibold">状態</th><th className="px-4 py-3 font-semibold">開始日時</th><th className="px-4 py-3 font-semibold">完了日時</th><th className="px-4 py-3"><span className="sr-only">詳細</span></th>
+        </tr></thead>
+        <tbody className="divide-y divide-slate-100">{page.items.map((stocktake) => <tr key={stocktake.id}>
+          <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatStocktakeTimestamp(stocktake.createdAt)}</td>
+          <td className="px-4 py-3"><StocktakeStatusBadge status={stocktake.status} /></td>
+          <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatStocktakeTimestamp(stocktake.startedAt)}</td>
+          <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatStocktakeTimestamp(stocktake.completedAt)}</td>
+          <td className="px-4 py-3 text-right"><Link className="font-medium text-blue-700 underline-offset-2 hover:underline" href={`/stocktakes/${encodeURIComponent(stocktake.id)}`}>詳細</Link></td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+    {page.nextCursor !== null && <button className="mt-4 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-white" onClick={() => onNext(page.nextCursor!)} type="button">次のページ</button>}
+  </div>;
 }
 
 export function StocktakeCreatePage() {
@@ -544,6 +641,10 @@ function StocktakeNotFound() {
 
 function StocktakeLoadError({ message, retry }: Readonly<{ message: string; retry(): void }>) {
   return <section aria-labelledby="stocktake-load-error-title" className="max-w-xl rounded-xl border border-red-200 bg-red-50 p-6"><h1 className="text-xl font-semibold text-red-950" id="stocktake-load-error-title">棚卸情報を表示できません</h1><p className="mt-3 text-sm text-red-900" role="alert">{message}</p><button className="mt-5 rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-900 hover:bg-red-100" onClick={retry} type="button">再試行</button></section>;
+}
+
+function StocktakeReadAccessRequired() {
+  return <section aria-labelledby="stocktake-read-required-title" className="mt-8 max-w-xl rounded-xl border border-amber-200 bg-amber-50 p-6"><h2 className="text-xl font-bold text-amber-950" id="stocktake-read-required-title">棚卸参照権限がありません</h2><p className="mt-3 text-sm text-amber-900">棚卸一覧の表示には棚卸参照権限が必要です。</p></section>;
 }
 
 function StocktakeWriteAccessRequired({ backHref }: Readonly<{ backHref: string }>) {

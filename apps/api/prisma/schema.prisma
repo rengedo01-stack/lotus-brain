@@ -878,6 +878,8 @@ model Stocktake {
   adjustment InventoryAdjustment?
 
   @@index([status, createdAt])
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([status, createdAt(sort: Desc), id(sort: Desc)])
 }
 
 model StocktakeItem {
