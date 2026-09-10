@@ -1,4 +1,4 @@
-import type { MasterStatus, UnitDimension } from "../../../generated/prisma/client";
+import type { MasterStatus, ProductSupplyRelationshipStatus, UnitDimension } from "../../../generated/prisma/client";
 
 export type ListQuery = {
   limit: number;
@@ -93,6 +93,42 @@ export type ProductUnitConversionInput = {
   status?: MasterStatus;
 };
 
+export type ProductSupplyRelationshipReference = {
+  id: string;
+  code: string;
+  name: string;
+  status: MasterStatus;
+  isDeleted: boolean;
+};
+
+export type ProductSupplyRelationshipView = {
+  id: string;
+  productId: string;
+  supplierId: string;
+  status: ProductSupplyRelationshipStatus;
+  version: number;
+  createdAt: Date;
+  updatedAt: Date;
+  product: ProductSupplyRelationshipReference;
+  supplier: ProductSupplyRelationshipReference;
+};
+
+export type CreateProductSupplyRelationshipInput = {
+  productId: string;
+  supplierId: string;
+};
+
+export type UpdateProductSupplyRelationshipInput = {
+  status: ProductSupplyRelationshipStatus;
+  expectedVersion: number;
+};
+
+export type CreateProductSupplyRelationshipResult =
+  | ProductSupplyRelationshipView
+  | "PRODUCT_NOT_FOUND"
+  | "SUPPLIER_NOT_FOUND"
+  | "CONFLICT";
+
 export interface MasterRepository {
   createProduct(input: ProductInput): Promise<ProductView>;
   getProduct(id: string): Promise<ProductView | null>;
@@ -112,6 +148,11 @@ export interface MasterRepository {
   createProductUnitConversion(productId: string, input: ProductUnitConversionInput): Promise<ProductUnitConversionView>;
   getProductUnitConversion(productId: string, id: string): Promise<ProductUnitConversionView | null>;
   listProductUnitConversions(productId: string): Promise<ProductUnitConversionView[]>;
+
+  createProductSupplyRelationship(input: CreateProductSupplyRelationshipInput): Promise<CreateProductSupplyRelationshipResult>;
+  getProductSupplyRelationship(id: string): Promise<ProductSupplyRelationshipView | null>;
+  listProductSupplyRelationships(query: ListQuery): Promise<ProductSupplyRelationshipView[]>;
+  updateProductSupplyRelationship(id: string, input: UpdateProductSupplyRelationshipInput): Promise<ProductSupplyRelationshipView | "NOT_FOUND" | "CONFLICT">;
 }
 
 export const MASTER_REPOSITORY = Symbol("MASTER_REPOSITORY");

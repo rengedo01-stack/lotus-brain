@@ -13,6 +13,15 @@ enum MasterStatus {
   INACTIVE
 }
 
+// A supply relationship has its own lifecycle. It deliberately does not reuse
+// MasterStatus: DISABLED means Lotus BRAIN no longer manages this Product /
+// Supplier pair as an active supply relationship, not that either master is
+// inactive.
+enum ProductSupplyRelationshipStatus {
+  ACTIVE
+  DISABLED
+}
+
 enum UserStatus {
   ACTIVE
   DISABLED
@@ -199,6 +208,7 @@ model Product {
   inventoryUnit Unit @relation("ProductInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
   unitConversions           ProductUnitConversion[]
+  supplyRelationships       ProductSupplyRelationship[]
   replenishmentPolicy       ReplenishmentPolicy?
   priceMasters              PriceMaster[]
   inventory                 Inventory?
@@ -265,8 +275,29 @@ model Supplier {
 
   priceMasters PriceMaster[]
   purchases    Purchase[]
+  supplyRelationships ProductSupplyRelationship[]
 
   @@index([status, deletedAt])
+}
+
+// A durable, operator-managed identity for a Product / Supplier supply pair.
+// This is not proof that an order can be placed and contains no price,
+// delivery, packaging, or ordering-term semantics.
+model ProductSupplyRelationship {
+  id         String                          @id @default(cuid())
+  productId  String
+  supplierId String
+  status     ProductSupplyRelationshipStatus @default(ACTIVE)
+  version    Int                             @default(1)
+  createdAt  DateTime                        @default(now())
+  updatedAt  DateTime                        @updatedAt
+
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@unique([productId, supplierId])
+  @@index([productId, status])
+  @@index([supplierId, status])
 }
 
 model User {
