@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import {
   MASTER_REPOSITORY,
+  type CreateProductSupplyRelationshipInput,
   type ListQuery,
   type MasterRepository,
   type ProductUnitConversionInput,
@@ -10,8 +11,9 @@ import {
   type SupplierUpdateInput,
   type UnitInput,
   type UnitUpdateInput,
+  type UpdateProductSupplyRelationshipInput,
 } from "./master.repository";
-import { MasterNotFoundError } from "./master.errors";
+import { MasterConflictError, MasterNotFoundError } from "./master.errors";
 
 @Injectable()
 export class CreateProductUseCase {
@@ -150,5 +152,50 @@ export class ListProductUnitConversionsUseCase {
     const product = await this.repository.getProduct(productId);
     if (product === null) throw new MasterNotFoundError("Product", productId);
     return this.repository.listProductUnitConversions(productId);
+  }
+}
+
+@Injectable()
+export class CreateProductSupplyRelationshipUseCase {
+  constructor(@Inject(MASTER_REPOSITORY) private readonly repository: MasterRepository) {}
+
+  async execute(input: CreateProductSupplyRelationshipInput) {
+    const relationship = await this.repository.createProductSupplyRelationship(input);
+    if (relationship === "PRODUCT_NOT_FOUND") throw new MasterNotFoundError("Product", input.productId);
+    if (relationship === "SUPPLIER_NOT_FOUND") throw new MasterNotFoundError("Supplier", input.supplierId);
+    if (relationship === "CONFLICT") throw new MasterConflictError("The Product-Supplier relationship is unavailable or already exists.");
+    return relationship;
+  }
+}
+
+@Injectable()
+export class GetProductSupplyRelationshipUseCase {
+  constructor(@Inject(MASTER_REPOSITORY) private readonly repository: MasterRepository) {}
+
+  async execute(id: string) {
+    const relationship = await this.repository.getProductSupplyRelationship(id);
+    if (relationship === null) throw new MasterNotFoundError("ProductSupplyRelationship", id);
+    return relationship;
+  }
+}
+
+@Injectable()
+export class ListProductSupplyRelationshipsUseCase {
+  constructor(@Inject(MASTER_REPOSITORY) private readonly repository: MasterRepository) {}
+
+  execute(query: ListQuery) {
+    return this.repository.listProductSupplyRelationships(query);
+  }
+}
+
+@Injectable()
+export class UpdateProductSupplyRelationshipUseCase {
+  constructor(@Inject(MASTER_REPOSITORY) private readonly repository: MasterRepository) {}
+
+  async execute(id: string, input: UpdateProductSupplyRelationshipInput) {
+    const relationship = await this.repository.updateProductSupplyRelationship(id, input);
+    if (relationship === "NOT_FOUND") throw new MasterNotFoundError("ProductSupplyRelationship", id);
+    if (relationship === "CONFLICT") throw new MasterConflictError("The Product-Supplier relationship state changed or cannot be enabled. Reload before editing again.");
+    return relationship;
   }
 }
