@@ -294,10 +294,29 @@ model ProductSupplyRelationship {
 
   product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  orderingTerms ProductSupplierOrderingTerms?
 
   @@unique([productId, supplierId])
   @@index([productId, status])
   @@index([supplierId, status])
+}
+
+// Current, supplier-specific ordering constraints for one durable supply
+// relationship. Quantities are always expressed in the Product inventory unit;
+// this model deliberately has no supplier packaging or purchase-unit meaning.
+// A missing row, or null values in an existing row, means the corresponding
+// constraint is not configured. Historical use is snapshotted by any future
+// artifact that needs it rather than by this current-state model.
+model ProductSupplierOrderingTerms {
+  id                    String   @id @default(cuid())
+  relationshipId        String   @unique
+  minimumOrderQuantity  Decimal? @db.Decimal(24, 9)
+  orderMultipleQuantity Decimal? @db.Decimal(24, 9)
+  version               Int      @default(1)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  relationship ProductSupplyRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
 }
 
 model User {
