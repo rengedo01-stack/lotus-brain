@@ -216,14 +216,15 @@ model Product {
 
   unitConversions           ProductUnitConversion[]
   supplyRelationships       ProductSupplyRelationship[]
+  supplyPreference          ProductSupplyPreference?
   replenishmentPolicy       ReplenishmentPolicy?
   priceMasters              PriceMaster[]
   inventory                 Inventory?
-  purchaseItems             PurchaseItem[]            @relation("PurchaseItemProductInventoryUnit")
-  outputRecipes             Recipe[]                  @relation("RecipeOutputProduct")
-  productionOutputSnapshots Production[]              @relation("ProductionOutputProductSnapshot")
-  recipeItems               RecipeItem[]              @relation("RecipeItemProduct")
-  consumptions              ProductionConsumption[]   @relation("ProductionConsumptionProductInventoryUnit")
+  purchaseItems             PurchaseItem[]              @relation("PurchaseItemProductInventoryUnit")
+  outputRecipes             Recipe[]                    @relation("RecipeOutputProduct")
+  productionOutputSnapshots Production[]                @relation("ProductionOutputProductSnapshot")
+  recipeItems               RecipeItem[]                @relation("RecipeItemProduct")
+  consumptions              ProductionConsumption[]     @relation("ProductionConsumptionProductInventoryUnit")
   stocktakeItems            StocktakeItem[]
   inventoryAdjustmentItems  InventoryAdjustmentItem[]
 
@@ -280,8 +281,8 @@ model Supplier {
   updatedAt DateTime     @updatedAt
   deletedAt DateTime?
 
-  priceMasters PriceMaster[]
-  purchases    Purchase[]
+  priceMasters        PriceMaster[]
+  purchases           Purchase[]
   supplyRelationships ProductSupplyRelationship[]
 
   @@index([status, deletedAt])
@@ -299,14 +300,30 @@ model ProductSupplyRelationship {
   createdAt  DateTime                        @default(now())
   updatedAt  DateTime                        @updatedAt
 
-  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
-  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  orderingTerms ProductSupplierOrderingTerms?
-  packages      ProductSupplierPackage[]
+  product           Product                           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  supplier          Supplier                          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  orderingTerms     ProductSupplierOrderingTerms?
+  packages          ProductSupplierPackage[]
+  preference        ProductSupplyPreference?
+  packagePreference ProductSupplierPackagePreference?
 
   @@unique([productId, supplierId])
   @@index([productId, status])
   @@index([supplierId, status])
+}
+
+// An optional, current operator choice of the usual managed source for one
+// Product. This is neither an availability assertion nor a purchase command.
+model ProductSupplyPreference {
+  id             String   @id @default(cuid())
+  productId      String   @unique
+  relationshipId String   @unique
+  version        Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  product      Product                   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  relationship ProductSupplyRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
 }
 
 // Current, supplier-specific ordering constraints for one durable supply
@@ -327,6 +344,20 @@ model ProductSupplierOrderingTerms {
   relationship ProductSupplyRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
 }
 
+// An optional, current operator choice of the usual package within one supply
+// relationship. It intentionally does not imply that other packages cannot be ordered.
+model ProductSupplierPackagePreference {
+  id             String   @id @default(cuid())
+  relationshipId String   @unique
+  packageId      String   @unique
+  version        Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  relationship ProductSupplyRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
+  package      ProductSupplierPackage    @relation(fields: [packageId], references: [id], onDelete: Restrict)
+}
+
 // Current, operator-managed supplier packaging for one durable supply
 // relationship. Each package converts directly to the Product inventory unit;
 // package-to-package hierarchy, preferred selection, Purchase integration,
@@ -343,7 +374,8 @@ model ProductSupplierPackage {
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
 
-  relationship ProductSupplyRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
+  relationship ProductSupplyRelationship         @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
+  preference   ProductSupplierPackagePreference?
 
   @@unique([relationshipId, code])
   @@index([relationshipId, status])

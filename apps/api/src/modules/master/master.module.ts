@@ -43,12 +43,16 @@ import { ProductSupplierPackageController } from "./presentation/product-supplie
 import { PrismaModule } from "../../prisma/prisma.module";
 import { PRODUCT_SUPPLIER_ORDERING_TERMS_REPOSITORY } from "./application/product-supplier-ordering-terms.repository";
 import { PRODUCT_SUPPLIER_PACKAGE_REPOSITORY } from "./application/product-supplier-package.repository";
+import { PRODUCT_SUPPLY_PREFERENCE_REPOSITORY } from "./application/product-supply-preference.repository";
+import { ProductSupplyPreferenceUseCases } from "./application/product-supply-preference.use-cases";
+import { PrismaProductSupplyPreferenceRepository } from "./infrastructure/prisma-product-supply-preference.repository";
+import { ProductSupplyPreferenceController } from "./presentation/product-supply-preference.controller";
 
 @Module({
   imports: [PrismaModule],
   // Register the static /ordering-terms collection route before C8's dynamic
   // /:id relationship route.
-  controllers: [MasterController, ProductSupplierOrderingTermsController, ProductSupplierPackageController, ProductSupplyRelationshipController],
+  controllers: [MasterController, ProductSupplyPreferenceController, ProductSupplierOrderingTermsController, ProductSupplierPackageController, ProductSupplyRelationshipController],
   providers: [
     CreateProductUseCase,
     CreateProductSupplyRelationshipUseCase,
@@ -77,9 +81,11 @@ import { PRODUCT_SUPPLIER_PACKAGE_REPOSITORY } from "./application/product-suppl
     GetProductSupplierPackageUseCase,
     ListProductSupplierPackagesUseCase,
     UpdateProductSupplierPackageUseCase,
+    ProductSupplyPreferenceUseCases,
     { provide: MASTER_REPOSITORY, useClass: PrismaMasterRepository },
     { provide: PRODUCT_SUPPLIER_ORDERING_TERMS_REPOSITORY, useClass: PrismaProductSupplierOrderingTermsRepository },
     { provide: PRODUCT_SUPPLIER_PACKAGE_REPOSITORY, useClass: PrismaProductSupplierPackageRepository },
+    { provide: PRODUCT_SUPPLY_PREFERENCE_REPOSITORY, useClass: PrismaProductSupplyPreferenceRepository },
   ],
 })
 export class MasterModule {}
