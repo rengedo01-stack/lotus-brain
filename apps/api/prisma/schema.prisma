@@ -22,6 +22,13 @@ enum ProductSupplyRelationshipStatus {
   DISABLED
 }
 
+// A supplier packaging choice has its own lifecycle. It is neither a global
+// physical Unit nor a statement that the supply relationship itself is active.
+enum ProductSupplierPackageStatus {
+  ACTIVE
+  DISABLED
+}
+
 enum UserStatus {
   ACTIVE
   DISABLED
@@ -295,6 +302,7 @@ model ProductSupplyRelationship {
   product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   orderingTerms ProductSupplierOrderingTerms?
+  packages      ProductSupplierPackage[]
 
   @@unique([productId, supplierId])
   @@index([productId, status])
@@ -317,6 +325,28 @@ model ProductSupplierOrderingTerms {
   updatedAt             DateTime @updatedAt
 
   relationship ProductSupplyRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
+}
+
+// Current, operator-managed supplier packaging for one durable supply
+// relationship. Each package converts directly to the Product inventory unit;
+// package-to-package hierarchy, preferred selection, Purchase integration,
+// and historical snapshots are intentionally outside this master foundation.
+model ProductSupplierPackage {
+  id                          String                       @id @default(cuid())
+  relationshipId              String
+  code                        String
+  name                        String
+  inventoryQuantityPerPackage Decimal                      @db.Decimal(24, 9)
+  isOrderable                 Boolean                      @default(false)
+  status                      ProductSupplierPackageStatus @default(ACTIVE)
+  version                     Int                          @default(1)
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+
+  relationship ProductSupplyRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
+
+  @@unique([relationshipId, code])
+  @@index([relationshipId, status])
 }
 
 model User {
