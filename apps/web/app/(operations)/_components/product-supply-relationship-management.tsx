@@ -17,7 +17,14 @@ import {
   type ProductSupplyRelationshipStatus,
   type ProductSupplyRelationshipSupplierOption,
 } from "@/lib/product-supply-relationships";
-import { Field, FormError, MasterNavigation, SelectInput, WriteAccessRequired } from "./master-ui";
+import {
+  createProductSupplierOrderingTerms,
+  requestProductSupplierOrderingTerms,
+  updateProductSupplierOrderingTerms,
+  validateOrderingTermsQuantity,
+  type ProductSupplierOrderingTermsContext,
+} from "@/lib/product-supplier-ordering-terms";
+import { Field, FormError, MasterNavigation, SelectInput, TextInput, WriteAccessRequired } from "./master-ui";
 import { useOperationalApp } from "./operational-app";
 
 const pageSize = 100;
@@ -34,6 +41,10 @@ type RelationshipDetailState =
 type OptionsState =
   | { status: "loading" }
   | { status: "ready"; products: ProductSupplyRelationshipProductOption[]; suppliers: ProductSupplyRelationshipSupplierOption[] }
+  | { status: "error"; message: string };
+type OrderingTermsState =
+  | { status: "loading" }
+  | { status: "ready"; context: ProductSupplierOrderingTermsContext }
   | { status: "error"; message: string };
 
 function handleProtectedError(error: unknown, refreshAuthentication: () => void): boolean {
@@ -202,7 +213,60 @@ export function ProductSupplyRelationshipDetailPage({ relationshipId }: Readonly
   const parentsActive = relationship.product.status === "ACTIVE" && !relationship.product.isDeleted && relationship.supplier.status === "ACTIVE" && !relationship.supplier.isDeleted;
   const cannotEnable = nextStatus === "ACTIVE" && !parentsActive;
 
-  return <section aria-labelledby="supply-relationship-detail-title" className="max-w-3xl"><MasterNavigation /><Link className="text-sm font-medium text-blue-700 underline-offset-2 hover:underline" href="/master/supply-relationships">← 供給関係一覧</Link><div className="mt-5 rounded-xl bg-white p-6 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-medium text-blue-700">供給関係</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950" id="supply-relationship-detail-title">{relationship.product.name} — {relationship.supplier.name}</h1></div><RelationshipStatusBadge status={relationship.status} /></div><p className="mt-3 text-sm text-slate-700">この関係は、Lotus BRAIN上で管理対象の供給関係かだけを示します。発注可否、価格、納入条件は示しません。</p><dl className="mt-8 grid gap-x-8 gap-y-6 border-t border-slate-200 pt-6 sm:grid-cols-2"><Detail label="商品" value={`${relationship.product.code} — ${relationship.product.name}`} /><Detail label="仕入先" value={`${relationship.supplier.code} — ${relationship.supplier.name}`} /><Detail label="relationship ID" value={relationship.id} mono /><Detail label="version" value={String(relationship.version)} /><Detail label="登録日時" value={formatOperationalDate(relationship.createdAt)} /><Detail label="更新日時" value={formatOperationalDate(relationship.updatedAt)} /></dl>{permissions.has("master.write") && <div className="mt-8 border-t border-slate-200 pt-6"><FormError message={formError} />{cannotEnable && <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">商品または仕入先が有効ではないため、この関係を管理中に戻せません。</p>}<button className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400" disabled={isSubmitting || cannotEnable} onClick={() => void changeStatus(nextStatus)} type="button">{isSubmitting ? "保存しています…" : actionLabel}</button></div>}</div></section>;
+  return <section aria-labelledby="supply-relationship-detail-title" className="max-w-3xl"><MasterNavigation /><Link className="text-sm font-medium text-blue-700 underline-offset-2 hover:underline" href="/master/supply-relationships">← 供給関係一覧</Link><div className="mt-5 rounded-xl bg-white p-6 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-medium text-blue-700">供給関係</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950" id="supply-relationship-detail-title">{relationship.product.name} — {relationship.supplier.name}</h1></div><RelationshipStatusBadge status={relationship.status} /></div><p className="mt-3 text-sm text-slate-700">この関係は、Lotus BRAIN上で管理対象の供給関係かだけを示します。発注可否、価格、納入条件は示しません。</p><dl className="mt-8 grid gap-x-8 gap-y-6 border-t border-slate-200 pt-6 sm:grid-cols-2"><Detail label="商品" value={`${relationship.product.code} — ${relationship.product.name}`} /><Detail label="仕入先" value={`${relationship.supplier.code} — ${relationship.supplier.name}`} /><Detail label="relationship ID" value={relationship.id} mono /><Detail label="version" value={String(relationship.version)} /><Detail label="登録日時" value={formatOperationalDate(relationship.createdAt)} /><Detail label="更新日時" value={formatOperationalDate(relationship.updatedAt)} /></dl>{permissions.has("master.write") && <div className="mt-8 border-t border-slate-200 pt-6"><FormError message={formError} />{cannotEnable && <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">商品または仕入先が有効ではないため、この関係を管理中に戻せません。</p>}<button className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400" disabled={isSubmitting || cannotEnable} onClick={() => void changeStatus(nextStatus)} type="button">{isSubmitting ? "保存しています…" : actionLabel}</button></div>}<OrderingTermsPanel relationshipId={relationship.id} /></div></section>;
+}
+
+function OrderingTermsPanel({ relationshipId }: Readonly<{ relationshipId: string }>) {
+  const { api, permissions, refreshAuthentication } = useOperationalApp();
+  const [state, setState] = useState<OrderingTermsState>({ status: "loading" });
+  const [minimumOrderQuantity, setMinimumOrderQuantity] = useState("");
+  const [orderMultipleQuantity, setOrderMultipleQuantity] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    void requestProductSupplierOrderingTerms(api, relationshipId).then((context) => {
+      if (!active) return;
+      setState({ status: "ready", context });
+      setMinimumOrderQuantity(context.terms?.minimumOrderQuantity ?? "");
+      setOrderMultipleQuantity(context.terms?.orderMultipleQuantity ?? "");
+    }).catch((requestError: unknown) => {
+      if (!active || handleProtectedError(requestError, refreshAuthentication)) return;
+      setState({ status: "error", message: errorMessage(requestError) });
+    });
+    return () => { active = false; };
+  }, [api, refreshAuthentication, relationshipId, retryKey]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (state.status !== "ready" || isSubmitting) return;
+    const minimum = minimumOrderQuantity.trim();
+    const multiple = orderMultipleQuantity.trim();
+    const minimumError = validateOrderingTermsQuantity(minimum);
+    const multipleError = validateOrderingTermsQuantity(multiple);
+    if (minimumError !== null || multipleError !== null) {
+      setError(minimumError ?? multipleError);
+      return;
+    }
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const context = state.context.terms === null
+        ? await createProductSupplierOrderingTerms(api, relationshipId, minimum || null, multiple || null)
+        : await updateProductSupplierOrderingTerms(api, relationshipId, minimum || null, multiple || null, state.context.terms.version);
+      setState({ status: "ready", context });
+      setMinimumOrderQuantity(context.terms?.minimumOrderQuantity ?? "");
+      setOrderMultipleQuantity(context.terms?.orderMultipleQuantity ?? "");
+    } catch (requestError: unknown) {
+      if (!handleProtectedError(requestError, refreshAuthentication)) setError(errorMessage(requestError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return <div className="mt-8 border-t border-slate-200 pt-6"><h2 className="text-xl font-bold text-slate-950">仕入先別発注条件</h2><p className="mt-2 text-sm text-slate-700">数量は商品の在庫単位（inventory unit）で管理します。Supplier固有の梱包・発注単位、価格、発注推奨は扱いません。発注フローにはまだ適用されません。</p>{state.status === "loading" && <p className="mt-4 text-sm text-slate-700" role="status">発注条件を読み込んでいます…</p>}{state.status === "error" && <ErrorPanel message={state.message} onRetry={() => { setState({ status: "loading" }); setRetryKey((value) => value + 1); }} />}{state.status === "ready" && <form className="mt-5 space-y-5 rounded-lg border border-slate-200 bg-slate-50 p-5" noValidate onSubmit={(event) => void submit(event)}><FormError message={error} /><p className="text-sm text-slate-700">在庫単位: <span className="font-medium text-slate-950">{state.context.relationship.product.inventoryUnit.name} ({state.context.relationship.product.inventoryUnit.symbol})</span></p><Field htmlFor="ordering-terms-minimum" label="最小発注数量"><TextInput id="ordering-terms-minimum" inputMode="decimal" onChange={(event) => setMinimumOrderQuantity(event.target.value)} placeholder="未設定" value={minimumOrderQuantity} /></Field><Field htmlFor="ordering-terms-multiple" label="発注倍数"><TextInput id="ordering-terms-multiple" inputMode="decimal" onChange={(event) => setOrderMultipleQuantity(event.target.value)} placeholder="未設定" value={orderMultipleQuantity} /></Field><p className="text-xs text-slate-600">空欄は制約なしです。設定時は0より大きい数量を入力します。倍数の丸めや推奨発注量の計算は行いません。</p>{state.context.terms !== null && <p className="text-xs text-slate-600">条件version: {state.context.terms.version}（更新日時: {formatOperationalDate(state.context.terms.updatedAt)}）</p>}{permissions.has("master.write") ? <button className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-400" disabled={isSubmitting} type="submit">{isSubmitting ? "保存しています…" : state.context.terms === null ? "発注条件を設定" : "発注条件を更新"}</button> : <p className="text-sm text-slate-700">発注条件の編集にはマスター書込権限が必要です。</p>}</form>}</div>;
 }
 
 function Detail({ label, mono = false, value }: Readonly<{ label: string; mono?: boolean; value: string }>) {

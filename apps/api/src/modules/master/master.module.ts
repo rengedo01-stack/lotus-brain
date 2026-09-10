@@ -21,14 +21,25 @@ import {
   UpdateSupplierUseCase,
   UpdateUnitUseCase,
 } from "./application/master.use-cases";
+import {
+  CreateProductSupplierOrderingTermsUseCase,
+  GetProductSupplierOrderingTermsUseCase,
+  ListProductSupplierOrderingTermsUseCase,
+  UpdateProductSupplierOrderingTermsUseCase,
+} from "./application/product-supplier-ordering-terms.use-cases";
 import { PrismaMasterRepository } from "./infrastructure/prisma-master.repository";
+import { PrismaProductSupplierOrderingTermsRepository } from "./infrastructure/prisma-product-supplier-ordering-terms.repository";
 import { MasterController } from "./presentation/master.controller";
 import { ProductSupplyRelationshipController } from "./presentation/product-supply-relationship.controller";
+import { ProductSupplierOrderingTermsController } from "./presentation/product-supplier-ordering-terms.controller";
 import { PrismaModule } from "../../prisma/prisma.module";
+import { PRODUCT_SUPPLIER_ORDERING_TERMS_REPOSITORY } from "./application/product-supplier-ordering-terms.repository";
 
 @Module({
   imports: [PrismaModule],
-  controllers: [MasterController, ProductSupplyRelationshipController],
+  // Register the static /ordering-terms collection route before C8's dynamic
+  // /:id relationship route.
+  controllers: [MasterController, ProductSupplierOrderingTermsController, ProductSupplyRelationshipController],
   providers: [
     CreateProductUseCase,
     CreateProductSupplyRelationshipUseCase,
@@ -49,7 +60,12 @@ import { PrismaModule } from "../../prisma/prisma.module";
     GetSupplierUseCase,
     ListSuppliersUseCase,
     UpdateSupplierUseCase,
+    CreateProductSupplierOrderingTermsUseCase,
+    GetProductSupplierOrderingTermsUseCase,
+    ListProductSupplierOrderingTermsUseCase,
+    UpdateProductSupplierOrderingTermsUseCase,
     { provide: MASTER_REPOSITORY, useClass: PrismaMasterRepository },
+    { provide: PRODUCT_SUPPLIER_ORDERING_TERMS_REPOSITORY, useClass: PrismaProductSupplierOrderingTermsRepository },
   ],
 })
 export class MasterModule {}
