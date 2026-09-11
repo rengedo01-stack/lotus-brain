@@ -44,6 +44,7 @@ if (databaseUrl === undefined) {
 
       const startApp = async () => {
         app = await NestFactory.create(AppModule, { logger: false });
+        app.getHttpAdapter().getInstance().set("trust proxy", 1);
         app.use(cookieParser());
         app.setGlobalPrefix("api/v1");
         app.useGlobalPipes(new ValidationPipe({ forbidNonWhitelisted: true, transform: true, whitelist: true }));
@@ -65,7 +66,8 @@ if (databaseUrl === undefined) {
             status: "ACTIVE",
           },
         });
-        await prisma.inventory.create({ data: { productId: product.id, quantity: "0", averageUnitCost: null } });
+        const initialInventory = await prisma.inventory.create({ data: { productId: product.id, quantity: "0", averageUnitCost: null } });
+        assert.equal(initialInventory.version, 1);
         const supplier = await prisma.supplier.create({
           data: { code: `${fixture}-supplier`, name: "PR-005X supplier", status: "ACTIVE" },
         });
@@ -103,19 +105,30 @@ if (databaseUrl === undefined) {
         };
 
         const baseUrl = await startApp();
+        let requestNumber = 0;
         const request = (path, options = {}) => {
           const method = options.method ?? "GET";
+          requestNumber += 1;
           return fetch(`${baseUrl}/api/v1${path}`, {
             method,
             headers: {
               cookie: `lotus_session=${sessionToken}`,
+              "x-forwarded-for": `127.0.0.${requestNumber}`,
               ...(method === "GET" ? {} : { "x-csrf-token": csrfToken }),
             },
           });
         };
 
         assert.equal((await fetch(`${baseUrl}/api/v1/health`)).status, 200);
+        const draftOnly = await repository.create({
+          supplierId: supplier.id,
+          purchaseDate: "2026-09-03T00:00:00.000Z",
+          documentNumber: `${fixture}-draft-only`,
+          items: [{ productId: product.id, unitId: unit.id, quantity: "2.500000000", unitPrice: "120.000000", taxRate: "0.1" }],
+        });
+        assert.equal(draftOnly.status, "DRAFT");
         const purchase = await createConfirmedPurchase(`${fixture}-success`);
+        assert.equal((await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } })).version, 1);
         assert.equal((await fetch(`${baseUrl}/api/v1/purchases/${purchase.id}/post`, { method: "POST" })).status, 401);
         assert.equal((await fetch(`${baseUrl}/api/v1/purchases/${purchase.id}/post`, {
           method: "POST",
@@ -140,14 +153,28 @@ if (databaseUrl === undefined) {
         const inventory = await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } });
         assert.equal(inventory.quantity.toString(), "2.5");
         assert.equal(inventory.averageUnitCost.toString(), "120");
+        assert.equal(inventory.version, 2);
         assert.equal(await prisma.purchaseLog.count({ where: { purchaseId: purchase.id, toStatus: "POSTED" } }), 1);
 
         assert.equal((await request(`/purchases/${purchase.id}/post`, { method: "POST" })).status, 409);
+        assert.equal((await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } })).version, 2);
         assert.equal(await prisma.priceHistory.count({ where: { sourcePurchaseItemId: sourceItem.id } }), 1);
         assert.equal(await prisma.inventoryHistory.count({ where: { sourcePurchaseItemId: sourceItem.id, type: "RECEIPT" } }), 1);
 
+        const additionalReceipts = [
+          await createConfirmedPurchase(`${fixture}-additional-a`),
+          await createConfirmedPurchase(`${fixture}-additional-b`),
+        ];
+        for (const additionalPurchase of additionalReceipts) {
+          assert.equal((await request(`/purchases/${additionalPurchase.id}/post`, { method: "POST" })).status, 200);
+        }
+        const afterAdditionalReceipts = await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } });
+        assert.equal(afterAdditionalReceipts.quantity.toString(), "7.5");
+        assert.equal(afterAdditionalReceipts.version, 4);
+
         const rollbackPurchase = await createConfirmedPurchase(`${fixture}-rollback`);
         const rollbackItem = await prisma.purchaseItem.findFirstOrThrow({ where: { purchaseId: rollbackPurchase.id } });
+        const beforeRollback = await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } });
         const functionName = `pr005x_purchase_rollback_${Date.now()}`;
         const triggerName = `${functionName}_trigger`;
         await prisma.$executeRawUnsafe(`CREATE FUNCTION "${functionName}"() RETURNS TRIGGER AS $$ BEGIN IF NEW."sourcePurchaseItemId" = '${rollbackItem.id}' THEN RAISE EXCEPTION 'forced purchase posting failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql;`);
@@ -157,6 +184,9 @@ if (databaseUrl === undefined) {
           assert.equal((await prisma.purchase.findUniqueOrThrow({ where: { id: rollbackPurchase.id } })).status, "CONFIRMED");
           assert.equal(await prisma.priceHistory.count({ where: { sourcePurchaseItemId: rollbackItem.id } }), 0);
           assert.equal(await prisma.inventoryHistory.count({ where: { sourcePurchaseItemId: rollbackItem.id } }), 0);
+          const afterRollback = await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } });
+          assert.equal(afterRollback.quantity.toString(), beforeRollback.quantity.toString());
+          assert.equal(afterRollback.version, beforeRollback.version);
         } finally {
           await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${triggerName}" ON "InventoryHistory";`);
           await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${functionName}"();`);

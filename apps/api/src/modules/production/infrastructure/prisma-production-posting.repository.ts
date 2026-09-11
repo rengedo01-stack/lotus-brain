@@ -79,7 +79,10 @@ class PrismaProductionPostingTransaction implements ProductionPostingTransaction
   }
 
   async updateInventory(id: string, quantity: string, averageUnitCost: string | null): Promise<void> {
-    await this.prisma.inventory.update({ where: { id }, data: { quantity, averageUnitCost } });
+    await this.prisma.inventory.update({
+      where: { id },
+      data: { quantity, averageUnitCost, version: { increment: 1 } },
+    });
   }
 
   async createConsumptionHistory(consumptionId: string, inventory: LockedInventory, quantity: string, quantityAfter: string): Promise<void> {
