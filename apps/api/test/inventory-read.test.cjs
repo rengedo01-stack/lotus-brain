@@ -3,8 +3,9 @@ const assert = require("node:assert/strict");
 
 const { InventoryController } = require("../dist/modules/inventory/presentation/inventory.controller.js");
 const { InventoryReadNotFoundError } = require("../dist/modules/inventory/application/inventory-read.errors.js");
+const { ReplenishmentQuantityPreviewNotFoundError } = require("../dist/modules/inventory/application/replenishment-quantity-preview.errors.js");
 const { ListInventoryHistoryUseCase } = require("../dist/modules/inventory/application/inventory-read.use-cases.js");
-const { currentInventoryPageResponseSchema, inventoryHistoryPageResponseSchema, inventorySupplyContextPageResponseSchema } = require("../dist/modules/inventory/presentation/inventory-response.schemas.js");
+const { currentInventoryPageResponseSchema, inventoryHistoryPageResponseSchema, inventorySupplyContextPageResponseSchema, replenishmentQuantityPreviewResponseSchema } = require("../dist/modules/inventory/presentation/inventory-response.schemas.js");
 
 const currentInventory = {
   product: { id: "product-1", code: "P-001", name: "Product", status: "ACTIVE", isDeleted: false },
@@ -19,6 +20,19 @@ const supplyContext = {
   currentQuantity: "123456789.123456789",
   draftPurchaseQuantity: "2.000000000",
   confirmedPurchaseQuantity: "3.000000000",
+};
+const replenishmentPreview = {
+  product: supplyContext.product,
+  inventoryUnit: supplyContext.inventoryUnit,
+  currentQuantity: "5.000000000",
+  reorderPointQuantity: "5.000000000",
+  targetStockQuantity: "12.000000000",
+  draftPurchaseQuantity: "99.000000000",
+  confirmedPurchaseQuantity: "88.000000000",
+  preferredSupplier: { relationshipId: "relationship-1", supplier: { id: "supplier-1", code: "SUP-001", name: "Supplier" }, isEligible: true },
+  orderingTerms: { minimumOrderQuantity: "10.000000000", orderMultipleQuantity: "5.000000000" },
+  preferredPackage: { id: "package-1", code: "CASE", name: "Case", inventoryQuantityPerPackage: "10.000000000", isEligible: true },
+  result: { status: "READY", rawTargetGap: "7", feasibleQuantity: "10", overOrderQuantity: "3", packageCount: "1" },
 };
 
 test("inventory controller returns opaque page cursors and does not add cost or source fields", async () => {
@@ -63,4 +77,34 @@ test("inventory Swagger schemas are strict and disclose no financial or source d
   assert.equal(Object.hasOwn(inventorySupplyContextPageResponseSchema.properties.items.items.properties, "supplier"), false);
   assert.equal(Object.hasOwn(inventorySupplyContextPageResponseSchema.properties.items.items.properties, "price"), false);
   assert.equal(Object.hasOwn(inventorySupplyContextPageResponseSchema.properties.items.items.properties, "availableQuantity"), false);
+  assert.equal(replenishmentQuantityPreviewResponseSchema.additionalProperties, false);
+  assert.deepEqual(Object.keys(replenishmentQuantityPreviewResponseSchema.properties).sort(), ["confirmedPurchaseQuantity", "currentQuantity", "draftPurchaseQuantity", "inventoryUnit", "orderingTerms", "preferredPackage", "preferredSupplier", "product", "reorderPointQuantity", "result", "targetStockQuantity"]);
+  assert.equal(Object.hasOwn(replenishmentQuantityPreviewResponseSchema.properties, "recommendedPurchaseId"), false);
+  assert.equal(Object.hasOwn(replenishmentQuantityPreviewResponseSchema.properties, "price"), false);
+});
+
+test("replenishment quantity preview stays a narrow, response-driven explanation", async () => {
+  const controller = new InventoryController(
+    { execute: async () => ({ items: [], nextCursor: null }) },
+    { execute: async () => ({ currentInventory, items: [], nextCursor: null }) },
+    { execute: async () => ({ items: [], nextCursor: null }) },
+    { execute: async () => ({ items: [], nextCursor: null }) },
+    { execute: async () => replenishmentPreview },
+  );
+  const response = await controller.getReplenishmentQuantityPreview("product-1");
+  assert.deepEqual(response, replenishmentPreview);
+  assert.deepEqual(Object.keys(response).sort(), ["confirmedPurchaseQuantity", "currentQuantity", "draftPurchaseQuantity", "inventoryUnit", "orderingTerms", "preferredPackage", "preferredSupplier", "product", "reorderPointQuantity", "result", "targetStockQuantity"]);
+  assert.deepEqual(Object.keys(response.result).sort(), ["feasibleQuantity", "overOrderQuantity", "packageCount", "rawTargetGap", "status"]);
+  assert.equal(JSON.stringify(response).match(/purchaseId|price|forecast|projected|available/i), null);
+});
+
+test("replenishment quantity preview maps only a missing Product to 404", async () => {
+  const controller = new InventoryController(
+    { execute: async () => ({ items: [], nextCursor: null }) },
+    { execute: async () => ({ currentInventory, items: [], nextCursor: null }) },
+    { execute: async () => ({ items: [], nextCursor: null }) },
+    { execute: async () => ({ items: [], nextCursor: null }) },
+    { execute: async (productId) => { throw new ReplenishmentQuantityPreviewNotFoundError(productId); } },
+  );
+  await assert.rejects(() => controller.getReplenishmentQuantityPreview("missing"), (error) => error?.name === "NotFoundException");
 });

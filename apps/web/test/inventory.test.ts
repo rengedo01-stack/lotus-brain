@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ApiError, createApiClient } from "../lib/api-client.ts";
-import { currentInventoryPath, inventoryHistoryPath, inventoryProductStateLabel, inventorySupplyContextPath, inventoryTransactionLabel, isCurrentInventoryPage, isInventoryHistoryPage, isInventorySupplyContextPage, isReplenishmentCandidatePage, replenishmentCandidatePath, requestInventorySupplyContext, requestReplenishmentCandidates, type InventorySupplyContextApi, type ReplenishmentCandidateApi } from "../lib/inventory.ts";
+import { currentInventoryPath, inventoryHistoryPath, inventoryProductStateLabel, inventorySupplyContextPath, inventoryTransactionLabel, isCurrentInventoryPage, isInventoryHistoryPage, isInventorySupplyContextPage, isReplenishmentCandidatePage, isReplenishmentQuantityPreview, replenishmentCandidatePath, replenishmentQuantityPreviewPath, requestInventorySupplyContext, requestReplenishmentCandidates, requestReplenishmentQuantityPreview, type InventorySupplyContextApi, type ReplenishmentCandidateApi, type ReplenishmentQuantityPreviewApi } from "../lib/inventory.ts";
 
 const current = {
   product: { id: "product-1", code: "P-001", name: "商品", status: "ACTIVE", isDeleted: false },
@@ -30,6 +30,20 @@ const supplyContext = {
 const replenishmentCandidate = {
   ...supplyContext,
   reorderPointQuantity: "5.000000000",
+};
+
+const replenishmentQuantityPreview = {
+  product: supplyContext.product,
+  inventoryUnit: supplyContext.inventoryUnit,
+  currentQuantity: "5.000000000",
+  reorderPointQuantity: "5.000000000",
+  targetStockQuantity: "12.000000000",
+  draftPurchaseQuantity: "100.000000000",
+  confirmedPurchaseQuantity: "200.000000000",
+  preferredSupplier: { relationshipId: "relationship-1", supplier: { id: "supplier-1", code: "SUP-001", name: "仕入先" }, isEligible: true },
+  orderingTerms: { minimumOrderQuantity: "10.000000000", orderMultipleQuantity: "5.000000000" },
+  preferredPackage: { id: "package-1", code: "CASE", name: "ケース", inventoryQuantityPerPackage: "10.000000000", isEligible: true },
+  result: { status: "READY", rawTargetGap: "7", feasibleQuantity: "10", overOrderQuantity: "3", packageCount: "1" },
 };
 
 test("inventory list accepts only its exact documented response and preserves decimal strings", () => {
@@ -69,11 +83,26 @@ test("replenishment candidates accept only the exact observation contract", () =
   assert.equal(isReplenishmentCandidatePage({ ...page, items: [{ ...replenishmentCandidate, product: { ...replenishmentCandidate.product, status: "ACTIVE" } }] }), false);
 });
 
+test("replenishment quantity preview accepts only the documented strict response and never models projected stock", () => {
+  assert.equal(isReplenishmentQuantityPreview(replenishmentQuantityPreview), true);
+  assert.equal(isReplenishmentQuantityPreview({ ...replenishmentQuantityPreview, projectedQuantity: "999" }), false);
+  assert.equal(isReplenishmentQuantityPreview({ ...replenishmentQuantityPreview, currentQuantity: 5 }), false);
+  assert.equal(isReplenishmentQuantityPreview({ ...replenishmentQuantityPreview, preferredSupplier: { ...replenishmentQuantityPreview.preferredSupplier, extra: true } }), false);
+  assert.equal(isReplenishmentQuantityPreview({ ...replenishmentQuantityPreview, orderingTerms: { ...replenishmentQuantityPreview.orderingTerms, orderMultipleQuantity: "0" } }), false);
+  assert.equal(isReplenishmentQuantityPreview({ ...replenishmentQuantityPreview, currentQuantity: "1.0000000000" }), false);
+  assert.equal(isReplenishmentQuantityPreview({ ...replenishmentQuantityPreview, targetStockQuantity: "1000000000000000" }), false);
+  assert.equal(isReplenishmentQuantityPreview({ ...replenishmentQuantityPreview, preferredPackage: { ...replenishmentQuantityPreview.preferredPackage, inventoryQuantityPerPackage: "0" } }), false);
+  assert.equal(isReplenishmentQuantityPreview({ ...replenishmentQuantityPreview, result: { ...replenishmentQuantityPreview.result, packageCount: "1.5" } }), false);
+  assert.equal(isReplenishmentQuantityPreview({ ...replenishmentQuantityPreview, result: { status: "READY", rawTargetGap: "7", feasibleQuantity: null, overOrderQuantity: null, packageCount: null } }), false);
+  assert.equal(isReplenishmentQuantityPreview({ ...replenishmentQuantityPreview, preferredPackage: null, result: { ...replenishmentQuantityPreview.result, packageCount: "1" } }), false);
+});
+
 test("inventory URL construction uses bounded keyset requests and encodes filters", () => {
   assert.equal(currentInventoryPath("P 001", "next+cursor"), "/inventory?limit=50&productCode=P+001&cursor=next%2Bcursor");
   assert.equal(inventoryHistoryPath("product/1", { type: "CONSUMPTION", from: "2026-09-01T00:00:00.000Z", to: "2026-09-08T00:00:00.000Z" }, "cursor"), "/inventory/product%2F1/history?limit=50&type=CONSUMPTION&from=2026-09-01T00%3A00%3A00.000Z&to=2026-09-08T00%3A00%3A00.000Z&cursor=cursor");
   assert.equal(inventorySupplyContextPath("P 001", "next+cursor"), "/inventory/supply-context?limit=50&productCode=P+001&cursor=next%2Bcursor");
   assert.equal(replenishmentCandidatePath("P 001", "next+cursor"), "/inventory/replenishment-candidates?limit=50&productCode=P+001&cursor=next%2Bcursor");
+  assert.equal(replenishmentQuantityPreviewPath("product/1"), "/inventory/product%2F1/replenishment-quantity-preview");
 });
 
 test("inventory supply context requires exact HTTP 200 and the strict response before rendering", async (t) => {
@@ -136,6 +165,39 @@ test("replenishment candidates require exact HTTP 200 and exact JSON before rend
   globalThis.fetch = async () => new Response(JSON.stringify({ items: [replenishmentCandidate], nextCursor: null, extra: true }), { headers: { "content-type": "application/json" } });
   await assert.rejects(
     () => requestReplenishmentCandidates(createApiClient()),
+    (error: unknown) => error instanceof ApiError && error.kind === "server",
+  );
+});
+
+test("replenishment quantity preview requires exact HTTP 200 and exact JSON before it can explain a quantity", async (t) => {
+  const calls: Array<{ path: string; options: unknown }> = [];
+  const api: ReplenishmentQuantityPreviewApi = {
+    async request<T>(path: string, options?: unknown): Promise<T> {
+      calls.push({ path, options });
+      return replenishmentQuantityPreview as T;
+    },
+  };
+  const preview = await requestReplenishmentQuantityPreview(api, "product/1");
+  assert.equal(preview.result.feasibleQuantity, "10");
+  assert.equal(preview.draftPurchaseQuantity, "100.000000000");
+  assert.deepEqual(calls, [{ path: "/inventory/product%2F1/replenishment-quantity-preview", options: { expectedStatus: 200 } }]);
+
+  const originalBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  const originalFetch = globalThis.fetch;
+  process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
+  t.after(() => { process.env.NEXT_PUBLIC_API_BASE_URL = originalBaseUrl; globalThis.fetch = originalFetch; });
+  for (const status of [201, 202, 204]) {
+    globalThis.fetch = async () => status === 204
+      ? new Response(null, { status })
+      : new Response(JSON.stringify(replenishmentQuantityPreview), { status, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => requestReplenishmentQuantityPreview(createApiClient(), "product-1"),
+      (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === status,
+    );
+  }
+  globalThis.fetch = async () => new Response(JSON.stringify({ ...replenishmentQuantityPreview, extra: true }), { headers: { "content-type": "application/json" } });
+  await assert.rejects(
+    () => requestReplenishmentQuantityPreview(createApiClient(), "product-1"),
     (error: unknown) => error instanceof ApiError && error.kind === "server",
   );
 });
