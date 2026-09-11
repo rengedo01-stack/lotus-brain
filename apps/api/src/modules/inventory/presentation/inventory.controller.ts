@@ -1,14 +1,16 @@
 import { BadRequestException, Controller, Get, Header, NotFoundException, Param, Query } from "@nestjs/common";
-import { ApiCookieAuth, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from "@nestjs/swagger";
+import { ApiCookieAuth, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import type { InventoryTransactionType } from "../../../generated/prisma/client";
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
 import { InventoryReadNotFoundError } from "../application/inventory-read.errors";
 import { ListCurrentInventoryUseCase, ListInventoryHistoryUseCase, ListInventorySupplyContextUseCase, ListReplenishmentCandidatesUseCase } from "../application/inventory-read.use-cases";
+import { GetReplenishmentQuantityPreviewUseCase } from "../application/replenishment-quantity-preview.use-case";
+import { ReplenishmentQuantityPreviewNotFoundError } from "../application/replenishment-quantity-preview.errors";
 import type { CurrentInventoryCursor, InventoryHistoryCursor } from "../application/inventory-read.repository";
 import { ListCurrentInventoryQueryDto } from "./dto/list-current-inventory-query.dto";
 import { ListInventoryHistoryQueryDto } from "./dto/list-inventory-history-query.dto";
-import { currentInventoryPageResponseSchema, inventoryHistoryPageResponseSchema, inventorySupplyContextPageResponseSchema, replenishmentCandidatePageResponseSchema } from "./inventory-response.schemas";
+import { currentInventoryPageResponseSchema, inventoryHistoryPageResponseSchema, inventorySupplyContextPageResponseSchema, replenishmentCandidatePageResponseSchema, replenishmentQuantityPreviewResponseSchema } from "./inventory-response.schemas";
 
 type CurrentCursorPayload = { v: 1; productCode: string; productId: string; filterProductCode: string | null };
 type HistoryCursorPayload = {
@@ -29,6 +31,7 @@ export class InventoryController {
     private readonly listInventoryHistoryUseCase: ListInventoryHistoryUseCase,
     private readonly listInventorySupplyContextUseCase: ListInventorySupplyContextUseCase,
     private readonly listReplenishmentCandidatesUseCase: ListReplenishmentCandidatesUseCase,
+    private readonly getReplenishmentQuantityPreviewUseCase: GetReplenishmentQuantityPreviewUseCase,
   ) {}
 
   @Get()
@@ -88,6 +91,23 @@ export class InventoryController {
       items: page.items,
       nextCursor: page.nextCursor === null ? null : this.encodeCurrentCursor(page.nextCursor, query.productCode),
     };
+  }
+
+  @Get(":productId/replenishment-quantity-preview")
+  @Header("Cache-Control", "private, no-store")
+  @RequirePermissions(Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ)
+  @ApiOperation({ summary: "Explain the current exact replenishment quantity constraints for one product" })
+  @ApiOkResponse({ description: "A read-only replenishment quantity preview was returned.", schema: replenishmentQuantityPreviewResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "inventory.read, purchase.read, and master.read are all required." })
+  @ApiNotFoundResponse({ description: "The Product does not exist." })
+  async getReplenishmentQuantityPreview(@Param("productId") productId: string) {
+    try {
+      return await this.getReplenishmentQuantityPreviewUseCase.execute(productId);
+    } catch (error: unknown) {
+      if (error instanceof ReplenishmentQuantityPreviewNotFoundError) throw new NotFoundException(error.message);
+      throw error;
+    }
   }
 
   @Get(":productId/history")
