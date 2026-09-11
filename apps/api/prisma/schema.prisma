@@ -761,6 +761,9 @@ model Inventory {
   productId       String   @unique
   // Current quantity is expressed in Product.inventoryUnit.
   quantity        Decimal  @default(0) @db.Decimal(24, 9)
+  // Monotonic aggregate revision for authoritative quantity writes. This is
+  // intentionally distinct from InventoryHistory and from updatedAt.
+  version         Int      @default(1)
   // Per inventory unit. NULL represents inventory that has never received a
   // valued receipt; a zero quantity retains its last known average cost.
   averageUnitCost Decimal? @db.Decimal(20, 6)

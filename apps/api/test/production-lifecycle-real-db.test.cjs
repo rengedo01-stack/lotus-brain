@@ -123,6 +123,8 @@ if (databaseUrl === undefined) {
           { productId: output.id, quantity: "0", averageUnitCost: null },
           { productId: ingredient.id, quantity: "100000", averageUnitCost: "2.000000" },
         ] });
+        const initialInventories = await prisma.inventory.findMany({ where: { productId: { in: [output.id, ingredient.id] } } });
+        assert.deepEqual(initialInventories.map((inventory) => inventory.version).sort(), [1, 1]);
         const activeRecipeId = await createRecipe("ACTIVE");
         const draftRecipeId = await createRecipe("DRAFT");
 
@@ -230,6 +232,8 @@ if (databaseUrl === undefined) {
         assert.equal(posted.outputInventoryHistory.quantityDelta.toString(), "3000");
         assert.equal(posted.consumptions[0].conversionFactorSnapshot.toString(), "1000");
         assert.equal(posted.consumptions[0].inventoryQuantity.toString(), "1500");
+        const afterFirstPost = await prisma.inventory.findMany({ where: { productId: { in: [output.id, ingredient.id] } } });
+        assert.deepEqual(afterFirstPost.map((inventory) => inventory.version).sort(), [2, 2]);
         assert.equal((await request(`/productions/${created.body.id}/post`, { method: "POST", body: { actualQuantity: "3" } })).status, 409);
 
         await app.close();
@@ -245,6 +249,8 @@ if (databaseUrl === undefined) {
           { sourceProductionId: concurrent.id },
           { sourceProductionConsumption: { productionId: concurrent.id } },
         ] } }), 2);
+        const afterConcurrentPost = await prisma.inventory.findMany({ where: { productId: { in: [output.id, ingredient.id] } } });
+        assert.deepEqual(afterConcurrentPost.map((inventory) => inventory.version).sort(), [3, 3]);
 
         const race = await json(await request("/productions", {
           method: "POST",
@@ -286,12 +292,15 @@ if (databaseUrl === undefined) {
         await prisma.$executeRawUnsafe(`CREATE FUNCTION "${postFunctionName}"() RETURNS TRIGGER AS $$ BEGIN IF NEW."sourceProductionId" = '${postRollback.id}' THEN RAISE EXCEPTION 'forced production posting failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql;`);
         await prisma.$executeRawUnsafe(`CREATE TRIGGER "${postTriggerName}" BEFORE INSERT ON "InventoryHistory" FOR EACH ROW EXECUTE FUNCTION "${postFunctionName}"();`);
         try {
+          const beforePostRollback = await prisma.inventory.findMany({ where: { productId: { in: [output.id, ingredient.id] } }, orderBy: { productId: "asc" } });
           assert.equal((await request(`/productions/${postRollback.id}/post`, { method: "POST", body: { actualQuantity: "2" } })).status, 500);
           assert.equal((await prisma.production.findUniqueOrThrow({ where: { id: postRollback.id } })).status, "CONFIRMED");
           assert.equal(await prisma.inventoryHistory.count({ where: { OR: [
             { sourceProductionId: postRollback.id },
             { sourceProductionConsumption: { productionId: postRollback.id } },
           ] } }), 0);
+          const afterPostRollback = await prisma.inventory.findMany({ where: { productId: { in: [output.id, ingredient.id] } }, orderBy: { productId: "asc" } });
+          assert.deepEqual(afterPostRollback.map((inventory) => ({ quantity: inventory.quantity.toString(), version: inventory.version })), beforePostRollback.map((inventory) => ({ quantity: inventory.quantity.toString(), version: inventory.version })));
         } finally {
           await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${postTriggerName}" ON "InventoryHistory";`);
           await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${postFunctionName}"();`);

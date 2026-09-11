@@ -179,7 +179,11 @@ class PrismaPurchasePostingTransaction implements PurchasePostingTransaction {
 
     const inventory = await this.prisma.inventory.update({
       where: { id: lockedInventory.id },
-      data: { quantity: nextQuantity, averageUnitCost: nextAverageUnitCost },
+      data: {
+        quantity: nextQuantity,
+        averageUnitCost: nextAverageUnitCost,
+        version: { increment: 1 },
+      },
       select: { id: true, quantity: true },
     });
 

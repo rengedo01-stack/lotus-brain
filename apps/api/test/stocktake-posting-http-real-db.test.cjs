@@ -59,7 +59,8 @@ if (databaseUrl === undefined) {
         const product = await prisma.product.create({
           data: { code: `${fixture}-product`, name: "PR-005Y product", baseUnitId: unit.id, inventoryUnitId: unit.id, status: "ACTIVE" },
         });
-        await prisma.inventory.create({ data: { productId: product.id, quantity: "10.000000000", averageUnitCost: "100.000000" } });
+        const initialInventory = await prisma.inventory.create({ data: { productId: product.id, quantity: "10.000000000", averageUnitCost: "100.000000" } });
+        assert.equal(initialInventory.version, 1);
 
         const user = await prisma.user.create({
           data: { email: `${fixture}@example.test`, displayName: "PR-005Y stocktake tester", passwordHash: "not-used" },
@@ -88,6 +89,7 @@ if (databaseUrl === undefined) {
         const confirmed = await repository.confirm(draft.id);
         assert.notEqual(confirmed, "NOT_FOUND");
         assert.notEqual(confirmed, "CONFLICT");
+        assert.equal((await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } })).version, 1);
 
         const baseUrl = await startApp();
         const request = (path, options = {}) => {
@@ -125,8 +127,10 @@ if (databaseUrl === undefined) {
         assert.equal(await prisma.inventoryHistory.count({ where: { sourceInventoryAdjustmentItem: { adjustmentId: adjustment.id }, type: "STOCKTAKE_ADJUSTMENT" } }), 1);
         const inventory = await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } });
         assert.equal(inventory.quantity.toString(), "12.345678901");
+        assert.equal(inventory.version, 2);
 
         assert.equal((await request(`/stocktakes/${draft.id}/post`, { method: "POST" })).status, 409);
+        assert.equal((await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } })).version, 2);
         assert.equal(await prisma.inventoryAdjustment.count({ where: { stocktakeId: draft.id } }), 1);
       } finally {
         await app?.close();

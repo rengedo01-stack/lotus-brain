@@ -410,7 +410,7 @@ class PrismaStocktakePostingTransaction implements StocktakePostingTransaction {
     for (const update of updates) {
       await this.prisma.inventory.update({
         where: { id: update.inventoryId },
-        data: { quantity: update.quantity },
+        data: { quantity: update.quantity, version: { increment: 1 } },
       });
     }
   }

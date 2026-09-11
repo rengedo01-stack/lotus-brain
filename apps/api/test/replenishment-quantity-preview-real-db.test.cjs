@@ -155,6 +155,7 @@ if (databaseUrl === undefined) {
         }), { isolationLevel: "RepeatableRead" });
         assert.equal(after.purchaseCount, before.purchaseCount);
         assert.equal(after.inventory.quantity.toString(), before.inventory.quantity.toString());
+        assert.equal(after.inventory.version, before.inventory.version);
         assert.equal(after.inventory.updatedAt.toISOString(), before.inventory.updatedAt.toISOString());
         assert.equal(after.policy.version, before.policy.version);
         assert.equal(after.policy.updatedAt.toISOString(), before.policy.updatedAt.toISOString());
@@ -184,7 +185,7 @@ if (databaseUrl === undefined) {
         try {
           await prisma.$transaction(async (tx) => {
             const first = await tx.inventory.findUniqueOrThrow({ where: { productId: constrained.product.id } });
-            await concurrentWriter.query('UPDATE "Inventory" SET "quantity" = $1 WHERE "productId" = $2', ["6", constrained.product.id]);
+            await concurrentWriter.query('UPDATE "Inventory" SET "quantity" = $1, "version" = "version" + 1 WHERE "productId" = $2', ["6", constrained.product.id]);
             const second = await tx.inventory.findUniqueOrThrow({ where: { productId: constrained.product.id } });
             assert.equal(second.quantity.toString(), first.quantity.toString());
           }, { isolationLevel: "RepeatableRead" });
