@@ -20,6 +20,7 @@ export type OperationalPermissionCode =
   | "master.read"
   | "master.write"
   | "inventory.read"
+  | "replenishment.manage"
   | "purchase.read"
   | "purchase.write"
   | "purchase.confirm"
@@ -44,6 +45,7 @@ const KNOWN_OPERATIONAL_PERMISSION_CODES = new Set<OperationalPermissionCode>([
   "master.read",
   "master.write",
   "inventory.read",
+  "replenishment.manage",
   "purchase.read",
   "purchase.write",
   "purchase.confirm",

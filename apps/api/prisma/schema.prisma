@@ -29,6 +29,15 @@ enum ProductSupplierPackageStatus {
   DISABLED
 }
 
+// A replenishment recommendation has an immutable calculation snapshot and a
+// separate, operator-managed disposition.  Its freshness is intentionally not
+// persisted: it is derived from the current authoritative input state.
+enum ReplenishmentRecommendationDisposition {
+  ACTIVE
+  SUPERSEDED
+  DISMISSED
+}
+
 enum UserStatus {
   ACTIVE
   DISABLED
@@ -218,6 +227,7 @@ model Product {
   supplyRelationships       ProductSupplyRelationship[]
   supplyPreference          ProductSupplyPreference?
   replenishmentPolicy       ReplenishmentPolicy?
+  replenishmentRecommendations ReplenishmentRecommendation[]
   priceMasters              PriceMaster[]
   inventory                 Inventory?
   purchaseItems             PurchaseItem[]              @relation("PurchaseItemProductInventoryUnit")
@@ -253,6 +263,77 @@ model ReplenishmentPolicy {
   updatedAt            DateTime @updatedAt
 
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+}
+
+// An immutable, one-Product calculation snapshot created only from a READY
+// replenishment preview.  Current preference rows remain mutable and may be
+// cleared, so all selection identifiers and versions are deliberately scalar
+// snapshots rather than foreign keys to those current-state records.
+model ReplenishmentRecommendation {
+  id                                   String                               @id @default(cuid())
+  productId                            String
+  disposition                          ReplenishmentRecommendationDisposition @default(ACTIVE)
+  // Disposition changes use this optimistic revision.  It is distinct from
+  // every captured current-state version below.
+  version                              Int                                  @default(1)
+  calculationPolicyVersion             Int
+
+  productCodeSnapshot                  String
+  productNameSnapshot                  String
+  inventoryUnitCodeSnapshot            String
+  inventoryUnitNameSnapshot            String
+  inventoryUnitSymbolSnapshot          String
+  inventoryQuantitySnapshot            Decimal                              @db.Decimal(24, 9)
+  inventoryVersionSnapshot             Int
+  replenishmentPolicyIdSnapshot        String
+  replenishmentPolicyVersionSnapshot   Int
+  reorderPointQuantitySnapshot         Decimal                              @db.Decimal(24, 9)
+  targetStockQuantitySnapshot          Decimal                              @db.Decimal(24, 9)
+
+  supplierPreferenceIdSnapshot         String
+  supplierPreferenceVersionSnapshot    Int
+  relationshipIdSnapshot               String
+  relationshipVersionSnapshot          Int
+  supplierIdSnapshot                   String
+  supplierCodeSnapshot                 String
+  supplierNameSnapshot                 String
+
+  orderingTermsIdSnapshot              String?
+  orderingTermsVersionSnapshot         Int?
+  minimumOrderQuantitySnapshot         Decimal?                             @db.Decimal(24, 9)
+  orderMultipleQuantitySnapshot        Decimal?                             @db.Decimal(24, 9)
+
+  packagePreferenceIdSnapshot          String?
+  packagePreferenceVersionSnapshot     Int?
+  packageIdSnapshot                    String?
+  packageVersionSnapshot               Int?
+  packageCodeSnapshot                  String?
+  packageNameSnapshot                  String?
+  packageQuantitySnapshot              Decimal?                             @db.Decimal(24, 9)
+
+  // These purchase quantities are preserved as C14 reference facts only.
+  // They never participate in the quantity solver or freshness predicate.
+  draftPurchaseQuantitySnapshot        Decimal                              @db.Decimal(24, 9)
+  confirmedPurchaseQuantitySnapshot    Decimal                              @db.Decimal(24, 9)
+  rawTargetGapSnapshot                 Decimal                              @db.Decimal(24, 9)
+  feasibleQuantitySnapshot             Decimal                              @db.Decimal(24, 9)
+  overOrderQuantitySnapshot            Decimal                              @db.Decimal(24, 9)
+  packageCountSnapshot                 String?
+
+  createdByUserId                      String
+  createdAt                            DateTime                             @default(now())
+  supersededByUserId                   String?
+  supersededAt                         DateTime?
+  dismissedByUserId                    String?
+  dismissedAt                          DateTime?
+
+  product          Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdByUser    User    @relation("ReplenishmentRecommendationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  supersededByUser User?   @relation("ReplenishmentRecommendationSupersededBy", fields: [supersededByUserId], references: [id], onDelete: Restrict)
+  dismissedByUser  User?   @relation("ReplenishmentRecommendationDismissedBy", fields: [dismissedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([productId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([disposition, createdAt(sort: Desc), id(sort: Desc)])
 }
 
 model ProductUnitConversion {
@@ -411,6 +492,9 @@ model User {
   webAuthnRegistrationChallenges WebAuthnRegistrationChallenge[]
   webAuthnStepUpChallenges       WebAuthnStepUpChallenge[]
   passkeyMfaLoginTransactions    PasskeyMfaLoginTransaction[]
+  replenishmentRecommendationsCreated    ReplenishmentRecommendation[] @relation("ReplenishmentRecommendationCreatedBy")
+  replenishmentRecommendationsSuperseded ReplenishmentRecommendation[] @relation("ReplenishmentRecommendationSupersededBy")
+  replenishmentRecommendationsDismissed  ReplenishmentRecommendation[] @relation("ReplenishmentRecommendationDismissedBy")
 
   @@index([status, deletedAt])
 }

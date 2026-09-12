@@ -21,6 +21,7 @@ const { RecipeController } = require("../dist/modules/recipe/presentation/recipe
 const { StocktakeController } = require("../dist/modules/stocktake/presentation/stocktake.controller.js");
 const { InventoryController } = require("../dist/modules/inventory/presentation/inventory.controller.js");
 const { ReplenishmentPolicyController } = require("../dist/modules/replenishment/presentation/replenishment-policy.controller.js");
+const { ReplenishmentRecommendationController } = require("../dist/modules/replenishment/presentation/replenishment-recommendation.controller.js");
 const { AuthController } = require("../dist/modules/auth/presentation/auth.controller.js");
 const {
   hashSecret,
@@ -422,7 +423,7 @@ test("permission registry is fixed and RequirePermissions rejects unknown codes"
   assert.deepEqual(ALL_PERMISSION_CODES, [
     "authorization.read", "authorization.manage",
     "identity.read", "identity.manage",
-    "master.read", "master.write", "inventory.read", "purchase.read", "purchase.write", "purchase.confirm", "purchase.post",
+    "master.read", "master.write", "inventory.read", "replenishment.manage", "purchase.read", "purchase.write", "purchase.confirm", "purchase.post",
     "production.read", "production.write", "production.confirm", "production.post",
     "stocktake.read", "stocktake.write", "stocktake.confirm", "stocktake.post",
   ]);
@@ -530,6 +531,19 @@ test("every existing business endpoint has the exact required permission", () =>
     [Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ],
     "InventoryController.listReplenishmentCandidates",
   );
+
+  assert.deepEqual(
+    Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ReplenishmentRecommendationController.prototype.getActive),
+    [Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ],
+    "ReplenishmentRecommendationController.getActive",
+  );
+  for (const methodName of ["recalculate", "dismiss"]) {
+    assert.deepEqual(
+      Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ReplenishmentRecommendationController.prototype[methodName]),
+      [Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ, Permissions.REPLENISHMENT_MANAGE],
+      `ReplenishmentRecommendationController.${methodName}`,
+    );
+  }
 
   for (const methodName of ["me", "permissions", "csrf", "logout"]) {
     assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, AuthController.prototype[methodName]), true);
