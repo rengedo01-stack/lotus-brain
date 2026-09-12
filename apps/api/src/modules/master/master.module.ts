@@ -28,6 +28,12 @@ import {
   UpdateProductSupplierOrderingTermsUseCase,
 } from "./application/product-supplier-ordering-terms.use-cases";
 import {
+  ClearProductSupplierCommercialTermsUseCase,
+  CreateProductSupplierCommercialTermsUseCase,
+  GetProductSupplierCommercialTermsUseCase,
+  UpdateProductSupplierCommercialTermsUseCase,
+} from "./application/product-supplier-commercial-terms.use-cases";
+import {
   CreateProductSupplierPackageUseCase,
   GetProductSupplierPackageUseCase,
   ListProductSupplierPackagesUseCase,
@@ -35,13 +41,16 @@ import {
 } from "./application/product-supplier-package.use-cases";
 import { PrismaMasterRepository } from "./infrastructure/prisma-master.repository";
 import { PrismaProductSupplierOrderingTermsRepository } from "./infrastructure/prisma-product-supplier-ordering-terms.repository";
+import { PrismaProductSupplierCommercialTermsRepository } from "./infrastructure/prisma-product-supplier-commercial-terms.repository";
 import { PrismaProductSupplierPackageRepository } from "./infrastructure/prisma-product-supplier-package.repository";
 import { MasterController } from "./presentation/master.controller";
 import { ProductSupplyRelationshipController } from "./presentation/product-supply-relationship.controller";
 import { ProductSupplierOrderingTermsController } from "./presentation/product-supplier-ordering-terms.controller";
+import { ProductSupplierCommercialTermsController } from "./presentation/product-supplier-commercial-terms.controller";
 import { ProductSupplierPackageController } from "./presentation/product-supplier-package.controller";
 import { PrismaModule } from "../../prisma/prisma.module";
 import { PRODUCT_SUPPLIER_ORDERING_TERMS_REPOSITORY } from "./application/product-supplier-ordering-terms.repository";
+import { PRODUCT_SUPPLIER_COMMERCIAL_TERMS_REPOSITORY } from "./application/product-supplier-commercial-terms.repository";
 import { PRODUCT_SUPPLIER_PACKAGE_REPOSITORY } from "./application/product-supplier-package.repository";
 import { PRODUCT_SUPPLY_PREFERENCE_REPOSITORY } from "./application/product-supply-preference.repository";
 import { ProductSupplyPreferenceUseCases } from "./application/product-supply-preference.use-cases";
@@ -52,7 +61,7 @@ import { ProductSupplyPreferenceController } from "./presentation/product-supply
   imports: [PrismaModule],
   // Register the static /ordering-terms collection route before C8's dynamic
   // /:id relationship route.
-  controllers: [MasterController, ProductSupplyPreferenceController, ProductSupplierOrderingTermsController, ProductSupplierPackageController, ProductSupplyRelationshipController],
+  controllers: [MasterController, ProductSupplyPreferenceController, ProductSupplierOrderingTermsController, ProductSupplierCommercialTermsController, ProductSupplierPackageController, ProductSupplyRelationshipController],
   providers: [
     CreateProductUseCase,
     CreateProductSupplyRelationshipUseCase,
@@ -77,6 +86,10 @@ import { ProductSupplyPreferenceController } from "./presentation/product-supply
     GetProductSupplierOrderingTermsUseCase,
     ListProductSupplierOrderingTermsUseCase,
     UpdateProductSupplierOrderingTermsUseCase,
+    CreateProductSupplierCommercialTermsUseCase,
+    GetProductSupplierCommercialTermsUseCase,
+    UpdateProductSupplierCommercialTermsUseCase,
+    ClearProductSupplierCommercialTermsUseCase,
     CreateProductSupplierPackageUseCase,
     GetProductSupplierPackageUseCase,
     ListProductSupplierPackagesUseCase,
@@ -84,6 +97,7 @@ import { ProductSupplyPreferenceController } from "./presentation/product-supply
     ProductSupplyPreferenceUseCases,
     { provide: MASTER_REPOSITORY, useClass: PrismaMasterRepository },
     { provide: PRODUCT_SUPPLIER_ORDERING_TERMS_REPOSITORY, useClass: PrismaProductSupplierOrderingTermsRepository },
+    { provide: PRODUCT_SUPPLIER_COMMERCIAL_TERMS_REPOSITORY, useClass: PrismaProductSupplierCommercialTermsRepository },
     { provide: PRODUCT_SUPPLIER_PACKAGE_REPOSITORY, useClass: PrismaProductSupplierPackageRepository },
     { provide: PRODUCT_SUPPLY_PREFERENCE_REPOSITORY, useClass: PrismaProductSupplyPreferenceRepository },
   ],

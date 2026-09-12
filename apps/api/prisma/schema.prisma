@@ -384,6 +384,7 @@ model ProductSupplyRelationship {
   product           Product                           @relation(fields: [productId], references: [id], onDelete: Restrict)
   supplier          Supplier                          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   orderingTerms     ProductSupplierOrderingTerms?
+  commercialTerms   ProductSupplierCommercialTerms?
   packages          ProductSupplierPackage[]
   preference        ProductSupplyPreference?
   packagePreference ProductSupplierPackagePreference?
@@ -421,6 +422,24 @@ model ProductSupplierOrderingTerms {
   version               Int      @default(1)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+
+  relationship ProductSupplyRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
+}
+
+// Current, operator-managed commercial authority for one durable supply
+// relationship. Values are explicitly JPY and tax-exclusive per Product
+// inventory unit. This is deliberately distinct from PriceMaster, which
+// records observed POSTED Purchase prices rather than pre-purchase authority.
+// A missing row means commercial authority has not been configured.
+model ProductSupplierCommercialTerms {
+  id             String   @id @default(cuid())
+  relationshipId String   @unique
+  unitPrice      Decimal  @db.Decimal(20, 6)
+  currencyCode   String   @db.Char(3)
+  taxRate        Decimal  @db.Decimal(5, 4)
+  version        Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   relationship ProductSupplyRelationship @relation(fields: [relationshipId], references: [id], onDelete: Restrict)
 }
