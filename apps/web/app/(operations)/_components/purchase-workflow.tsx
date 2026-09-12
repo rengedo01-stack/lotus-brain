@@ -10,13 +10,16 @@ import {
   formatPurchaseDate,
   formatPurchaseTimestamp,
   isAmbiguousPurchasePostingError,
-  isPurchase,
+  confirmPurchaseDraft,
+  createPurchaseDraft,
   requestPurchaseList,
+  requestPurchaseDetail,
   requestPurchasePosting,
   PURCHASE_STATUSES,
   purchaseFormFromPurchase,
   purchasePayload,
   purchaseStatusLabel,
+  updatePurchaseDraft,
   validatePurchaseForm,
   type Purchase,
   type PurchaseFieldErrors,
@@ -106,9 +109,7 @@ function usePurchaseMasters(shouldLoad: boolean): { retry(): void; state: Master
 }
 
 async function requestPurchase(api: ApiClient, purchaseId: string): Promise<Purchase> {
-  const payload = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}`);
-  if (!isPurchase(payload)) throw new ApiError("server");
-  return payload;
+  return requestPurchaseDetail(api, purchaseId);
 }
 
 export function PurchaseWorkspacePage() {
@@ -313,8 +314,7 @@ export function PurchaseCreatePage() {
     if (Object.keys(nextErrors).length > 0 || isSubmitting) return;
     setIsSubmitting(true);
     try {
-      const created = await api.request<unknown>("/purchases", { method: "POST", body: purchasePayload(values) });
-      if (!isPurchase(created)) throw new ApiError("server");
+      const created = await createPurchaseDraft(api, purchasePayload(values));
       router.replace(`/purchases/${encodeURIComponent(created.id)}`);
     } catch (error: unknown) {
       if (!protectedPurchaseError(error, refreshAuthentication)) setFormError(purchaseErrorMessage(error));
@@ -398,8 +398,7 @@ export function PurchaseEditPage({ purchaseId }: Readonly<{ purchaseId: string }
     if (Object.keys(nextErrors).length > 0 || isSubmitting) return;
     setIsSubmitting(true);
     try {
-      const updated = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}`, { method: "PATCH", body: purchasePayload(values) });
-      if (!isPurchase(updated)) throw new ApiError("server");
+      const updated = await updatePurchaseDraft(api, purchaseId, purchasePayload(values));
       router.replace(`/purchases/${encodeURIComponent(updated.id)}`);
     } catch (error: unknown) {
       if (!protectedPurchaseError(error, refreshAuthentication)) setFormError(purchaseErrorMessage(error));
@@ -468,12 +467,10 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
     setAction("confirm");
     setActionError(null);
     try {
-      const latest = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}`);
-      if (!isPurchase(latest)) throw new ApiError("server");
+      const latest = await requestPurchaseDetail(api, purchaseId);
       setState({ status: "ready", purchase: latest });
       if (latest.status !== "DRAFT") return;
-      const confirmed = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}/confirm`, { method: "POST" });
-      if (!isPurchase(confirmed)) throw new ApiError("server");
+      const confirmed = await confirmPurchaseDraft(api, purchaseId);
       setState({ status: "ready", purchase: confirmed });
     } catch (error: unknown) {
       if (!protectedPurchaseError(error, refreshAuthentication)) setActionError(purchaseErrorMessage(error));
