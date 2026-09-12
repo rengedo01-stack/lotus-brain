@@ -66,6 +66,7 @@ export type PostedPurchaseResult = {
 
 export type PurchasePostingApi = Pick<ApiClient, "request">;
 export type PurchaseListApi = Pick<ApiClient, "request">;
+export type PurchaseDraftApi = Pick<ApiClient, "request">;
 
 export type PurchaseLineFormValues = {
   productId: string;
@@ -92,6 +93,9 @@ const POSTED_PURCHASE_RESULT_KEYS = ["id", "status", "postedAt"] as const;
 const PURCHASE_LIST_ITEM_KEYS = ["id", "status", "purchaseDate", "documentNumber", "postedAt", "cancelledAt", "supplier"] as const;
 const PURCHASE_LIST_SUPPLIER_KEYS = ["code", "name"] as const;
 const PURCHASE_LIST_PAGE_KEYS = ["items", "nextCursor"] as const;
+const PURCHASE_KEYS = ["id", "supplier", "status", "purchaseDate", "documentNumber", "note", "subtotal", "tax", "total", "postedAt", "createdAt", "updatedAt", "items"] as const;
+const PURCHASE_SUPPLIER_KEYS = ["id", "code", "name"] as const;
+const PURCHASE_ITEM_KEYS = ["id", "lineNumber", "productId", "unitId", "quantity", "unitPrice", "taxRate", "lineAmount"] as const;
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -121,44 +125,87 @@ function isPurchaseStatus(value: unknown): value is PurchaseStatus {
   return PURCHASE_STATUSES.includes(value as PurchaseStatus);
 }
 
+function isDecimal(value: unknown, maximumIntegerDigits: number, maximumFractionDigits: number): value is string {
+  return typeof value === "string"
+    && new RegExp(`^(?:0|[1-9]\\d{0,${maximumIntegerDigits - 1}})(?:\\.\\d{1,${maximumFractionDigits}})?$`).test(value);
+}
+
+function isPositiveDecimal(value: unknown, maximumIntegerDigits: number, maximumFractionDigits: number): value is string {
+  return isDecimal(value, maximumIntegerDigits, maximumFractionDigits) && !/^0(?:\.0+)?$/.test(value);
+}
+
+function isTaxRate(value: unknown): value is string {
+  if (!isDecimal(value, 1, 4)) return false;
+  const [integer, fraction = ""] = value.split(".");
+  return integer === "0" || (integer === "1" && /^0*$/.test(fraction));
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
 function isPurchaseItem(value: unknown): value is PurchaseItem {
-  if (typeof value !== "object" || value === null) return false;
-  const item = value as Record<string, unknown>;
+  if (!isRecord(value) || !hasExactlyKeys(value, PURCHASE_ITEM_KEYS)) return false;
+  const item = value;
   return (
-    isString(item.id) &&
-    typeof item.lineNumber === "number" &&
-    isString(item.productId) &&
-    isString(item.unitId) &&
-    isString(item.quantity) &&
-    isString(item.unitPrice) &&
-    isString(item.taxRate) &&
-    isString(item.lineAmount)
+    isNonEmptyString(item.id) &&
+    isPositiveInteger(item.lineNumber) &&
+    isNonEmptyString(item.productId) &&
+    isNonEmptyString(item.unitId) &&
+    isPositiveDecimal(item.quantity, 15, 9) &&
+    isDecimal(item.unitPrice, 14, 6) &&
+    isTaxRate(item.taxRate) &&
+    isDecimal(item.lineAmount, 14, 6)
   );
 }
 
 export function isPurchase(value: unknown): value is Purchase {
-  if (typeof value !== "object" || value === null) return false;
-  const purchase = value as Record<string, unknown>;
-  if (typeof purchase.supplier !== "object" || purchase.supplier === null) return false;
-  const supplier = purchase.supplier as Record<string, unknown>;
+  if (!isRecord(value) || !hasExactlyKeys(value, PURCHASE_KEYS)) return false;
+  const purchase = value;
+  if (!isRecord(purchase.supplier) || !hasExactlyKeys(purchase.supplier, PURCHASE_SUPPLIER_KEYS)) return false;
+  const supplier = purchase.supplier;
   return (
-    isString(purchase.id) &&
-    isString(supplier.id) &&
-    isString(supplier.code) &&
-    isString(supplier.name) &&
+    isNonEmptyString(purchase.id) &&
+    isNonEmptyString(supplier.id) &&
+    isNonEmptyString(supplier.code) &&
+    isNonEmptyString(supplier.name) &&
     isPurchaseStatus(purchase.status) &&
-    isString(purchase.purchaseDate) &&
+    isIsoTimestamp(purchase.purchaseDate) &&
     (purchase.documentNumber === null || isString(purchase.documentNumber)) &&
     (purchase.note === null || isString(purchase.note)) &&
-    isString(purchase.subtotal) &&
-    isString(purchase.tax) &&
-    isString(purchase.total) &&
-    (purchase.postedAt === null || isString(purchase.postedAt)) &&
-    isString(purchase.createdAt) &&
-    isString(purchase.updatedAt) &&
+    isDecimal(purchase.subtotal, 14, 6) &&
+    isDecimal(purchase.tax, 14, 6) &&
+    isDecimal(purchase.total, 14, 6) &&
+    (purchase.postedAt === null || isIsoTimestamp(purchase.postedAt)) &&
+    isIsoTimestamp(purchase.createdAt) &&
+    isIsoTimestamp(purchase.updatedAt) &&
     Array.isArray(purchase.items) &&
     purchase.items.every(isPurchaseItem)
   );
+}
+
+export async function requestPurchaseDetail(api: PurchaseDraftApi, purchaseId: string): Promise<Purchase> {
+  const payload = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}`, { expectedStatus: 200 });
+  if (!isPurchase(payload)) throw new ApiError("server");
+  return payload;
+}
+
+export async function createPurchaseDraft(api: PurchaseDraftApi, payload: ReturnType<typeof purchasePayload>): Promise<Purchase> {
+  const response = await api.request<unknown>("/purchases", { method: "POST", body: payload, expectedStatus: 201 });
+  if (!isPurchase(response)) throw new ApiError("server");
+  return response;
+}
+
+export async function updatePurchaseDraft(api: PurchaseDraftApi, purchaseId: string, payload: ReturnType<typeof purchasePayload>): Promise<Purchase> {
+  const response = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}`, { method: "PATCH", body: payload, expectedStatus: 200 });
+  if (!isPurchase(response)) throw new ApiError("server");
+  return response;
+}
+
+export async function confirmPurchaseDraft(api: PurchaseDraftApi, purchaseId: string): Promise<Purchase> {
+  const response = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}/confirm`, { method: "POST", expectedStatus: 201 });
+  if (!isPurchase(response)) throw new ApiError("server");
+  return response;
 }
 
 function isPurchaseListItem(value: unknown): value is PurchaseListItem {

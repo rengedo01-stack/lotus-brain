@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  confirmPurchaseDraft,
+  createPurchaseDraft,
   isAmbiguousPurchasePostingError,
   isPostedPurchaseResult,
   isPurchase,
@@ -10,8 +12,10 @@ import {
   purchaseFormFromPurchase,
   purchasePayload,
   requestPurchaseList,
+  requestPurchaseDetail,
   type PurchaseListApi,
   requestPurchasePosting,
+  updatePurchaseDraft,
   validatePurchaseForm,
   type PostedPurchaseResult,
   type PurchasePostingApi,
@@ -40,7 +44,7 @@ const purchase: Purchase = {
     quantity: "123456789.123456789",
     unitPrice: "987654321.123456",
     taxRate: "0.1",
-    lineAmount: "121932631234567900.000000",
+    lineAmount: "99999999999999.999999",
   }],
 };
 
@@ -82,10 +86,81 @@ test("purchase form validation rejects zero quantity and tax rates above one wit
   assert.equal(validatePurchaseForm({ ...form, purchaseDate: "2026/08/21" }).purchaseDate, "仕入日は YYYY-MM-DD 形式で入力してください。");
 });
 
-test("purchase response guards reject malformed lifecycle payloads", () => {
+test("purchase response guards accept only the exact documented draft contract", () => {
   assert.equal(isPurchase(purchase), true);
+  assert.equal(isPurchase({ ...purchase, extra: true }), false);
+  assert.equal(isPurchase({ ...purchase, supplier: { ...purchase.supplier, extra: true } }), false);
+  assert.equal(isPurchase({ ...purchase, items: [{ ...purchase.items[0], extra: true }] }), false);
+  assert.equal(isPurchase({ ...purchase, purchaseDate: "2026-08-21" }), false);
+  assert.equal(isPurchase({ ...purchase, createdAt: "not-a-timestamp" }), false);
+  assert.equal(isPurchase({ ...purchase, subtotal: "1.1234567" }), false);
+  assert.equal(isPurchase({ ...purchase, items: [{ ...purchase.items[0], quantity: "0" }] }), false);
+  assert.equal(isPurchase({ ...purchase, items: [{ ...purchase.items[0], taxRate: "1.0001" }] }), false);
+  assert.equal(isPurchase({ ...purchase, items: [{ ...purchase.items[0], lineNumber: 0 }] }), false);
   assert.equal(isPurchase({ ...purchase, status: "SAVED" }), false);
   assert.equal(isPurchase({ ...purchase, items: [{ ...purchase.items[0], quantity: 1 }] }), false);
+});
+
+test("purchase detail and draft mutations pin their documented success statuses before state changes", async () => {
+  const calls: Array<{ path: string; options: unknown }> = [];
+  const api = {
+    async request<T>(path: string, options?: unknown): Promise<T> {
+      calls.push({ path, options });
+      return purchase as T;
+    },
+  };
+  const payload = purchasePayload(purchaseFormFromPurchase(purchase));
+
+  assert.equal((await requestPurchaseDetail(api, purchase.id)).id, purchase.id);
+  assert.equal((await createPurchaseDraft(api, payload)).id, purchase.id);
+  assert.equal((await updatePurchaseDraft(api, purchase.id, payload)).id, purchase.id);
+  assert.equal((await confirmPurchaseDraft(api, purchase.id)).id, purchase.id);
+  assert.deepEqual(calls, [
+    { path: `/purchases/${purchase.id}`, options: { expectedStatus: 200 } },
+    { path: "/purchases", options: { method: "POST", body: payload, expectedStatus: 201 } },
+    { path: `/purchases/${purchase.id}`, options: { method: "PATCH", body: payload, expectedStatus: 200 } },
+    { path: `/purchases/${purchase.id}/confirm`, options: { method: "POST", expectedStatus: 201 } },
+  ]);
+});
+
+test("purchase detail and draft mutations reject arbitrary 2xx and malformed success JSON", async (t) => {
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
+  t.after(() => { process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl; });
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const payload = purchasePayload(purchaseFormFromPurchase(purchase));
+  const operations = [
+    { path: `/purchases/${purchase.id}`, status: 200, call: (api: ReturnType<typeof createApiClient>) => requestPurchaseDetail(api, purchase.id) },
+    { path: "/purchases", status: 201, call: (api: ReturnType<typeof createApiClient>) => createPurchaseDraft(api, payload) },
+    { path: `/purchases/${purchase.id}`, status: 200, call: (api: ReturnType<typeof createApiClient>) => updatePurchaseDraft(api, purchase.id, payload) },
+    { path: `/purchases/${purchase.id}/confirm`, status: 201, call: (api: ReturnType<typeof createApiClient>) => confirmPurchaseDraft(api, purchase.id) },
+  ];
+
+  for (const operation of operations) {
+    for (const unexpectedStatus of [200, 201, 202, 204]) {
+      if (unexpectedStatus === operation.status) continue;
+      globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+        ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+        : unexpectedStatus === 204
+          ? new Response(null, { status: unexpectedStatus })
+          : new Response(JSON.stringify(purchase), { status: unexpectedStatus, headers: { "content-type": "application/json" } });
+      await assert.rejects(
+        () => operation.call(createApiClient()),
+        (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === unexpectedStatus,
+      );
+    }
+
+    globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+      ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+      : new Response(JSON.stringify({ ...purchase, extra: true }), { status: operation.status, headers: { "content-type": "application/json" } });
+    await assert.rejects(() => operation.call(createApiClient()), (error: unknown) => error instanceof ApiError && error.kind === "server");
+
+    globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+      ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+      : new Response("not json", { status: operation.status, headers: { "content-type": "application/json" } });
+    await assert.rejects(() => operation.call(createApiClient()), (error: unknown) => error instanceof ApiError && error.kind === "server");
+  }
 });
 
 test("purchase list accepts only the exact, non-financial page contract", () => {
