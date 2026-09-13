@@ -328,12 +328,45 @@ model ReplenishmentRecommendation {
   dismissedAt                          DateTime?
 
   product          Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  purchaseHandoff  RecommendationPurchaseHandoff?
   createdByUser    User    @relation("ReplenishmentRecommendationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   supersededByUser User?   @relation("ReplenishmentRecommendationSupersededBy", fields: [supersededByUserId], references: [id], onDelete: Restrict)
   dismissedByUser  User?   @relation("ReplenishmentRecommendationDismissedBy", fields: [dismissedByUserId], references: [id], onDelete: Restrict)
 
   @@index([productId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([disposition, createdAt(sort: Desc), id(sort: Desc)])
+}
+
+// An immutable audit artifact for a future Recommendation-to-Purchase handoff.
+// It is intentionally separate from PurchaseItem so manual purchase lines keep
+// their existing lifecycle.  The scalar fields preserve the authority observed
+// at handoff even when current preferences, packages, or terms later change or
+// are cleared.
+model RecommendationPurchaseHandoff {
+  id                     String @id @default(cuid())
+  sourceRecommendationId String @unique
+  purchaseItemId         String @unique
+
+  sourceRelationshipId           String
+  sourceSupplierId               String
+  sourceRecommendedQuantity      Decimal @db.Decimal(24, 9)
+  sourceRecommendationVersion    Int
+  sourceCalculationPolicyVersion Int
+
+  sourcePackageId       String?
+  sourcePackageCode     String?
+  sourcePackageQuantity Decimal? @db.Decimal(24, 9)
+  sourcePackageVersion  Int?
+
+  sourceCommercialTermsId      String
+  sourceCommercialTermsVersion Int
+  sourceUnitPrice              Decimal  @db.Decimal(20, 6)
+  sourceCurrencyCode           String   @db.Char(3)
+  sourceTaxRate                Decimal  @db.Decimal(5, 4)
+  createdAt                    DateTime @default(now())
+
+  sourceRecommendation ReplenishmentRecommendation @relation(fields: [sourceRecommendationId], references: [id], onDelete: Restrict)
+  purchaseItem         PurchaseItem                @relation(fields: [purchaseItemId], references: [id], onDelete: Restrict)
 }
 
 model ProductUnitConversion {
@@ -972,6 +1005,7 @@ model PurchaseItem {
   // while unique constraints prevent duplicate price or stock effects per line.
   priceHistory     PriceHistory?     @relation("PriceHistorySourcePurchaseItem")
   inventoryHistory InventoryHistory? @relation("InventoryHistorySourcePurchaseItem")
+  recommendationHandoff RecommendationPurchaseHandoff?
 
   @@unique([purchaseId, lineNumber])
   @@index([purchaseId, productId])
