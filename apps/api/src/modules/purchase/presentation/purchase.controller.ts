@@ -4,6 +4,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   NotFoundException,
   Param,
@@ -14,13 +15,17 @@ import {
 } from "@nestjs/common";
 import {
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCookieAuth,
+  ApiCreatedResponse,
   ApiForbiddenResponse,
+  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiQuery,
   ApiTags,
   ApiUnauthorizedResponse,
+  ApiUnprocessableEntityResponse,
 } from "@nestjs/swagger";
 import type { PurchaseStatus } from "../../../generated/prisma/client";
 import {
@@ -45,7 +50,7 @@ import {
 } from "../application/purchase-draft.errors";
 import { CreatePurchaseDto } from "./dto/create-purchase.dto";
 import { UpdatePurchaseDto } from "./dto/update-purchase.dto";
-import { postedPurchaseResponseSchema, purchaseListPageResponseSchema } from "./purchase-response.schemas";
+import { postedPurchaseResponseSchema, purchaseDraftResponseSchema, purchaseListPageResponseSchema } from "./purchase-response.schemas";
 import { ListPurchasesQueryDto, PURCHASE_STATUSES } from "./dto/list-purchases-query.dto";
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
@@ -110,29 +115,53 @@ export class PurchaseController {
   }
 
   @Post()
+  @Header("Cache-Control", "private, no-store")
   @RequirePermissions(Permissions.PURCHASE_WRITE)
   @ApiOperation({ summary: "Create a purchase draft" })
+  @ApiCreatedResponse({ description: "The new DRAFT purchase was created.", schema: purchaseDraftResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "purchase.write is required." })
+  @ApiUnprocessableEntityResponse({ description: "The submitted purchase draft is invalid." })
   createPurchase(@Body() dto: CreatePurchaseDto) {
     return this.runDraft(() => this.createPurchaseDraftUseCase.execute(dto));
   }
 
   @Get(":id")
+  @Header("Cache-Control", "private, no-store")
   @RequirePermissions(Permissions.PURCHASE_READ)
   @ApiOperation({ summary: "Get a purchase" })
+  @ApiOkResponse({ description: "The purchase was returned.", schema: purchaseDraftResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "purchase.read is required." })
+  @ApiNotFoundResponse({ description: "The purchase does not exist." })
   getPurchase(@Param("id") id: string) {
     return this.runDraft(() => this.getPurchaseUseCase.execute(id));
   }
 
   @Patch(":id")
+  @Header("Cache-Control", "private, no-store")
   @RequirePermissions(Permissions.PURCHASE_WRITE)
   @ApiOperation({ summary: "Update a purchase draft" })
+  @ApiOkResponse({ description: "The DRAFT purchase was updated.", schema: purchaseDraftResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "purchase.write is required." })
+  @ApiNotFoundResponse({ description: "The purchase does not exist." })
+  @ApiConflictResponse({ description: "The purchase is no longer editable." })
+  @ApiUnprocessableEntityResponse({ description: "The submitted purchase draft is invalid." })
   updatePurchase(@Param("id") id: string, @Body() dto: UpdatePurchaseDto) {
     return this.runDraft(() => this.updatePurchaseDraftUseCase.execute(id, dto));
   }
 
   @Post(":id/confirm")
+  @Header("Cache-Control", "private, no-store")
   @RequirePermissions(Permissions.PURCHASE_CONFIRM)
   @ApiOperation({ summary: "Confirm a purchase draft" })
+  @ApiCreatedResponse({ description: "The DRAFT purchase transitioned to CONFIRMED.", schema: purchaseDraftResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "purchase.confirm is required." })
+  @ApiNotFoundResponse({ description: "The purchase does not exist." })
+  @ApiConflictResponse({ description: "The purchase cannot be confirmed." })
+  @ApiUnprocessableEntityResponse({ description: "A purchase with no items cannot be confirmed." })
   confirmPurchase(@Param("id") id: string) {
     return this.runDraft(() => this.confirmPurchaseUseCase.execute(id));
   }
