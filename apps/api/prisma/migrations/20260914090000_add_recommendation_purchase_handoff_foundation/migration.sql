@@ -162,6 +162,8 @@ DECLARE
   recommendation "ReplenishmentRecommendation"%ROWTYPE;
   item_product_id TEXT;
   item_quantity DECIMAL(24,9);
+  item_unit_price DECIMAL(20,6);
+  item_tax_rate DECIMAL(5,4);
   purchase_supplier_id TEXT;
   purchase_currency CHAR(3);
 BEGIN
@@ -199,8 +201,10 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
-  SELECT item."productId", item."quantity", purchase."supplierId", purchase."currency"
-  INTO item_product_id, item_quantity, purchase_supplier_id, purchase_currency
+  SELECT item."productId", item."quantity", item."unitPrice", item."taxRate",
+         purchase."supplierId", purchase."currency"
+  INTO item_product_id, item_quantity, item_unit_price, item_tax_rate,
+       purchase_supplier_id, purchase_currency
   FROM "PurchaseItem" AS item
   INNER JOIN "Purchase" AS purchase ON purchase."id" = item."purchaseId"
   WHERE item."id" = NEW."purchaseItemId"
@@ -213,6 +217,8 @@ BEGIN
 
   IF item_product_id <> recommendation."productId"
     OR item_quantity <> NEW."sourceRecommendedQuantity"
+    OR item_unit_price <> NEW."sourceUnitPrice"
+    OR item_tax_rate <> NEW."sourceTaxRate"
     OR purchase_supplier_id <> NEW."sourceSupplierId"
     OR purchase_currency <> NEW."sourceCurrencyCode"
   THEN

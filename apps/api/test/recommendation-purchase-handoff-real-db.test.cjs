@@ -86,6 +86,18 @@ if (databaseUrl === undefined) {
           sourceTaxRate: "0.1000",
         });
 
+        const priceMismatch = await createPurchaseItem("price-mismatch");
+        await assert.rejects(
+          () => prisma.recommendationPurchaseHandoff.create({ data: { ...handoffData(priceMismatch.item.id), sourceUnitPrice: "12.345679" } }),
+          (error) => error.message.includes("23514"),
+        );
+
+        const taxMismatch = await createPurchaseItem("tax-mismatch");
+        await assert.rejects(
+          () => prisma.recommendationPurchaseHandoff.create({ data: { ...handoffData(taxMismatch.item.id), sourceTaxRate: "0.0800" } }),
+          (error) => error.message.includes("23514"),
+        );
+
         const handoff = await prisma.recommendationPurchaseHandoff.create({ data: handoffData(first.item.id) });
         assert.equal(handoff.sourceRecommendationId, recommendation.id);
         assert.equal(handoff.sourceRecommendedQuantity.toFixed(9), "10.000000000");
