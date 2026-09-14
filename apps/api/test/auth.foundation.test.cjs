@@ -493,6 +493,7 @@ test("every existing business endpoint has the exact required permission", () =>
     [PurchaseController, "createPurchase", Permissions.PURCHASE_WRITE],
     [PurchaseController, "getPurchase", Permissions.PURCHASE_READ],
     [PurchaseController, "updatePurchase", Permissions.PURCHASE_WRITE],
+    [PurchaseController, "updatePurchaseMetadata", Permissions.PURCHASE_WRITE],
     [PurchaseController, "confirmPurchase", Permissions.PURCHASE_CONFIRM],
     [PurchaseController, "postPurchase", Permissions.PURCHASE_POST],
     [ProductionController, "createProduction", Permissions.PRODUCTION_WRITE],
@@ -530,6 +531,12 @@ test("every existing business endpoint has the exact required permission", () =>
     Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, InventoryController.prototype.listReplenishmentCandidates),
     [Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ],
     "InventoryController.listReplenishmentCandidates",
+  );
+
+  assert.deepEqual(
+    Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, PurchaseController.prototype.createRecommendationPurchaseDraft),
+    [Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ, Permissions.REPLENISHMENT_MANAGE, Permissions.PURCHASE_WRITE],
+    "PurchaseController.createRecommendationPurchaseDraft",
   );
 
   assert.deepEqual(

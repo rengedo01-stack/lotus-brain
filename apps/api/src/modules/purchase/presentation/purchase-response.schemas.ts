@@ -83,6 +83,13 @@ export const purchaseDraftResponseSchema = {
   },
 };
 
+export const recommendationPurchaseDraftHandoffResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["purchase"],
+  properties: { purchase: purchaseDraftResponseSchema },
+};
+
 const nullableDateTimeSchema = {
   oneOf: [{ type: "string" as const, format: "date-time" }, { type: "null" as const }],
 };

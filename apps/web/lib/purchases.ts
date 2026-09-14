@@ -67,6 +67,7 @@ export type PostedPurchaseResult = {
 export type PurchasePostingApi = Pick<ApiClient, "request">;
 export type PurchaseListApi = Pick<ApiClient, "request">;
 export type PurchaseDraftApi = Pick<ApiClient, "request">;
+export type RecommendationPurchaseHandoffApi = Pick<ApiClient, "request">;
 
 export type PurchaseLineFormValues = {
   productId: string;
@@ -96,6 +97,7 @@ const PURCHASE_LIST_PAGE_KEYS = ["items", "nextCursor"] as const;
 const PURCHASE_KEYS = ["id", "supplier", "status", "purchaseDate", "documentNumber", "note", "subtotal", "tax", "total", "postedAt", "createdAt", "updatedAt", "items"] as const;
 const PURCHASE_SUPPLIER_KEYS = ["id", "code", "name"] as const;
 const PURCHASE_ITEM_KEYS = ["id", "lineNumber", "productId", "unitId", "quantity", "unitPrice", "taxRate", "lineAmount"] as const;
+const RECOMMENDATION_PURCHASE_HANDOFF_KEYS = ["purchase"] as const;
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -206,6 +208,31 @@ export async function confirmPurchaseDraft(api: PurchaseDraftApi, purchaseId: st
   const response = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}/confirm`, { method: "POST", expectedStatus: 201 });
   if (!isPurchase(response)) throw new ApiError("server");
   return response;
+}
+
+/**
+ * This endpoint has two intentional success outcomes: the first request
+ * creates the immutable-provenance draft (201); a retry returns that exact
+ * same draft (200). No client fields other than the business purchase date
+ * participate in handoff, and the server remains authoritative for every line.
+ */
+export async function createPurchaseDraftFromRecommendation(
+  api: RecommendationPurchaseHandoffApi,
+  recommendationId: string,
+  purchaseDate: string,
+): Promise<Purchase> {
+  const response = await api.request<unknown>(
+    `/purchases/replenishment-recommendations/${encodeURIComponent(recommendationId)}/draft`,
+    { method: "POST", body: { purchaseDate }, expectedStatus: [200, 201] },
+  );
+  if (!isRecommendationPurchaseHandoffResponse(response)) throw new ApiError("server");
+  return response.purchase;
+}
+
+export function isRecommendationPurchaseHandoffResponse(value: unknown): value is { purchase: Purchase } {
+  return isRecord(value)
+    && hasExactlyKeys(value, RECOMMENDATION_PURCHASE_HANDOFF_KEYS)
+    && isPurchase(value.purchase);
 }
 
 function isPurchaseListItem(value: unknown): value is PurchaseListItem {
