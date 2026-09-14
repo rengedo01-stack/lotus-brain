@@ -1,4 +1,5 @@
 import type { Prisma } from "../../../generated/prisma/client";
+import type { PurchaseDraftView } from "../infrastructure/purchase-draft.repository";
 
 export const PURCHASE_RECOMMENDATION_HANDOFF_REPOSITORY = Symbol("PURCHASE_RECOMMENDATION_HANDOFF_REPOSITORY");
 
@@ -29,7 +30,18 @@ export type RecommendationPurchaseHandoffView = RecommendationPurchaseHandoffSna
   createdAt: Date;
 };
 
+export type CreateRecommendationPurchaseDraftInput = {
+  sourceRecommendationId: string;
+  purchaseDate: Date;
+};
+
+export type RecommendationPurchaseDraftHandoffResult = {
+  replayed: boolean;
+  purchase: PurchaseDraftView;
+};
+
 export interface PurchaseRecommendationHandoffRepository {
   findBySourceRecommendationId(sourceRecommendationId: string): Promise<RecommendationPurchaseHandoffView | null>;
   createInTransaction(tx: Prisma.TransactionClient, snapshot: RecommendationPurchaseHandoffSnapshot): Promise<RecommendationPurchaseHandoffView>;
+  createPurchaseDraft(input: CreateRecommendationPurchaseDraftInput): Promise<RecommendationPurchaseDraftHandoffResult | "NOT_FOUND" | "CONFLICT">;
 }

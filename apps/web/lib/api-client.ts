@@ -51,7 +51,7 @@ export type ApiRequestOptions = Omit<RequestInit, "body" | "headers"> & {
    * the broad HTTP 2xx family. Callers opt into this narrowly where the
    * response is an authentication trust boundary.
    */
-  expectedStatus?: number;
+  expectedStatus?: number | readonly number[];
   headers?: HeadersInit;
 };
 
@@ -208,7 +208,7 @@ export function createApiClient(): ApiClient {
         notifyError(error);
         throw error;
       }
-      if (expectedStatus !== undefined && response.status !== expectedStatus) {
+      if (expectedStatus !== undefined && !(Array.isArray(expectedStatus) ? expectedStatus : [expectedStatus]).includes(response.status)) {
         throw new ApiError("server", response.status);
       }
       const payload = await parseJson(response);

@@ -4,13 +4,14 @@ import { PostPurchaseUseCase } from "./application/post-purchase.use-case";
 import { PURCHASE_POSTING_REPOSITORY } from "./application/purchase-posting.repository";
 import { PrismaPurchasePostingRepository } from "./infrastructure/prisma-purchase-posting.repository";
 import { PrismaPurchaseDraftRepository, PURCHASE_DRAFT_REPOSITORY } from "./infrastructure/purchase-draft.repository";
-import { ConfirmPurchaseUseCase, CreatePurchaseDraftUseCase, GetPurchaseUseCase, UpdatePurchaseDraftUseCase } from "./application/purchase-draft.use-cases";
+import { ConfirmPurchaseUseCase, CreatePurchaseDraftUseCase, GetPurchaseUseCase, UpdatePurchaseDraftMetadataUseCase, UpdatePurchaseDraftUseCase } from "./application/purchase-draft.use-cases";
 import { PurchaseController } from "./presentation/purchase.controller";
 import { ListPurchasesUseCase } from "./application/list-purchases.use-case";
 import { PURCHASE_LIST_REPOSITORY } from "./application/purchase-list.repository";
 import { PrismaPurchaseListRepository } from "./infrastructure/prisma-purchase-list.repository";
 import { PURCHASE_RECOMMENDATION_HANDOFF_REPOSITORY } from "./application/recommendation-purchase-handoff.repository";
 import { PrismaPurchaseRecommendationHandoffRepository } from "./infrastructure/prisma-recommendation-purchase-handoff.repository";
+import { CreateRecommendationPurchaseDraftUseCase } from "./application/recommendation-purchase-handoff.use-case";
 
 @Module({
   imports: [PrismaModule],
@@ -20,8 +21,10 @@ import { PrismaPurchaseRecommendationHandoffRepository } from "./infrastructure/
     CreatePurchaseDraftUseCase,
     GetPurchaseUseCase,
     UpdatePurchaseDraftUseCase,
+    UpdatePurchaseDraftMetadataUseCase,
     ConfirmPurchaseUseCase,
     ListPurchasesUseCase,
+    CreateRecommendationPurchaseDraftUseCase,
     {
       provide: PURCHASE_POSTING_REPOSITORY,
       useClass: PrismaPurchasePostingRepository,

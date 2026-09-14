@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   confirmPurchaseDraft,
+  createPurchaseDraftFromRecommendation,
   createPurchaseDraft,
   isAmbiguousPurchasePostingError,
   isPostedPurchaseResult,
@@ -121,6 +122,51 @@ test("purchase detail and draft mutations pin their documented success statuses 
     { path: `/purchases/${purchase.id}`, options: { method: "PATCH", body: payload, expectedStatus: 200 } },
     { path: `/purchases/${purchase.id}/confirm`, options: { method: "POST", expectedStatus: 201 } },
   ]);
+});
+
+test("recommendation handoff accepts only its documented create or idempotent-replay statuses and exact wrapper", async (t) => {
+  const calls: Array<{ path: string; options: unknown }> = [];
+  const api = {
+    async request<T>(path: string, options?: unknown): Promise<T> {
+      calls.push({ path, options });
+      return { purchase } as T;
+    },
+  };
+  assert.equal((await createPurchaseDraftFromRecommendation(api, "recommendation/1", "2026-09-14T00:00:00.000Z")).id, purchase.id);
+  assert.deepEqual(calls, [{
+    path: "/purchases/replenishment-recommendations/recommendation%2F1/draft",
+    options: { method: "POST", body: { purchaseDate: "2026-09-14T00:00:00.000Z" }, expectedStatus: [200, 201] },
+  }]);
+
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
+  t.after(() => { process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl; });
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  for (const accepted of [200, 201]) {
+    globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+      ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+      : new Response(JSON.stringify({ purchase }), { status: accepted, headers: { "content-type": "application/json" } });
+    assert.equal((await createPurchaseDraftFromRecommendation(createApiClient(), "recommendation-1", "2026-09-14T00:00:00.000Z")).id, purchase.id);
+  }
+  for (const rejected of [202, 204]) {
+    globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+      ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+      : rejected === 204
+        ? new Response(null, { status: rejected })
+        : new Response(JSON.stringify({ purchase }), { status: rejected, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => createPurchaseDraftFromRecommendation(createApiClient(), "recommendation-1", "2026-09-14T00:00:00.000Z"),
+      (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === rejected,
+    );
+  }
+  globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+    ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+    : new Response(JSON.stringify({ purchase, extra: true }), { status: 201, headers: { "content-type": "application/json" } });
+  await assert.rejects(
+    () => createPurchaseDraftFromRecommendation(createApiClient(), "recommendation-1", "2026-09-14T00:00:00.000Z"),
+    (error: unknown) => error instanceof ApiError && error.kind === "server",
+  );
 });
 
 test("purchase detail and draft mutations reject arbitrary 2xx and malformed success JSON", async (t) => {

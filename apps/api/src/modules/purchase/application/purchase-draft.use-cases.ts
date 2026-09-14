@@ -4,7 +4,7 @@ import {
   PurchaseDraftNotFoundError,
   PurchaseDraftValidationError,
 } from "./purchase-draft.errors";
-import { PURCHASE_DRAFT_REPOSITORY, type PurchaseDraftRepository, type PurchaseDraftInput, type PurchaseDraftView } from "../infrastructure/purchase-draft.repository";
+import { PURCHASE_DRAFT_REPOSITORY, type PurchaseDraftRepository, type PurchaseDraftInput, type PurchaseDraftMetadataInput, type PurchaseDraftView } from "../infrastructure/purchase-draft.repository";
 
 @Injectable()
 export class CreatePurchaseDraftUseCase {
@@ -27,6 +27,17 @@ export class UpdatePurchaseDraftUseCase {
   constructor(@Inject(PURCHASE_DRAFT_REPOSITORY) private readonly repository: PurchaseDraftRepository) {}
   async execute(id: string, input: PurchaseDraftInput): Promise<PurchaseDraftView> {
     const result = await this.repository.updateDraft(id, input);
+    if (result === "NOT_FOUND") throw new PurchaseDraftNotFoundError(`Purchase ${id} was not found.`);
+    if (result === "CONFLICT") throw new PurchaseDraftConflictError(`Purchase ${id} is not editable.`);
+    return result;
+  }
+}
+
+@Injectable()
+export class UpdatePurchaseDraftMetadataUseCase {
+  constructor(@Inject(PURCHASE_DRAFT_REPOSITORY) private readonly repository: PurchaseDraftRepository) {}
+  async execute(id: string, input: PurchaseDraftMetadataInput): Promise<PurchaseDraftView> {
+    const result = await this.repository.updateMetadata(id, input);
     if (result === "NOT_FOUND") throw new PurchaseDraftNotFoundError(`Purchase ${id} was not found.`);
     if (result === "CONFLICT") throw new PurchaseDraftConflictError(`Purchase ${id} is not editable.`);
     return result;

@@ -11,8 +11,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UnprocessableEntityException,
 } from "@nestjs/common";
+import type { Response } from "express";
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
@@ -39,6 +41,7 @@ import {
   ConfirmPurchaseUseCase,
   CreatePurchaseDraftUseCase,
   GetPurchaseUseCase,
+  UpdatePurchaseDraftMetadataUseCase,
   UpdatePurchaseDraftUseCase,
 } from "../application/purchase-draft.use-cases";
 import { ListPurchasesUseCase } from "../application/list-purchases.use-case";
@@ -50,10 +53,14 @@ import {
 } from "../application/purchase-draft.errors";
 import { CreatePurchaseDto } from "./dto/create-purchase.dto";
 import { UpdatePurchaseDto } from "./dto/update-purchase.dto";
-import { postedPurchaseResponseSchema, purchaseDraftResponseSchema, purchaseListPageResponseSchema } from "./purchase-response.schemas";
+import { UpdatePurchaseMetadataDto } from "./dto/update-purchase-metadata.dto";
+import { CreateRecommendationPurchaseDraftDto } from "./dto/create-recommendation-purchase-draft.dto";
+import { postedPurchaseResponseSchema, purchaseDraftResponseSchema, purchaseListPageResponseSchema, recommendationPurchaseDraftHandoffResponseSchema } from "./purchase-response.schemas";
 import { ListPurchasesQueryDto, PURCHASE_STATUSES } from "./dto/list-purchases-query.dto";
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
+import { CreateRecommendationPurchaseDraftUseCase } from "../application/recommendation-purchase-handoff.use-case";
+import { RecommendationPurchaseHandoffConflictError, RecommendationPurchaseHandoffNotFoundError } from "../application/recommendation-purchase-handoff.errors";
 
 type PostedPurchaseResponse = {
   id: string;
@@ -72,6 +79,8 @@ export class PurchaseController {
     private readonly updatePurchaseDraftUseCase: UpdatePurchaseDraftUseCase,
     private readonly confirmPurchaseUseCase: ConfirmPurchaseUseCase,
     private readonly listPurchasesUseCase: ListPurchasesUseCase,
+    private readonly updatePurchaseDraftMetadataUseCase: UpdatePurchaseDraftMetadataUseCase,
+    private readonly createRecommendationPurchaseDraftUseCase: CreateRecommendationPurchaseDraftUseCase,
   ) {}
 
   @Get()
@@ -126,6 +135,42 @@ export class PurchaseController {
     return this.runDraft(() => this.createPurchaseDraftUseCase.execute(dto));
   }
 
+  @Post("replenishment-recommendations/:recommendationId/draft")
+  @Header("Cache-Control", "private, no-store")
+  @RequirePermissions(
+    Permissions.INVENTORY_READ,
+    Permissions.PURCHASE_READ,
+    Permissions.MASTER_READ,
+    Permissions.REPLENISHMENT_MANAGE,
+    Permissions.PURCHASE_WRITE,
+  )
+  @ApiOperation({ summary: "Create or replay a Purchase draft from a current replenishment recommendation" })
+  @ApiCreatedResponse({ description: "The handoff created one immutable-provenance Purchase draft.", schema: recommendationPurchaseDraftHandoffResponseSchema })
+  @ApiOkResponse({ description: "The Recommendation was already handed off; the original Purchase draft was returned.", schema: recommendationPurchaseDraftHandoffResponseSchema })
+  @ApiBadRequestResponse({ description: "purchaseDate must be a canonical UTC timestamp." })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "inventory.read, purchase.read, master.read, replenishment.manage, and purchase.write are all required." })
+  @ApiNotFoundResponse({ description: "The Recommendation does not exist." })
+  @ApiConflictResponse({ description: "The Recommendation is not ACTIVE and CURRENT, its inventory unit changed, or current commercial terms are unavailable." })
+  async createRecommendationPurchaseDraft(
+    @Param("recommendationId") recommendationId: string,
+    @Body() dto: CreateRecommendationPurchaseDraftDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    try {
+      const result = await this.createRecommendationPurchaseDraftUseCase.execute(
+        recommendationId,
+        this.parseCanonicalTimestamp(dto.purchaseDate, "purchaseDate"),
+      );
+      response.status(result.replayed ? 200 : 201);
+      return { purchase: result.purchase };
+    } catch (error: unknown) {
+      if (error instanceof RecommendationPurchaseHandoffNotFoundError) throw new NotFoundException(error.message);
+      if (error instanceof RecommendationPurchaseHandoffConflictError) throw new ConflictException(error.message);
+      throw error;
+    }
+  }
+
   @Get(":id")
   @Header("Cache-Control", "private, no-store")
   @RequirePermissions(Permissions.PURCHASE_READ)
@@ -150,6 +195,20 @@ export class PurchaseController {
   @ApiUnprocessableEntityResponse({ description: "The submitted purchase draft is invalid." })
   updatePurchase(@Param("id") id: string, @Body() dto: UpdatePurchaseDto) {
     return this.runDraft(() => this.updatePurchaseDraftUseCase.execute(id, dto));
+  }
+
+  @Patch(":id/metadata")
+  @Header("Cache-Control", "private, no-store")
+  @RequirePermissions(Permissions.PURCHASE_WRITE)
+  @ApiOperation({ summary: "Update editable Purchase draft metadata" })
+  @ApiOkResponse({ description: "The DRAFT Purchase metadata was updated.", schema: purchaseDraftResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "purchase.write is required." })
+  @ApiNotFoundResponse({ description: "The Purchase does not exist." })
+  @ApiConflictResponse({ description: "The Purchase is no longer a DRAFT." })
+  updatePurchaseMetadata(@Param("id") id: string, @Body() dto: UpdatePurchaseMetadataDto) {
+    if (dto.documentNumber === undefined && dto.note === undefined) throw new BadRequestException("At least one editable metadata field is required.");
+    return this.runDraft(() => this.updatePurchaseDraftMetadataUseCase.execute(id, dto));
   }
 
   @Post(":id/confirm")
