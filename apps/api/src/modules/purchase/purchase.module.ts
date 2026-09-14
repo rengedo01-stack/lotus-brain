@@ -9,6 +9,8 @@ import { PurchaseController } from "./presentation/purchase.controller";
 import { ListPurchasesUseCase } from "./application/list-purchases.use-case";
 import { PURCHASE_LIST_REPOSITORY } from "./application/purchase-list.repository";
 import { PrismaPurchaseListRepository } from "./infrastructure/prisma-purchase-list.repository";
+import { PURCHASE_RECOMMENDATION_HANDOFF_REPOSITORY } from "./application/recommendation-purchase-handoff.repository";
+import { PrismaPurchaseRecommendationHandoffRepository } from "./infrastructure/prisma-recommendation-purchase-handoff.repository";
 
 @Module({
   imports: [PrismaModule],
@@ -26,6 +28,7 @@ import { PrismaPurchaseListRepository } from "./infrastructure/prisma-purchase-l
     },
     { provide: PURCHASE_DRAFT_REPOSITORY, useClass: PrismaPurchaseDraftRepository },
     { provide: PURCHASE_LIST_REPOSITORY, useClass: PrismaPurchaseListRepository },
+    { provide: PURCHASE_RECOMMENDATION_HANDOFF_REPOSITORY, useClass: PrismaPurchaseRecommendationHandoffRepository },
   ],
 })
 export class PurchaseModule {}
