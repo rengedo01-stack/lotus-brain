@@ -5,10 +5,12 @@ const { PurchaseController } = require("../dist/modules/purchase/presentation/pu
 const {
   RecommendationPurchaseHandoffConflictError,
   RecommendationPurchaseHandoffNotFoundError,
+  PurchaseRecommendationHandoffLineageNotFoundError,
 } = require("../dist/modules/purchase/application/recommendation-purchase-handoff.errors.js");
 const {
   recommendationPurchaseDraftHandoffResponseSchema,
   recommendationPurchaseHandoffLineageResponseSchema,
+  purchaseHandoffLineageResponseSchema,
 } = require("../dist/modules/purchase/presentation/purchase-response.schemas.js");
 
 const purchase = {
@@ -19,8 +21,8 @@ const purchase = {
   items: [{ id: "item-1", lineNumber: 1, productId: "product-1", unitId: "unit-1", quantity: "10", unitPrice: "1.234568", taxRate: "0.1000", lineAmount: "12.345680" }],
 };
 
-function controller(handoff, getHandoff = {}) {
-  return new PurchaseController({}, {}, {}, {}, {}, {}, {}, handoff, getHandoff);
+function controller(handoff, getHandoff = {}, getPurchaseLineage = {}) {
+  return new PurchaseController({}, {}, {}, {}, {}, {}, {}, handoff, getHandoff, getPurchaseLineage);
 }
 
 test("recommendation handoff returns only an exact purchase wrapper and distinguishes create from replay by status", async () => {
@@ -80,6 +82,35 @@ test("recommendation handoff lineage is read-only, exact, and distinguishes no h
   const missing = controller({}, { execute: async () => { throw new RecommendationPurchaseHandoffNotFoundError("missing"); } });
   await assert.rejects(
     () => missing.getRecommendationPurchaseHandoff("missing"),
+    (error) => error?.name === "NotFoundException",
+  );
+});
+
+test("purchase handoff lineage is read-only, exact, ordered by PurchaseItem line, and distinguishes an empty Purchase from absence", async () => {
+  const source = {
+    relationshipId: "relationship-1",
+    supplierId: "supplier-1",
+    recommendedQuantity: "10.000000000",
+    package: { id: "package-1", code: "CASE", quantity: "10.000000000", version: 1 },
+    commercialTerms: { id: "terms-1", version: 1, unitPrice: "12.345678", currencyCode: "JPY", taxRate: "0.1000" },
+  };
+  const lineages = [
+    { sourceRecommendationId: "rec-1", createdAt: new Date("2026-09-14T00:00:00.000Z"), purchaseItemId: "item-1", lineNumber: 1, source },
+    { sourceRecommendationId: "rec-2", createdAt: new Date("2026-09-14T00:00:01.000Z"), purchaseItemId: "item-2", lineNumber: 2, source: { ...source, relationshipId: "relationship-2" } },
+  ];
+  const instance = controller({}, {}, { execute: async () => lineages });
+  const response = await instance.getPurchaseHandoffLineage("purchase-1");
+  assert.deepEqual(Object.keys(response), ["handoffs"]);
+  assert.deepEqual(response.handoffs.map((lineage) => lineage.purchaseItemId), ["item-1", "item-2"]);
+  assert.equal(purchaseHandoffLineageResponseSchema.additionalProperties, false);
+  assert.deepEqual(Object.keys(purchaseHandoffLineageResponseSchema.properties), ["handoffs"]);
+
+  const manual = controller({}, {}, { execute: async () => [] });
+  assert.deepEqual(await manual.getPurchaseHandoffLineage("manual-purchase"), { handoffs: [] });
+
+  const missing = controller({}, {}, { execute: async () => { throw new PurchaseRecommendationHandoffLineageNotFoundError("missing"); } });
+  await assert.rejects(
+    () => missing.getPurchaseHandoffLineage("missing"),
     (error) => error?.name === "NotFoundException",
   );
 });

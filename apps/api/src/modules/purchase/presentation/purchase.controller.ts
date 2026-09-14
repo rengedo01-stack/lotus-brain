@@ -55,13 +55,14 @@ import { CreatePurchaseDto } from "./dto/create-purchase.dto";
 import { UpdatePurchaseDto } from "./dto/update-purchase.dto";
 import { UpdatePurchaseMetadataDto } from "./dto/update-purchase-metadata.dto";
 import { CreateRecommendationPurchaseDraftDto } from "./dto/create-recommendation-purchase-draft.dto";
-import { postedPurchaseResponseSchema, purchaseDraftResponseSchema, purchaseListPageResponseSchema, recommendationPurchaseDraftHandoffResponseSchema, recommendationPurchaseHandoffLineageResponseSchema } from "./purchase-response.schemas";
+import { postedPurchaseResponseSchema, purchaseDraftResponseSchema, purchaseHandoffLineageResponseSchema, purchaseListPageResponseSchema, recommendationPurchaseDraftHandoffResponseSchema, recommendationPurchaseHandoffLineageResponseSchema } from "./purchase-response.schemas";
 import { ListPurchasesQueryDto, PURCHASE_STATUSES } from "./dto/list-purchases-query.dto";
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
 import { CreateRecommendationPurchaseDraftUseCase } from "../application/recommendation-purchase-handoff.use-case";
 import { GetRecommendationPurchaseHandoffUseCase } from "../application/get-recommendation-purchase-handoff.use-case";
-import { RecommendationPurchaseHandoffConflictError, RecommendationPurchaseHandoffNotFoundError } from "../application/recommendation-purchase-handoff.errors";
+import { GetPurchaseHandoffLineageUseCase } from "../application/get-purchase-handoff-lineage.use-case";
+import { PurchaseRecommendationHandoffLineageNotFoundError, RecommendationPurchaseHandoffConflictError, RecommendationPurchaseHandoffNotFoundError } from "../application/recommendation-purchase-handoff.errors";
 
 type PostedPurchaseResponse = {
   id: string;
@@ -83,6 +84,7 @@ export class PurchaseController {
     private readonly updatePurchaseDraftMetadataUseCase: UpdatePurchaseDraftMetadataUseCase,
     private readonly createRecommendationPurchaseDraftUseCase: CreateRecommendationPurchaseDraftUseCase,
     private readonly getRecommendationPurchaseHandoffUseCase: GetRecommendationPurchaseHandoffUseCase,
+    private readonly getPurchaseHandoffLineageUseCase: GetPurchaseHandoffLineageUseCase,
   ) {}
 
   @Get()
@@ -186,6 +188,23 @@ export class PurchaseController {
       return { handoff: await this.getRecommendationPurchaseHandoffUseCase.execute(recommendationId) };
     } catch (error: unknown) {
       if (error instanceof RecommendationPurchaseHandoffNotFoundError) throw new NotFoundException(error.message);
+      throw error;
+    }
+  }
+
+  @Get(":id/handoff-lineage")
+  @Header("Cache-Control", "private, no-store")
+  @RequirePermissions(Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ)
+  @ApiOperation({ summary: "Read immutable replenishment handoff lineage for one Purchase" })
+  @ApiOkResponse({ description: "Immutable handoff lineage was returned in PurchaseItem line order; an ordinary Purchase returns an empty list.", schema: purchaseHandoffLineageResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "inventory.read, purchase.read, and master.read are all required." })
+  @ApiNotFoundResponse({ description: "The Purchase does not exist." })
+  async getPurchaseHandoffLineage(@Param("id") purchaseId: string) {
+    try {
+      return { handoffs: await this.getPurchaseHandoffLineageUseCase.execute(purchaseId) };
+    } catch (error: unknown) {
+      if (error instanceof PurchaseRecommendationHandoffLineageNotFoundError) throw new NotFoundException(error.message);
       throw error;
     }
   }

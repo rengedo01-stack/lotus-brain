@@ -7,6 +7,7 @@ import type {
   PurchaseRecommendationHandoffRepository,
   RecommendationPurchaseDraftHandoffResult,
   RecommendationPurchaseHandoffLineage,
+  PurchaseRecommendationHandoffLineage,
   RecommendationPurchaseHandoffSnapshot,
   RecommendationPurchaseHandoffView,
 } from "../application/recommendation-purchase-handoff.repository";
@@ -42,6 +43,10 @@ const handoffLineageInclude = {
   purchaseItem: { include: { purchase: true } },
 } satisfies Prisma.RecommendationPurchaseHandoffInclude;
 type HandoffLineageRow = Prisma.RecommendationPurchaseHandoffGetPayload<{ include: typeof handoffLineageInclude }>;
+const purchaseHandoffLineageInclude = {
+  purchaseItem: { select: { id: true, lineNumber: true } },
+} satisfies Prisma.RecommendationPurchaseHandoffInclude;
+type PurchaseHandoffLineageRow = Prisma.RecommendationPurchaseHandoffGetPayload<{ include: typeof purchaseHandoffLineageInclude }>;
 
 @Injectable()
 export class PrismaPurchaseRecommendationHandoffRepository implements PurchaseRecommendationHandoffRepository {
@@ -66,6 +71,18 @@ export class PrismaPurchaseRecommendationHandoffRepository implements PurchaseRe
       select: { id: true },
     });
     return recommendation === null ? "NOT_FOUND" : null;
+  }
+
+  async getLineagesByPurchaseId(purchaseId: string): Promise<PurchaseRecommendationHandoffLineage[] | "NOT_FOUND"> {
+    const purchase = await this.prisma.purchase.findUnique({ where: { id: purchaseId }, select: { id: true } });
+    if (purchase === null) return "NOT_FOUND";
+
+    const rows = await this.prisma.recommendationPurchaseHandoff.findMany({
+      where: { purchaseItem: { purchaseId } },
+      include: purchaseHandoffLineageInclude,
+      orderBy: [{ purchaseItem: { lineNumber: "asc" } }, { purchaseItemId: "asc" }],
+    });
+    return rows.map((row) => this.toPurchaseLineage(row));
   }
 
   async createInTransaction(tx: Prisma.TransactionClient, snapshot: RecommendationPurchaseHandoffSnapshot): Promise<RecommendationPurchaseHandoffView> {
@@ -342,25 +359,39 @@ export class PrismaPurchaseRecommendationHandoffRepository implements PurchaseRe
         purchaseDate: row.purchaseItem.purchase.purchaseDate,
       },
       purchaseItem: { id: row.purchaseItem.id },
-      source: {
-        relationshipId: row.sourceRelationshipId,
-        supplierId: row.sourceSupplierId,
-        recommendedQuantity: row.sourceRecommendedQuantity.toFixed(9),
-        package: row.sourcePackageId === null
-          ? null
-          : {
-              id: row.sourcePackageId,
-              code: row.sourcePackageCode!,
-              quantity: row.sourcePackageQuantity!.toFixed(9),
-              version: row.sourcePackageVersion!,
-            },
-        commercialTerms: {
-          id: row.sourceCommercialTermsId,
-          version: row.sourceCommercialTermsVersion,
-          unitPrice: row.sourceUnitPrice.toFixed(6),
-          currencyCode: "JPY",
-          taxRate: row.sourceTaxRate.toFixed(4),
-        },
+      source: this.toLineageSource(row),
+    };
+  }
+
+  private toPurchaseLineage(row: PurchaseHandoffLineageRow): PurchaseRecommendationHandoffLineage {
+    return {
+      sourceRecommendationId: row.sourceRecommendationId,
+      createdAt: row.createdAt,
+      purchaseItemId: row.purchaseItem.id,
+      lineNumber: row.purchaseItem.lineNumber,
+      source: this.toLineageSource(row),
+    };
+  }
+
+  private toLineageSource(row: HandoffRow): RecommendationPurchaseHandoffLineage["source"] {
+    return {
+      relationshipId: row.sourceRelationshipId,
+      supplierId: row.sourceSupplierId,
+      recommendedQuantity: row.sourceRecommendedQuantity.toFixed(9),
+      package: row.sourcePackageId === null
+        ? null
+        : {
+            id: row.sourcePackageId,
+            code: row.sourcePackageCode!,
+            quantity: row.sourcePackageQuantity!.toFixed(9),
+            version: row.sourcePackageVersion!,
+          },
+      commercialTerms: {
+        id: row.sourceCommercialTermsId,
+        version: row.sourceCommercialTermsVersion,
+        unitPrice: row.sourceUnitPrice.toFixed(6),
+        currencyCode: "JPY",
+        taxRate: row.sourceTaxRate.toFixed(4),
       },
     };
   }
