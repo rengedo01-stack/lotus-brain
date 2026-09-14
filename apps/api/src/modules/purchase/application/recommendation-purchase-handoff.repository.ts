@@ -40,8 +40,43 @@ export type RecommendationPurchaseDraftHandoffResult = {
   purchase: PurchaseDraftView;
 };
 
+/**
+ * Read-only lineage projection. Every source value comes from the immutable
+ * C21A handoff record; it is never reconstructed from mutable preferences,
+ * packages, or commercial terms.
+ */
+export type RecommendationPurchaseHandoffLineage = {
+  sourceRecommendationId: string;
+  createdAt: Date;
+  purchase: {
+    id: string;
+    status: "DRAFT" | "CONFIRMED" | "POSTED" | "CANCELLED";
+    purchaseDate: Date;
+  };
+  purchaseItem: { id: string };
+  source: {
+    relationshipId: string;
+    supplierId: string;
+    recommendedQuantity: string;
+    package: {
+      id: string;
+      code: string;
+      quantity: string;
+      version: number;
+    } | null;
+    commercialTerms: {
+      id: string;
+      version: number;
+      unitPrice: string;
+      currencyCode: "JPY";
+      taxRate: string;
+    };
+  };
+};
+
 export interface PurchaseRecommendationHandoffRepository {
   findBySourceRecommendationId(sourceRecommendationId: string): Promise<RecommendationPurchaseHandoffView | null>;
+  getLineageBySourceRecommendationId(sourceRecommendationId: string): Promise<RecommendationPurchaseHandoffLineage | null | "NOT_FOUND">;
   createInTransaction(tx: Prisma.TransactionClient, snapshot: RecommendationPurchaseHandoffSnapshot): Promise<RecommendationPurchaseHandoffView>;
   createPurchaseDraft(input: CreateRecommendationPurchaseDraftInput): Promise<RecommendationPurchaseDraftHandoffResult | "NOT_FOUND" | "CONFLICT">;
 }

@@ -6,6 +6,7 @@ import type {
   CreateRecommendationPurchaseDraftInput,
   PurchaseRecommendationHandoffRepository,
   RecommendationPurchaseDraftHandoffResult,
+  RecommendationPurchaseHandoffLineage,
   RecommendationPurchaseHandoffSnapshot,
   RecommendationPurchaseHandoffView,
 } from "../application/recommendation-purchase-handoff.repository";
@@ -37,6 +38,10 @@ const productInclude = {
 type HandoffRow = Prisma.RecommendationPurchaseHandoffGetPayload<Record<string, never>>;
 type PurchaseRow = Prisma.PurchaseGetPayload<{ include: typeof purchaseInclude }>;
 type ProductWithHandoffInputs = Prisma.ProductGetPayload<{ include: typeof productInclude }>;
+const handoffLineageInclude = {
+  purchaseItem: { include: { purchase: true } },
+} satisfies Prisma.RecommendationPurchaseHandoffInclude;
+type HandoffLineageRow = Prisma.RecommendationPurchaseHandoffGetPayload<{ include: typeof handoffLineageInclude }>;
 
 @Injectable()
 export class PrismaPurchaseRecommendationHandoffRepository implements PurchaseRecommendationHandoffRepository {
@@ -45,6 +50,22 @@ export class PrismaPurchaseRecommendationHandoffRepository implements PurchaseRe
   async findBySourceRecommendationId(sourceRecommendationId: string): Promise<RecommendationPurchaseHandoffView | null> {
     const row = await this.prisma.recommendationPurchaseHandoff.findUnique({ where: { sourceRecommendationId } });
     return row === null ? null : this.toView(row);
+  }
+
+  async getLineageBySourceRecommendationId(sourceRecommendationId: string): Promise<RecommendationPurchaseHandoffLineage | null | "NOT_FOUND"> {
+    const handoff = await this.prisma.recommendationPurchaseHandoff.findUnique({
+      where: { sourceRecommendationId },
+      include: handoffLineageInclude,
+    });
+    if (handoff !== null) return this.toLineage(handoff);
+
+    // A missing handoff is meaningful only for an existing Recommendation.
+    // Do not let the Web infer existence by replaying the write endpoint.
+    const recommendation = await this.prisma.replenishmentRecommendation.findUnique({
+      where: { id: sourceRecommendationId },
+      select: { id: true },
+    });
+    return recommendation === null ? "NOT_FOUND" : null;
   }
 
   async createInTransaction(tx: Prisma.TransactionClient, snapshot: RecommendationPurchaseHandoffSnapshot): Promise<RecommendationPurchaseHandoffView> {
@@ -308,6 +329,39 @@ export class PrismaPurchaseRecommendationHandoffRepository implements PurchaseRe
       sourceCurrencyCode: "JPY",
       sourceTaxRate: row.sourceTaxRate.toFixed(4),
       createdAt: row.createdAt,
+    };
+  }
+
+  private toLineage(row: HandoffLineageRow): RecommendationPurchaseHandoffLineage {
+    return {
+      sourceRecommendationId: row.sourceRecommendationId,
+      createdAt: row.createdAt,
+      purchase: {
+        id: row.purchaseItem.purchase.id,
+        status: row.purchaseItem.purchase.status,
+        purchaseDate: row.purchaseItem.purchase.purchaseDate,
+      },
+      purchaseItem: { id: row.purchaseItem.id },
+      source: {
+        relationshipId: row.sourceRelationshipId,
+        supplierId: row.sourceSupplierId,
+        recommendedQuantity: row.sourceRecommendedQuantity.toFixed(9),
+        package: row.sourcePackageId === null
+          ? null
+          : {
+              id: row.sourcePackageId,
+              code: row.sourcePackageCode!,
+              quantity: row.sourcePackageQuantity!.toFixed(9),
+              version: row.sourcePackageVersion!,
+            },
+        commercialTerms: {
+          id: row.sourceCommercialTermsId,
+          version: row.sourceCommercialTermsVersion,
+          unitPrice: row.sourceUnitPrice.toFixed(6),
+          currencyCode: "JPY",
+          taxRate: row.sourceTaxRate.toFixed(4),
+        },
+      },
     };
   }
 }

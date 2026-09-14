@@ -20,6 +20,14 @@ const quantityDecimalSchema = {
   description: "A positive quantity serialized in the Product inventory unit.",
 };
 
+// The generic quantity schema also serves contracts where zero is meaningful.
+// Recommendation and package snapshots are constrained to strictly positive
+// quantities at the database boundary, so their public contract says so too.
+const positiveQuantityDecimalSchema = {
+  type: "string" as const,
+  pattern: "^(?!0(?:\\.0+)?$)(?:0|[1-9][0-9]{0,14})(?:\\.[0-9]{1,9})?$",
+};
+
 const moneyDecimalSchema = {
   type: "string" as const,
   pattern: "^(?:0|[1-9][0-9]{0,13})(?:\\.[0-9]{1,6})?$",
@@ -88,6 +96,87 @@ export const recommendationPurchaseDraftHandoffResponseSchema = {
   additionalProperties: false,
   required: ["purchase"],
   properties: { purchase: purchaseDraftResponseSchema },
+};
+
+const handoffPurchaseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["id", "status", "purchaseDate"],
+  properties: {
+    id: { type: "string" as const, minLength: 1 },
+    status: { type: "string" as const, enum: ["DRAFT", "CONFIRMED", "POSTED", "CANCELLED"] },
+    purchaseDate: { type: "string" as const, format: "date-time" },
+  },
+};
+
+const handoffPurchaseItemSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["id"],
+  properties: { id: { type: "string" as const, minLength: 1 } },
+};
+
+const handoffPackageSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["id", "code", "quantity", "version"],
+  properties: {
+    id: { type: "string" as const, minLength: 1 },
+    code: { type: "string" as const, minLength: 1 },
+    quantity: positiveQuantityDecimalSchema,
+    version: { type: "integer" as const, minimum: 1 },
+  },
+};
+
+const handoffCommercialTermsSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["id", "version", "unitPrice", "currencyCode", "taxRate"],
+  properties: {
+    id: { type: "string" as const, minLength: 1 },
+    version: { type: "integer" as const, minimum: 1 },
+    unitPrice: moneyDecimalSchema,
+    currencyCode: { type: "string" as const, enum: ["JPY"] },
+    taxRate: taxRateSchema,
+  },
+};
+
+const handoffSourceSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["relationshipId", "supplierId", "recommendedQuantity", "package", "commercialTerms"],
+  properties: {
+    relationshipId: { type: "string" as const, minLength: 1 },
+    supplierId: { type: "string" as const, minLength: 1 },
+    recommendedQuantity: positiveQuantityDecimalSchema,
+    package: { oneOf: [handoffPackageSchema, { type: "null" as const }] },
+    commercialTerms: handoffCommercialTermsSchema,
+  },
+};
+
+export const recommendationPurchaseHandoffLineageResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["handoff"],
+  properties: {
+    handoff: {
+      oneOf: [
+        {
+          type: "object" as const,
+          additionalProperties: false,
+          required: ["sourceRecommendationId", "createdAt", "purchase", "purchaseItem", "source"],
+          properties: {
+            sourceRecommendationId: { type: "string" as const, minLength: 1 },
+            createdAt: { type: "string" as const, format: "date-time" },
+            purchase: handoffPurchaseSchema,
+            purchaseItem: handoffPurchaseItemSchema,
+            source: handoffSourceSchema,
+          },
+        },
+        { type: "null" as const },
+      ],
+    },
+  },
 };
 
 const nullableDateTimeSchema = {

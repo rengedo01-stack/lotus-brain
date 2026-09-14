@@ -60,6 +60,20 @@ if (databaseUrl === undefined) {
         assert.equal(await prisma.recommendationPurchaseHandoff.count({ where: { sourceRecommendationId: first.recommendation.id } }), 1);
         const persisted = await prisma.recommendationPurchaseHandoff.findUniqueOrThrow({ where: { sourceRecommendationId: first.recommendation.id } });
         assert.equal(persisted.sourceUnitPrice.toFixed(6), "12.345678"); assert.equal(persisted.sourceTaxRate.toFixed(4), "0.1000");
+        const lineage = await handoffs.getLineageBySourceRecommendationId(first.recommendation.id);
+        assert.notEqual(lineage, "NOT_FOUND"); assert.notEqual(lineage, null);
+        assert.deepEqual(lineage.purchase, { id: created.purchase.id, status: "DRAFT", purchaseDate: new Date("2026-09-14T00:00:00.000Z") });
+        assert.deepEqual(lineage.purchaseItem, { id: created.purchase.items[0].id });
+        assert.deepEqual(lineage.source, {
+          relationshipId: first.relationship.id,
+          supplierId: supplier.id,
+          recommendedQuantity: "10.000000000",
+          package: { id: (await prisma.productSupplierPackage.findFirstOrThrow({ where: { relationshipId: first.relationship.id } })).id, code: "CASE", quantity: "10.000000000", version: 1 },
+          commercialTerms: { id: (await prisma.productSupplierCommercialTerms.findUniqueOrThrow({ where: { relationshipId: first.relationship.id } })).id, version: 1, unitPrice: "12.345678", currencyCode: "JPY", taxRate: "0.1000" },
+        });
+        const notHandedOff = await ready("NOT-HANDED-OFF");
+        assert.equal(await handoffs.getLineageBySourceRecommendationId(notHandedOff.recommendation.id), null);
+        assert.equal(await handoffs.getLineageBySourceRecommendationId(`${fixture}-missing`), "NOT_FOUND");
 
         const replay = await handoffs.createPurchaseDraft({ sourceRecommendationId: first.recommendation.id, purchaseDate: new Date("2027-01-01T00:00:00.000Z") });
         assert.notEqual(replay, "NOT_FOUND"); assert.notEqual(replay, "CONFLICT");
