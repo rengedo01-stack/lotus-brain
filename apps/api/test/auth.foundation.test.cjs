@@ -540,6 +540,12 @@ test("every existing business endpoint has the exact required permission", () =>
   );
 
   assert.deepEqual(
+    Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, PurchaseController.prototype.getRecommendationPurchaseHandoff),
+    [Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ],
+    "PurchaseController.getRecommendationPurchaseHandoff",
+  );
+
+  assert.deepEqual(
     Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ReplenishmentRecommendationController.prototype.getActive),
     [Permissions.INVENTORY_READ, Permissions.PURCHASE_READ, Permissions.MASTER_READ],
     "ReplenishmentRecommendationController.getActive",

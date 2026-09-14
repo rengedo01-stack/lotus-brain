@@ -69,6 +69,20 @@ export type PurchaseListApi = Pick<ApiClient, "request">;
 export type PurchaseDraftApi = Pick<ApiClient, "request">;
 export type RecommendationPurchaseHandoffApi = Pick<ApiClient, "request">;
 
+export type RecommendationPurchaseHandoffLineage = {
+  sourceRecommendationId: string;
+  createdAt: string;
+  purchase: { id: string; status: PurchaseStatus; purchaseDate: string };
+  purchaseItem: { id: string };
+  source: {
+    relationshipId: string;
+    supplierId: string;
+    recommendedQuantity: string;
+    package: { id: string; code: string; quantity: string; version: number } | null;
+    commercialTerms: { id: string; version: number; unitPrice: string; currencyCode: "JPY"; taxRate: string };
+  };
+};
+
 export type PurchaseLineFormValues = {
   productId: string;
   quantity: string;
@@ -98,6 +112,13 @@ const PURCHASE_KEYS = ["id", "supplier", "status", "purchaseDate", "documentNumb
 const PURCHASE_SUPPLIER_KEYS = ["id", "code", "name"] as const;
 const PURCHASE_ITEM_KEYS = ["id", "lineNumber", "productId", "unitId", "quantity", "unitPrice", "taxRate", "lineAmount"] as const;
 const RECOMMENDATION_PURCHASE_HANDOFF_KEYS = ["purchase"] as const;
+const RECOMMENDATION_PURCHASE_HANDOFF_LINEAGE_KEYS = ["handoff"] as const;
+const RECOMMENDATION_PURCHASE_HANDOFF_LINEAGE_ITEM_KEYS = ["sourceRecommendationId", "createdAt", "purchase", "purchaseItem", "source"] as const;
+const RECOMMENDATION_PURCHASE_HANDOFF_PURCHASE_KEYS = ["id", "status", "purchaseDate"] as const;
+const RECOMMENDATION_PURCHASE_HANDOFF_PURCHASE_ITEM_KEYS = ["id"] as const;
+const RECOMMENDATION_PURCHASE_HANDOFF_SOURCE_KEYS = ["relationshipId", "supplierId", "recommendedQuantity", "package", "commercialTerms"] as const;
+const RECOMMENDATION_PURCHASE_HANDOFF_PACKAGE_KEYS = ["id", "code", "quantity", "version"] as const;
+const RECOMMENDATION_PURCHASE_HANDOFF_COMMERCIAL_TERMS_KEYS = ["id", "version", "unitPrice", "currencyCode", "taxRate"] as const;
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -233,6 +254,60 @@ export function isRecommendationPurchaseHandoffResponse(value: unknown): value i
   return isRecord(value)
     && hasExactlyKeys(value, RECOMMENDATION_PURCHASE_HANDOFF_KEYS)
     && isPurchase(value.purchase);
+}
+
+/**
+ * A passive lineage lookup is deliberately separate from the handoff POST.
+ * It must never create or replay a Purchase merely to render UI state.
+ */
+export async function requestRecommendationPurchaseHandoffLineage(
+  api: RecommendationPurchaseHandoffApi,
+  recommendationId: string,
+): Promise<RecommendationPurchaseHandoffLineage | null> {
+  const response = await api.request<unknown>(
+    `/purchases/replenishment-recommendations/${encodeURIComponent(recommendationId)}/handoff`,
+    { expectedStatus: 200 },
+  );
+  if (!isRecommendationPurchaseHandoffLineageResponse(response)) throw new ApiError("server");
+  return response.handoff;
+}
+
+export function isRecommendationPurchaseHandoffLineageResponse(value: unknown): value is { handoff: RecommendationPurchaseHandoffLineage | null } {
+  return isRecord(value)
+    && hasExactlyKeys(value, RECOMMENDATION_PURCHASE_HANDOFF_LINEAGE_KEYS)
+    && (value.handoff === null || isRecommendationPurchaseHandoffLineage(value.handoff));
+}
+
+function isRecommendationPurchaseHandoffLineage(value: unknown): value is RecommendationPurchaseHandoffLineage {
+  if (!isRecord(value) || !hasExactlyKeys(value, RECOMMENDATION_PURCHASE_HANDOFF_LINEAGE_ITEM_KEYS)) return false;
+  if (!isRecord(value.purchase) || !hasExactlyKeys(value.purchase, RECOMMENDATION_PURCHASE_HANDOFF_PURCHASE_KEYS)) return false;
+  if (!isRecord(value.purchaseItem) || !hasExactlyKeys(value.purchaseItem, RECOMMENDATION_PURCHASE_HANDOFF_PURCHASE_ITEM_KEYS)) return false;
+  if (!isRecord(value.source) || !hasExactlyKeys(value.source, RECOMMENDATION_PURCHASE_HANDOFF_SOURCE_KEYS)) return false;
+  const source = value.source;
+  if (!isRecord(source.commercialTerms) || !hasExactlyKeys(source.commercialTerms, RECOMMENDATION_PURCHASE_HANDOFF_COMMERCIAL_TERMS_KEYS)) return false;
+  if (source.package !== null && (!isRecord(source.package) || !hasExactlyKeys(source.package, RECOMMENDATION_PURCHASE_HANDOFF_PACKAGE_KEYS))) return false;
+  return (
+    isNonEmptyString(value.sourceRecommendationId)
+    && isIsoTimestamp(value.createdAt)
+    && isNonEmptyString(value.purchase.id)
+    && isPurchaseStatus(value.purchase.status)
+    && isIsoTimestamp(value.purchase.purchaseDate)
+    && isNonEmptyString(value.purchaseItem.id)
+    && isNonEmptyString(source.relationshipId)
+    && isNonEmptyString(source.supplierId)
+    && isPositiveDecimal(source.recommendedQuantity, 15, 9)
+    && (source.package === null || (
+      isNonEmptyString(source.package.id)
+      && isNonEmptyString(source.package.code)
+      && isPositiveDecimal(source.package.quantity, 15, 9)
+      && isPositiveInteger(source.package.version)
+    ))
+    && isNonEmptyString(source.commercialTerms.id)
+    && isPositiveInteger(source.commercialTerms.version)
+    && isDecimal(source.commercialTerms.unitPrice, 14, 6)
+    && source.commercialTerms.currencyCode === "JPY"
+    && isTaxRate(source.commercialTerms.taxRate)
+  );
 }
 
 function isPurchaseListItem(value: unknown): value is PurchaseListItem {
