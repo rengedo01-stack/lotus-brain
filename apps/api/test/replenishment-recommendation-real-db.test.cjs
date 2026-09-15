@@ -140,6 +140,23 @@ if (databaseUrl === undefined) {
         assert.deepEqual(await (await request(path, reader)).json(), { recommendation: null });
         const terminal = await prisma.replenishmentRecommendation.findUniqueOrThrow({ where: { id: recalculated.id } });
         assert.equal(terminal.dismissedByUserId, all.user.id); assert.equal(terminal.inventoryQuantitySnapshot.toString(), "4"); assert.ok(terminal.dismissedAt instanceof Date);
+
+        // A future calculation-policy rollout must make older immutable
+        // snapshots stale even when every persisted input remains unchanged.
+        const policyMismatched = await prisma.replenishmentRecommendation.create({ data: {
+          ...terminal,
+          id: `${fixture}-policy-version-mismatch`,
+          disposition: "ACTIVE",
+          version: 1,
+          calculationPolicyVersion: terminal.calculationPolicyVersion + 1,
+          supersededByUserId: null,
+          supersededAt: null,
+          dismissedByUserId: null,
+          dismissedAt: null,
+        } });
+        assert.equal(policyMismatched.calculationPolicyVersion, 2);
+        const policyStale = await request(path, reader); assert.equal(policyStale.status, 200);
+        assert.equal((await policyStale.json()).recommendation.freshness, "STALE");
         await assert.rejects(() => prisma.$executeRawUnsafe('UPDATE "ReplenishmentRecommendation" SET "feasibleQuantitySnapshot" = 999 WHERE "id" = $1', recalculated.id), /immutable/i);
       } finally {
         await app?.close(); await prisma.$disconnect();
