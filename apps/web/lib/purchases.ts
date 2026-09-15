@@ -147,10 +147,14 @@ function hasExactlyKeys(value: Record<string, unknown>, expectedKeys: readonly s
     && expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
 }
 
-function isIsoTimestamp(value: unknown): value is string {
+export function isCanonicalUtcTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const timestamp = new Date(value);
   return !Number.isNaN(timestamp.getTime()) && timestamp.toISOString() === value;
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  return isCanonicalUtcTimestamp(value);
 }
 
 function isNonEmptyString(value: unknown): value is string {
