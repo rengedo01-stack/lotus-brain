@@ -179,6 +179,28 @@ export const recommendationPurchaseHandoffLineageResponseSchema = {
   },
 };
 
+const purchaseHandoffLineageItemSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["sourceRecommendationId", "createdAt", "purchaseItemId", "lineNumber", "source"],
+  properties: {
+    sourceRecommendationId: { type: "string" as const, minLength: 1 },
+    createdAt: { type: "string" as const, format: "date-time" },
+    purchaseItemId: { type: "string" as const, minLength: 1 },
+    lineNumber: { type: "integer" as const, minimum: 1 },
+    source: handoffSourceSchema,
+  },
+};
+
+export const purchaseHandoffLineageResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["handoffs"],
+  properties: {
+    handoffs: { type: "array" as const, items: purchaseHandoffLineageItemSchema },
+  },
+};
+
 const nullableDateTimeSchema = {
   oneOf: [{ type: "string" as const, format: "date-time" }, { type: "null" as const }],
 };

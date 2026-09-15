@@ -74,9 +74,23 @@ export type RecommendationPurchaseHandoffLineage = {
   };
 };
 
+/**
+ * Purchase-origin lineage deliberately remains a collection. C21B currently
+ * creates one Purchase per Recommendation, but Purchase is allowed to contain
+ * multiple immutable handoff-derived items in the future.
+ */
+export type PurchaseRecommendationHandoffLineage = {
+  sourceRecommendationId: string;
+  createdAt: Date;
+  purchaseItemId: string;
+  lineNumber: number;
+  source: RecommendationPurchaseHandoffLineage["source"];
+};
+
 export interface PurchaseRecommendationHandoffRepository {
   findBySourceRecommendationId(sourceRecommendationId: string): Promise<RecommendationPurchaseHandoffView | null>;
   getLineageBySourceRecommendationId(sourceRecommendationId: string): Promise<RecommendationPurchaseHandoffLineage | null | "NOT_FOUND">;
+  getLineagesByPurchaseId(purchaseId: string): Promise<PurchaseRecommendationHandoffLineage[] | "NOT_FOUND">;
   createInTransaction(tx: Prisma.TransactionClient, snapshot: RecommendationPurchaseHandoffSnapshot): Promise<RecommendationPurchaseHandoffView>;
   createPurchaseDraft(input: CreateRecommendationPurchaseDraftInput): Promise<RecommendationPurchaseDraftHandoffResult | "NOT_FOUND" | "CONFLICT">;
 }

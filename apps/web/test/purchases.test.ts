@@ -4,6 +4,7 @@ import {
   confirmPurchaseDraft,
   createPurchaseDraftFromRecommendation,
   isRecommendationPurchaseHandoffLineageResponse,
+  isPurchaseHandoffLineageResponse,
   createPurchaseDraft,
   isAmbiguousPurchasePostingError,
   isPostedPurchaseResult,
@@ -16,6 +17,7 @@ import {
   requestPurchaseList,
   requestPurchaseDetail,
   requestRecommendationPurchaseHandoffLineage,
+  requestPurchaseHandoffLineage,
   type PurchaseListApi,
   requestPurchasePosting,
   updatePurchaseDraft,
@@ -78,6 +80,25 @@ const handoffLineage = {
       commercialTerms: { id: "terms-1", version: 3, unitPrice: "12.345678", currencyCode: "JPY", taxRate: "0.1000" },
     },
   },
+};
+
+const purchaseHandoffLineage = {
+  handoffs: [
+    {
+      sourceRecommendationId: "recommendation-1",
+      createdAt: "2026-09-14T00:00:00.000Z",
+      purchaseItemId: "item-1",
+      lineNumber: 1,
+      source: handoffLineage.handoff.source,
+    },
+    {
+      sourceRecommendationId: "recommendation-2",
+      createdAt: "2026-09-14T00:00:01.000Z",
+      purchaseItemId: "item-2",
+      lineNumber: 2,
+      source: { ...handoffLineage.handoff.source, relationshipId: "relationship-2" },
+    },
+  ],
 };
 
 test("purchase create/update payload preserves decimal strings and excludes UI/server item identity", () => {
@@ -224,6 +245,53 @@ test("recommendation handoff lineage is a passive exact-200 read contract", asyn
   globalThis.fetch = async () => new Response(JSON.stringify({ handoff: { ...handoffLineage.handoff, extra: true } }), { status: 200, headers: { "content-type": "application/json" } });
   await assert.rejects(
     () => requestRecommendationPurchaseHandoffLineage(createApiClient(), "recommendation-1"),
+    (error: unknown) => error instanceof ApiError && error.kind === "server",
+  );
+});
+
+test("purchase handoff lineage is a passive exact-200 multi-line read contract", async (t) => {
+  const calls: Array<{ path: string; options: unknown }> = [];
+  const api = {
+    async request<T>(path: string, options?: unknown): Promise<T> {
+      calls.push({ path, options });
+      return purchaseHandoffLineage as T;
+    },
+  };
+  assert.deepEqual((await requestPurchaseHandoffLineage(api, "purchase/1")).map((lineage) => lineage.purchaseItemId), ["item-1", "item-2"]);
+  assert.deepEqual(calls, [{
+    path: "/purchases/purchase%2F1/handoff-lineage",
+    options: { expectedStatus: 200 },
+  }]);
+  assert.equal(isPurchaseHandoffLineageResponse({ handoffs: [] }), true);
+  assert.equal(isPurchaseHandoffLineageResponse(purchaseHandoffLineage), true);
+  assert.equal(isPurchaseHandoffLineageResponse({ ...purchaseHandoffLineage, extra: true }), false);
+  assert.equal(isPurchaseHandoffLineageResponse({ handoffs: [{ ...purchaseHandoffLineage.handoffs[0]!, extra: true }] }), false);
+  assert.equal(isPurchaseHandoffLineageResponse({ handoffs: [{ ...purchaseHandoffLineage.handoffs[0]!, lineNumber: 0 }] }), false);
+  assert.equal(isPurchaseHandoffLineageResponse({ handoffs: [purchaseHandoffLineage.handoffs[1], purchaseHandoffLineage.handoffs[0]] }), false);
+  assert.equal(isPurchaseHandoffLineageResponse({ handoffs: [purchaseHandoffLineage.handoffs[0], { ...purchaseHandoffLineage.handoffs[1], purchaseItemId: "item-1" }] }), false);
+
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
+  t.after(() => { process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl; });
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  for (const status of [201, 202, 204]) {
+    globalThis.fetch = async () => status === 204
+      ? new Response(null, { status })
+      : new Response(JSON.stringify(purchaseHandoffLineage), { status, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => requestPurchaseHandoffLineage(createApiClient(), "purchase-1"),
+      (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === status,
+    );
+  }
+  globalThis.fetch = async () => new Response(JSON.stringify({ handoffs: [{ ...purchaseHandoffLineage.handoffs[0]!, extra: true }] }), { status: 200, headers: { "content-type": "application/json" } });
+  await assert.rejects(
+    () => requestPurchaseHandoffLineage(createApiClient(), "purchase-1"),
+    (error: unknown) => error instanceof ApiError && error.kind === "server",
+  );
+  globalThis.fetch = async () => new Response("not json", { status: 200, headers: { "content-type": "application/json" } });
+  await assert.rejects(
+    () => requestPurchaseHandoffLineage(createApiClient(), "purchase-1"),
     (error: unknown) => error instanceof ApiError && error.kind === "server",
   );
 });

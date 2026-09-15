@@ -75,6 +75,76 @@ if (databaseUrl === undefined) {
         assert.equal(await handoffs.getLineageBySourceRecommendationId(notHandedOff.recommendation.id), null);
         assert.equal(await handoffs.getLineageBySourceRecommendationId(`${fixture}-missing`), "NOT_FOUND");
 
+        // The C21B command currently creates one Purchase per Recommendation,
+        // but the read contract must not hard-code that transient shape. Build
+        // two valid immutable handoffs under one Purchase and insert them in
+        // reverse line order to prove the Purchase-origin query is a stable
+        // ordered collection.
+        const secondLine = await ready("SECOND-LINE");
+        const firstLine = await ready("FIRST-LINE");
+        const multiPurchase = await prisma.purchase.create({
+          data: {
+            supplierId: supplier.id,
+            purchaseDate: new Date("2026-09-16T00:00:00.000Z"),
+            currency: "JPY",
+            subtotal: "246.913560",
+            tax: "24.691356",
+            total: "271.604916",
+            items: {
+              create: [
+                { productId: firstLine.product.id, unitId: unit.id, lineNumber: 1, quantity: "10", unitPrice: "12.345678", taxRate: "0.1000", lineAmount: "123.456780" },
+                { productId: secondLine.product.id, unitId: unit.id, lineNumber: 2, quantity: "10", unitPrice: "12.345678", taxRate: "0.1000", lineAmount: "123.456780" },
+              ],
+            },
+          },
+          include: { items: true },
+        });
+        const handoffDataFor = async (readyResult, purchaseItemId) => {
+          const recommendation = await prisma.replenishmentRecommendation.findUniqueOrThrow({ where: { id: readyResult.recommendation.id } });
+          const terms = await prisma.productSupplierCommercialTerms.findUniqueOrThrow({ where: { relationshipId: readyResult.relationship.id } });
+          return {
+            sourceRecommendationId: recommendation.id,
+            purchaseItemId,
+            sourceRelationshipId: recommendation.relationshipIdSnapshot,
+            sourceSupplierId: recommendation.supplierIdSnapshot,
+            sourceRecommendedQuantity: recommendation.feasibleQuantitySnapshot,
+            sourceRecommendationVersion: recommendation.version,
+            sourceCalculationPolicyVersion: recommendation.calculationPolicyVersion,
+            sourcePackageId: recommendation.packageIdSnapshot,
+            sourcePackageCode: recommendation.packageCodeSnapshot,
+            sourcePackageQuantity: recommendation.packageQuantitySnapshot,
+            sourcePackageVersion: recommendation.packageVersionSnapshot,
+            sourceCommercialTermsId: terms.id,
+            sourceCommercialTermsVersion: terms.version,
+            sourceUnitPrice: terms.unitPrice,
+            sourceCurrencyCode: "JPY",
+            sourceTaxRate: terms.taxRate,
+          };
+        };
+        const firstItem = multiPurchase.items.find((item) => item.lineNumber === 1);
+        const secondItem = multiPurchase.items.find((item) => item.lineNumber === 2);
+        assert.ok(firstItem); assert.ok(secondItem);
+        await prisma.recommendationPurchaseHandoff.create({ data: await handoffDataFor(secondLine, secondItem.id) });
+        await prisma.recommendationPurchaseHandoff.create({ data: await handoffDataFor(firstLine, firstItem.id) });
+        const purchaseLineage = await handoffs.getLineagesByPurchaseId(multiPurchase.id);
+        assert.notEqual(purchaseLineage, "NOT_FOUND");
+        assert.deepEqual(purchaseLineage.map((lineage) => ({ recommendationId: lineage.sourceRecommendationId, lineNumber: lineage.lineNumber, purchaseItemId: lineage.purchaseItemId })), [
+          { recommendationId: firstLine.recommendation.id, lineNumber: 1, purchaseItemId: firstItem.id },
+          { recommendationId: secondLine.recommendation.id, lineNumber: 2, purchaseItemId: secondItem.id },
+        ]);
+        assert.deepEqual(await handoffs.getLineagesByPurchaseId(created.purchase.id), [{
+          sourceRecommendationId: first.recommendation.id,
+          createdAt: (await prisma.recommendationPurchaseHandoff.findUniqueOrThrow({ where: { sourceRecommendationId: first.recommendation.id } })).createdAt,
+          purchaseItemId: created.purchase.items[0].id,
+          lineNumber: 1,
+          source: lineage.source,
+        }]);
+        const manualPurchase = await prisma.purchase.create({
+          data: { supplierId: supplier.id, purchaseDate: new Date("2026-09-17T00:00:00.000Z") },
+        });
+        assert.deepEqual(await handoffs.getLineagesByPurchaseId(manualPurchase.id), []);
+        assert.equal(await handoffs.getLineagesByPurchaseId(`${fixture}-missing-purchase`), "NOT_FOUND");
+
         const replay = await handoffs.createPurchaseDraft({ sourceRecommendationId: first.recommendation.id, purchaseDate: new Date("2027-01-01T00:00:00.000Z") });
         assert.notEqual(replay, "NOT_FOUND"); assert.notEqual(replay, "CONFLICT");
         assert.equal(replay.replayed, true); assert.equal(replay.purchase.id, created.purchase.id);

@@ -13,6 +13,7 @@ import { PURCHASE_RECOMMENDATION_HANDOFF_REPOSITORY } from "./application/recomm
 import { PrismaPurchaseRecommendationHandoffRepository } from "./infrastructure/prisma-recommendation-purchase-handoff.repository";
 import { CreateRecommendationPurchaseDraftUseCase } from "./application/recommendation-purchase-handoff.use-case";
 import { GetRecommendationPurchaseHandoffUseCase } from "./application/get-recommendation-purchase-handoff.use-case";
+import { GetPurchaseHandoffLineageUseCase } from "./application/get-purchase-handoff-lineage.use-case";
 
 @Module({
   imports: [PrismaModule],
@@ -27,6 +28,7 @@ import { GetRecommendationPurchaseHandoffUseCase } from "./application/get-recom
     ListPurchasesUseCase,
     CreateRecommendationPurchaseDraftUseCase,
     GetRecommendationPurchaseHandoffUseCase,
+    GetPurchaseHandoffLineageUseCase,
     {
       provide: PURCHASE_POSTING_REPOSITORY,
       useClass: PrismaPurchasePostingRepository,

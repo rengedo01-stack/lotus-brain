@@ -69,18 +69,29 @@ export type PurchaseListApi = Pick<ApiClient, "request">;
 export type PurchaseDraftApi = Pick<ApiClient, "request">;
 export type RecommendationPurchaseHandoffApi = Pick<ApiClient, "request">;
 
+export type PurchaseHandoffLineageSource = {
+  relationshipId: string;
+  supplierId: string;
+  recommendedQuantity: string;
+  package: { id: string; code: string; quantity: string; version: number } | null;
+  commercialTerms: { id: string; version: number; unitPrice: string; currencyCode: "JPY"; taxRate: string };
+};
+
 export type RecommendationPurchaseHandoffLineage = {
   sourceRecommendationId: string;
   createdAt: string;
   purchase: { id: string; status: PurchaseStatus; purchaseDate: string };
   purchaseItem: { id: string };
-  source: {
-    relationshipId: string;
-    supplierId: string;
-    recommendedQuantity: string;
-    package: { id: string; code: string; quantity: string; version: number } | null;
-    commercialTerms: { id: string; version: number; unitPrice: string; currencyCode: "JPY"; taxRate: string };
-  };
+  source: PurchaseHandoffLineageSource;
+};
+
+/** A Purchase can own several immutable handoff lines; never collapse this to a scalar. */
+export type PurchaseHandoffLineage = {
+  sourceRecommendationId: string;
+  createdAt: string;
+  purchaseItemId: string;
+  lineNumber: number;
+  source: PurchaseHandoffLineageSource;
 };
 
 export type PurchaseLineFormValues = {
@@ -114,6 +125,8 @@ const PURCHASE_ITEM_KEYS = ["id", "lineNumber", "productId", "unitId", "quantity
 const RECOMMENDATION_PURCHASE_HANDOFF_KEYS = ["purchase"] as const;
 const RECOMMENDATION_PURCHASE_HANDOFF_LINEAGE_KEYS = ["handoff"] as const;
 const RECOMMENDATION_PURCHASE_HANDOFF_LINEAGE_ITEM_KEYS = ["sourceRecommendationId", "createdAt", "purchase", "purchaseItem", "source"] as const;
+const PURCHASE_HANDOFF_LINEAGE_KEYS = ["handoffs"] as const;
+const PURCHASE_HANDOFF_LINEAGE_ITEM_KEYS = ["sourceRecommendationId", "createdAt", "purchaseItemId", "lineNumber", "source"] as const;
 const RECOMMENDATION_PURCHASE_HANDOFF_PURCHASE_KEYS = ["id", "status", "purchaseDate"] as const;
 const RECOMMENDATION_PURCHASE_HANDOFF_PURCHASE_ITEM_KEYS = ["id"] as const;
 const RECOMMENDATION_PURCHASE_HANDOFF_SOURCE_KEYS = ["relationshipId", "supplierId", "recommendedQuantity", "package", "commercialTerms"] as const;
@@ -278,14 +291,48 @@ export function isRecommendationPurchaseHandoffLineageResponse(value: unknown): 
     && (value.handoff === null || isRecommendationPurchaseHandoffLineage(value.handoff));
 }
 
+/**
+ * This passive read is the only Purchase-origin lineage authority. It never
+ * calls the handoff mutation, so rendering a manual Purchase cannot create or
+ * replay a draft as a side effect.
+ */
+export async function requestPurchaseHandoffLineage(
+  api: RecommendationPurchaseHandoffApi,
+  purchaseId: string,
+): Promise<PurchaseHandoffLineage[]> {
+  const response = await api.request<unknown>(
+    `/purchases/${encodeURIComponent(purchaseId)}/handoff-lineage`,
+    { expectedStatus: 200 },
+  );
+  if (!isPurchaseHandoffLineageResponse(response)) throw new ApiError("server");
+  return response.handoffs;
+}
+
+export function isPurchaseHandoffLineageResponse(value: unknown): value is { handoffs: PurchaseHandoffLineage[] } {
+  if (!isRecord(value) || !hasExactlyKeys(value, PURCHASE_HANDOFF_LINEAGE_KEYS) || !Array.isArray(value.handoffs)) return false;
+  if (!value.handoffs.every(isPurchaseHandoffLineage)) return false;
+  const sourceRecommendationIds = new Set<string>();
+  const purchaseItemIds = new Set<string>();
+  for (let index = 0; index < value.handoffs.length; index += 1) {
+    const current = value.handoffs[index]!;
+    if (sourceRecommendationIds.has(current.sourceRecommendationId) || purchaseItemIds.has(current.purchaseItemId)) return false;
+    sourceRecommendationIds.add(current.sourceRecommendationId);
+    purchaseItemIds.add(current.purchaseItemId);
+    const previous = value.handoffs[index - 1];
+    if (previous !== undefined && (
+      current.lineNumber < previous.lineNumber
+      || (current.lineNumber === previous.lineNumber && current.purchaseItemId <= previous.purchaseItemId)
+    )) return false;
+  }
+  return true;
+}
+
 function isRecommendationPurchaseHandoffLineage(value: unknown): value is RecommendationPurchaseHandoffLineage {
   if (!isRecord(value) || !hasExactlyKeys(value, RECOMMENDATION_PURCHASE_HANDOFF_LINEAGE_ITEM_KEYS)) return false;
   if (!isRecord(value.purchase) || !hasExactlyKeys(value.purchase, RECOMMENDATION_PURCHASE_HANDOFF_PURCHASE_KEYS)) return false;
   if (!isRecord(value.purchaseItem) || !hasExactlyKeys(value.purchaseItem, RECOMMENDATION_PURCHASE_HANDOFF_PURCHASE_ITEM_KEYS)) return false;
-  if (!isRecord(value.source) || !hasExactlyKeys(value.source, RECOMMENDATION_PURCHASE_HANDOFF_SOURCE_KEYS)) return false;
+  if (!isHandoffLineageSource(value.source)) return false;
   const source = value.source;
-  if (!isRecord(source.commercialTerms) || !hasExactlyKeys(source.commercialTerms, RECOMMENDATION_PURCHASE_HANDOFF_COMMERCIAL_TERMS_KEYS)) return false;
-  if (source.package !== null && (!isRecord(source.package) || !hasExactlyKeys(source.package, RECOMMENDATION_PURCHASE_HANDOFF_PACKAGE_KEYS))) return false;
   return (
     isNonEmptyString(value.sourceRecommendationId)
     && isIsoTimestamp(value.createdAt)
@@ -293,20 +340,39 @@ function isRecommendationPurchaseHandoffLineage(value: unknown): value is Recomm
     && isPurchaseStatus(value.purchase.status)
     && isIsoTimestamp(value.purchase.purchaseDate)
     && isNonEmptyString(value.purchaseItem.id)
-    && isNonEmptyString(source.relationshipId)
-    && isNonEmptyString(source.supplierId)
-    && isPositiveDecimal(source.recommendedQuantity, 15, 9)
-    && (source.package === null || (
-      isNonEmptyString(source.package.id)
-      && isNonEmptyString(source.package.code)
-      && isPositiveDecimal(source.package.quantity, 15, 9)
-      && isPositiveInteger(source.package.version)
+    && isHandoffLineageSource(source)
+  );
+}
+
+function isPurchaseHandoffLineage(value: unknown): value is PurchaseHandoffLineage {
+  return isRecord(value)
+    && hasExactlyKeys(value, PURCHASE_HANDOFF_LINEAGE_ITEM_KEYS)
+    && isNonEmptyString(value.sourceRecommendationId)
+    && isIsoTimestamp(value.createdAt)
+    && isNonEmptyString(value.purchaseItemId)
+    && isPositiveInteger(value.lineNumber)
+    && isHandoffLineageSource(value.source);
+}
+
+function isHandoffLineageSource(value: unknown): value is PurchaseHandoffLineageSource {
+  if (!isRecord(value) || !hasExactlyKeys(value, RECOMMENDATION_PURCHASE_HANDOFF_SOURCE_KEYS)) return false;
+  if (!isRecord(value.commercialTerms) || !hasExactlyKeys(value.commercialTerms, RECOMMENDATION_PURCHASE_HANDOFF_COMMERCIAL_TERMS_KEYS)) return false;
+  if (value.package !== null && (!isRecord(value.package) || !hasExactlyKeys(value.package, RECOMMENDATION_PURCHASE_HANDOFF_PACKAGE_KEYS))) return false;
+  return (
+    isNonEmptyString(value.relationshipId)
+    && isNonEmptyString(value.supplierId)
+    && isPositiveDecimal(value.recommendedQuantity, 15, 9)
+    && (value.package === null || (
+      isNonEmptyString(value.package.id)
+      && isNonEmptyString(value.package.code)
+      && isPositiveDecimal(value.package.quantity, 15, 9)
+      && isPositiveInteger(value.package.version)
     ))
-    && isNonEmptyString(source.commercialTerms.id)
-    && isPositiveInteger(source.commercialTerms.version)
-    && isDecimal(source.commercialTerms.unitPrice, 14, 6)
-    && source.commercialTerms.currencyCode === "JPY"
-    && isTaxRate(source.commercialTerms.taxRate)
+    && isNonEmptyString(value.commercialTerms.id)
+    && isPositiveInteger(value.commercialTerms.version)
+    && isDecimal(value.commercialTerms.unitPrice, 14, 6)
+    && value.commercialTerms.currencyCode === "JPY"
+    && isTaxRate(value.commercialTerms.taxRate)
   );
 }
 
