@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Header,
   HttpCode,
@@ -11,12 +12,15 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   Res,
   UnprocessableEntityException,
+  UnauthorizedException,
 } from "@nestjs/common";
 import type { Response } from "express";
 import {
   ApiBadRequestResponse,
+  ApiBody,
   ApiConflictResponse,
   ApiCookieAuth,
   ApiCreatedResponse,
@@ -39,6 +43,7 @@ import {
 import { PostPurchaseUseCase } from "../application/post-purchase.use-case";
 import {
   ConfirmPurchaseUseCase,
+  CancelPurchaseUseCase,
   CreatePurchaseDraftUseCase,
   GetPurchaseUseCase,
   UpdatePurchaseDraftMetadataUseCase,
@@ -48,14 +53,16 @@ import { ListPurchasesUseCase } from "../application/list-purchases.use-case";
 import type { PurchaseListCursor } from "../application/purchase-list.repository";
 import {
   PurchaseDraftConflictError,
+  PurchaseDraftForbiddenError,
   PurchaseDraftNotFoundError,
   PurchaseDraftValidationError,
 } from "../application/purchase-draft.errors";
 import { CreatePurchaseDto } from "./dto/create-purchase.dto";
 import { UpdatePurchaseDto } from "./dto/update-purchase.dto";
 import { UpdatePurchaseMetadataDto } from "./dto/update-purchase-metadata.dto";
+import { CancelPurchaseDto } from "./dto/cancel-purchase.dto";
 import { CreateRecommendationPurchaseDraftDto } from "./dto/create-recommendation-purchase-draft.dto";
-import { postedPurchaseResponseSchema, purchaseDraftResponseSchema, purchaseHandoffLineageResponseSchema, purchaseListPageResponseSchema, recommendationPurchaseDraftHandoffResponseSchema, recommendationPurchaseHandoffLineageResponseSchema } from "./purchase-response.schemas";
+import { cancelledPurchaseResponseSchema, postedPurchaseResponseSchema, purchaseDraftResponseSchema, purchaseHandoffLineageResponseSchema, purchaseListPageResponseSchema, recommendationPurchaseDraftHandoffResponseSchema, recommendationPurchaseHandoffLineageResponseSchema } from "./purchase-response.schemas";
 import { ListPurchasesQueryDto, PURCHASE_STATUSES } from "./dto/list-purchases-query.dto";
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
@@ -63,6 +70,8 @@ import { CreateRecommendationPurchaseDraftUseCase } from "../application/recomme
 import { GetRecommendationPurchaseHandoffUseCase } from "../application/get-recommendation-purchase-handoff.use-case";
 import { GetPurchaseHandoffLineageUseCase } from "../application/get-purchase-handoff-lineage.use-case";
 import { PurchaseRecommendationHandoffLineageNotFoundError, RecommendationPurchaseHandoffConflictError, RecommendationPurchaseHandoffNotFoundError } from "../application/recommendation-purchase-handoff.errors";
+import type { AuthenticatedRequest } from "../../auth/auth.types";
+import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
 
 type PostedPurchaseResponse = {
   id: string;
@@ -85,6 +94,7 @@ export class PurchaseController {
     private readonly createRecommendationPurchaseDraftUseCase: CreateRecommendationPurchaseDraftUseCase,
     private readonly getRecommendationPurchaseHandoffUseCase: GetRecommendationPurchaseHandoffUseCase,
     private readonly getPurchaseHandoffLineageUseCase: GetPurchaseHandoffLineageUseCase,
+    private readonly cancelPurchaseUseCase: CancelPurchaseUseCase,
   ) {}
 
   @Get()
@@ -291,9 +301,39 @@ export class PurchaseController {
     }
   }
 
+  @Post(":id/cancel")
+  @HttpCode(200)
+  @Header("Cache-Control", "private, no-store")
+  // The required permission is selected from the Purchase status while its
+  // lifecycle row is locked: DRAFT requires purchase.write, CONFIRMED requires
+  // purchase.confirm. The repository performs that authoritative check in the
+  // same transaction; this decorator preserves normal session/CSRF protection.
+  @AuthenticatedOnly()
+  @ApiOperation({ summary: "Cancel a DRAFT or CONFIRMED purchase with a required reason" })
+  @ApiBody({
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["reason"],
+      properties: { reason: { type: "string", minLength: 1, maxLength: 10_000 } },
+    },
+  })
+  @ApiOkResponse({ description: "The Purchase transitioned to CANCELLED and its reason was persisted.", schema: cancelledPurchaseResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "purchase.write is required for DRAFT cancellation; purchase.confirm is required for CONFIRMED cancellation." })
+  @ApiNotFoundResponse({ description: "The Purchase does not exist." })
+  @ApiConflictResponse({ description: "Only DRAFT and CONFIRMED Purchases can be cancelled." })
+  @ApiUnprocessableEntityResponse({ description: "A non-empty cancellation reason is required." })
+  cancelPurchase(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() dto: CancelPurchaseDto) {
+    const actorUserId = request.authUser?.id;
+    if (actorUserId === undefined) throw new UnauthorizedException("Authentication required.");
+    return this.runDraft(() => this.cancelPurchaseUseCase.execute(id, dto.reason, actorUserId));
+  }
+
   private async runDraft<T>(operation: () => Promise<T>): Promise<T> {
     try { return await operation(); } catch (error: unknown) {
       if (error instanceof PurchaseDraftNotFoundError) throw new NotFoundException(error.message);
+      if (error instanceof PurchaseDraftForbiddenError) throw new ForbiddenException(error.message);
       if (error instanceof PurchaseDraftConflictError) throw new ConflictException(error.message);
       if (error instanceof PurchaseDraftValidationError) throw new UnprocessableEntityException(error.message);
       throw error;

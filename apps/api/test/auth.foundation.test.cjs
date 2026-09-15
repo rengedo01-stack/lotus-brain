@@ -567,6 +567,7 @@ test("every existing business endpoint has the exact required permission", () =>
   for (const methodName of ["me", "permissions", "csrf", "logout"]) {
     assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, AuthController.prototype[methodName]), true);
   }
+  assert.equal(Reflect.getMetadata(AUTHENTICATED_ONLY_KEY, PurchaseController.prototype.cancelPurchase), true);
 });
 
 test("current permission bootstrap derives permissions only from the authenticated session user", async () => {

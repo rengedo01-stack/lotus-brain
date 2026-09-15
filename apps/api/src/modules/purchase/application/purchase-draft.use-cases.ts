@@ -1,10 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common";
 import {
   PurchaseDraftConflictError,
+  PurchaseDraftForbiddenError,
   PurchaseDraftNotFoundError,
   PurchaseDraftValidationError,
 } from "./purchase-draft.errors";
-import { PURCHASE_DRAFT_REPOSITORY, type PurchaseDraftRepository, type PurchaseDraftInput, type PurchaseDraftMetadataInput, type PurchaseDraftView } from "../infrastructure/purchase-draft.repository";
+import { PURCHASE_DRAFT_REPOSITORY, type PurchaseDraftRepository, type PurchaseDraftInput, type PurchaseDraftMetadataInput, type PurchaseDraftView, type PurchaseCancellationView } from "../infrastructure/purchase-draft.repository";
 
 @Injectable()
 export class CreatePurchaseDraftUseCase {
@@ -51,6 +52,22 @@ export class ConfirmPurchaseUseCase {
     const result = await this.repository.confirm(id);
     if (result === "NOT_FOUND") throw new PurchaseDraftNotFoundError(`Purchase ${id} was not found.`);
     if (result === "CONFLICT") throw new PurchaseDraftConflictError(`Purchase ${id} cannot be confirmed.`);
+    return result;
+  }
+}
+
+@Injectable()
+export class CancelPurchaseUseCase {
+  constructor(@Inject(PURCHASE_DRAFT_REPOSITORY) private readonly repository: PurchaseDraftRepository) {}
+
+  async execute(id: string, reason: string, actorUserId: string): Promise<PurchaseCancellationView> {
+    const normalizedReason = reason.trim();
+    if (normalizedReason.length === 0) throw new PurchaseDraftValidationError("Cancellation reason cannot be empty.");
+    if (normalizedReason.length > 10_000) throw new PurchaseDraftValidationError("Cancellation reason is too long.");
+    const result = await this.repository.cancel(id, normalizedReason, actorUserId);
+    if (result === "NOT_FOUND") throw new PurchaseDraftNotFoundError(`Purchase ${id} was not found.`);
+    if (result === "CONFLICT") throw new PurchaseDraftConflictError(`Purchase ${id} cannot be cancelled.`);
+    if (result === "FORBIDDEN") throw new PurchaseDraftForbiddenError("Permission denied.");
     return result;
   }
 }

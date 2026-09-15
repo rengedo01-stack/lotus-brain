@@ -11,6 +11,7 @@ const {
   recommendationPurchaseDraftHandoffResponseSchema,
   recommendationPurchaseHandoffLineageResponseSchema,
   purchaseHandoffLineageResponseSchema,
+  cancelledPurchaseResponseSchema,
 } = require("../dist/modules/purchase/presentation/purchase-response.schemas.js");
 
 const purchase = {
@@ -113,4 +114,17 @@ test("purchase handoff lineage is read-only, exact, ordered by PurchaseItem line
     () => missing.getPurchaseHandoffLineage("missing"),
     (error) => error?.name === "NotFoundException",
   );
+});
+
+test("purchase cancellation returns only the persisted terminal lifecycle authority", async () => {
+  const cancelledAt = new Date("2026-09-15T00:00:00.000Z");
+  const instance = new PurchaseController({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {
+    execute: async (id, reason, actor) => ({ id, status: "CANCELLED", cancelledAt, cancellationReason: `${reason}:${actor}` }),
+  });
+  const result = await instance.cancelPurchase({ authUser: { id: "actor" } }, "purchase-1", { reason: "supplier withdrew" });
+  assert.deepEqual(Object.keys(result).sort(), ["cancellationReason", "cancelledAt", "id", "status"]);
+  assert.equal(result.status, "CANCELLED");
+  assert.equal(result.cancellationReason, "supplier withdrew:actor");
+  assert.equal(cancelledPurchaseResponseSchema.additionalProperties, false);
+  assert.deepEqual(cancelledPurchaseResponseSchema.required, ["id", "status", "cancelledAt", "cancellationReason"]);
 });

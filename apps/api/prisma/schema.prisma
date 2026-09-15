@@ -962,6 +962,9 @@ model Purchase {
   note           String?
   postedAt       DateTime?
   cancelledAt    DateTime?
+  // A required, immutable explanation once the Purchase reaches CANCELLED.
+  // It is deliberately stored on the Purchase in addition to the audit log.
+  cancellationReason String?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
