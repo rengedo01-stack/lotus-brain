@@ -163,6 +163,27 @@ if (databaseUrl === undefined) {
         assert.equal(await handoffs.createPurchaseDraft({ sourceRecommendationId: unitDrift.recommendation.id, purchaseDate: new Date("2026-09-14T00:00:00.000Z") }), "CONFLICT");
         await prisma.unit.update({ where: { id: unit.id }, data: { name: "Each" } });
 
+        // C21B rechecks the calculation-policy version itself, rather than
+        // trusting only current input versions or the recommendation read API.
+        const policyDrift = await ready("POLICY-DRIFT");
+        const sourceRecommendation = await prisma.replenishmentRecommendation.findUniqueOrThrow({ where: { id: policyDrift.recommendation.id } });
+        await prisma.replenishmentRecommendation.update({
+          where: { id: sourceRecommendation.id },
+          data: { disposition: "SUPERSEDED", version: { increment: 1 }, supersededByUserId: actor.id, supersededAt: new Date() },
+        });
+        const policyMismatched = await prisma.replenishmentRecommendation.create({ data: {
+          ...sourceRecommendation,
+          id: `${fixture}-policy-version-mismatch`,
+          disposition: "ACTIVE",
+          version: 1,
+          calculationPolicyVersion: sourceRecommendation.calculationPolicyVersion + 1,
+          supersededByUserId: null,
+          supersededAt: null,
+          dismissedByUserId: null,
+          dismissedAt: null,
+        } });
+        assert.equal(await handoffs.createPurchaseDraft({ sourceRecommendationId: policyMismatched.id, purchaseDate: new Date("2026-09-14T00:00:00.000Z") }), "CONFLICT");
+
         const concurrent = await ready("CONCURRENT");
         const results = await Promise.all([
           handoffs.createPurchaseDraft({ sourceRecommendationId: concurrent.recommendation.id, purchaseDate: new Date("2026-09-14T00:00:00.000Z") }),

@@ -2,13 +2,12 @@ import { Injectable } from "@nestjs/common";
 import { Prisma, type MasterStatus, type ReplenishmentRecommendation } from "../../../generated/prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { rawTargetGap, solveReplenishmentQuantity } from "../../inventory/domain/replenishment-quantity-solver";
+import { isCurrentReplenishmentCalculationPolicyVersion, REPLENISHMENT_CALCULATION_POLICY_VERSION } from "../domain/replenishment-calculation-policy";
 import type {
   ReplenishmentRecommendationFreshness,
   ReplenishmentRecommendationRepository,
   ReplenishmentRecommendationView,
 } from "../application/replenishment-recommendation.repository";
-
-const CALCULATION_POLICY_VERSION = 1;
 
 type ProductWithCalculationInputs = Prisma.ProductGetPayload<{
   include: {
@@ -134,8 +133,9 @@ export class PrismaReplenishmentRecommendationRepository implements Replenishmen
   }
 
   private isSerializationConflict(error: unknown): boolean {
-    return typeof error === "object" && error !== null && "code" in error
-      && (((error as { code?: unknown }).code === "P2034") || ((error as { code?: unknown }).code === "40001"));
+    if (typeof error !== "object" || error === null || !("code" in error)) return false;
+    const code = (error as { code?: unknown }).code;
+    return code === "P2002" || code === "P2034" || code === "40001";
   }
 
   private async freshnessFor(tx: Prisma.TransactionClient, recommendation: ReplenishmentRecommendation): Promise<ReplenishmentRecommendationFreshness> {
@@ -268,7 +268,7 @@ export class PrismaReplenishmentRecommendationRepository implements Replenishmen
   private createData(snapshot: ReadySnapshot, actorUserId: string): Prisma.ReplenishmentRecommendationUncheckedCreateInput {
     return {
       productId: snapshot.product.id,
-      calculationPolicyVersion: CALCULATION_POLICY_VERSION,
+      calculationPolicyVersion: REPLENISHMENT_CALCULATION_POLICY_VERSION,
       productCodeSnapshot: snapshot.product.code,
       productNameSnapshot: snapshot.product.name,
       inventoryUnitCodeSnapshot: snapshot.inventoryUnit.code,
@@ -358,7 +358,8 @@ export class PrismaReplenishmentRecommendationRepository implements Replenishmen
   }
 
   private sameAuthoritativeInputs(recommendation: ReplenishmentRecommendation, current: ReadySnapshot): boolean {
-    return recommendation.inventoryVersionSnapshot === current.inventoryVersion
+    return isCurrentReplenishmentCalculationPolicyVersion(recommendation.calculationPolicyVersion)
+      && recommendation.inventoryVersionSnapshot === current.inventoryVersion
       && recommendation.replenishmentPolicyIdSnapshot === current.replenishmentPolicyId
       && recommendation.replenishmentPolicyVersionSnapshot === current.replenishmentPolicyVersion
       && recommendation.supplierPreferenceIdSnapshot === current.preferredSupplier.preferenceId

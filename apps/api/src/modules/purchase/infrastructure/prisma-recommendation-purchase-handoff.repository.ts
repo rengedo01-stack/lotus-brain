@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { Prisma, type MasterStatus } from "../../../generated/prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { rawTargetGap, solveReplenishmentQuantity } from "../../inventory/domain/replenishment-quantity-solver";
+import { isCurrentReplenishmentCalculationPolicyVersion } from "../../replenishment/domain/replenishment-calculation-policy";
 import type {
   CreateRecommendationPurchaseDraftInput,
   PurchaseRecommendationHandoffRepository,
@@ -203,6 +204,7 @@ export class PrismaPurchaseRecommendationHandoffRepository implements PurchaseRe
     if (inventory === null || policy === null || preference === null || relationship === null || relationship === undefined) return false;
     if (
       recommendation.disposition !== "ACTIVE"
+      || !isCurrentReplenishmentCalculationPolicyVersion(recommendation.calculationPolicyVersion)
       || !this.isActive(product.status, product.deletedAt)
       || relationship.productId !== product.id
       || relationship.status !== "ACTIVE"
