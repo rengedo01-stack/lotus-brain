@@ -14,6 +14,18 @@ export const postedPurchaseResponseSchema = {
   },
 };
 
+export const cancelledPurchaseResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["id", "status", "cancelledAt", "cancellationReason"],
+  properties: {
+    id: { type: "string" as const, minLength: 1 },
+    status: { type: "string" as const, enum: ["CANCELLED"] },
+    cancelledAt: { type: "string" as const, format: "date-time" },
+    cancellationReason: { type: "string" as const, minLength: 1, maxLength: 10_000 },
+  },
+};
+
 const quantityDecimalSchema = {
   type: "string" as const,
   pattern: "^(?:0|[1-9][0-9]{0,14})(?:\\.[0-9]{1,9})?$",

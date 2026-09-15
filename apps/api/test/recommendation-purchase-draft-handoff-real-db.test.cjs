@@ -154,6 +154,23 @@ if (databaseUrl === undefined) {
         const metadata = await drafts.updateMetadata(created.purchase.id, { note: "operator metadata" });
         assert.notEqual(metadata, "NOT_FOUND"); assert.notEqual(metadata, "CONFLICT"); assert.equal(metadata.note, "operator metadata");
 
+        // C24A makes cancellation terminal without deleting the immutable C21A
+        // handoff row. Replaying the source Recommendation must not create a
+        // second Purchase even after the original draft is cancelled.
+        await prisma.purchase.update({
+          where: { id: created.purchase.id },
+          data: { status: "CANCELLED", cancelledAt: new Date(), cancellationReason: "handoff cancelled" },
+        });
+        const cancelledReplay = await handoffs.createPurchaseDraft({
+          sourceRecommendationId: first.recommendation.id,
+          purchaseDate: new Date("2028-01-01T00:00:00.000Z"),
+        });
+        assert.notEqual(cancelledReplay, "NOT_FOUND"); assert.notEqual(cancelledReplay, "CONFLICT");
+        assert.equal(cancelledReplay.replayed, true);
+        assert.equal(cancelledReplay.purchase.id, created.purchase.id);
+        assert.equal(cancelledReplay.purchase.status, "CANCELLED");
+        assert.equal(await prisma.purchase.count({ where: { items: { some: { recommendationHandoff: { sourceRecommendationId: first.recommendation.id } } } } }), 1);
+
         const missingTerms = await ready("NO-TERMS", false);
         assert.equal(await handoffs.createPurchaseDraft({ sourceRecommendationId: missingTerms.recommendation.id, purchaseDate: new Date("2026-09-14T00:00:00.000Z") }), "CONFLICT");
         assert.equal(await prisma.purchase.count({ where: { items: { some: { productId: missingTerms.product.id } } } }), 0);
