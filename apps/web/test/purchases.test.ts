@@ -9,6 +9,7 @@ import {
   isAmbiguousPurchasePostingError,
   isPostedPurchaseResult,
   isPurchase,
+  isCanonicalUtcTimestamp,
   isPurchaseListPage,
   mergePostedPurchaseResult,
   purchaseListPath,
@@ -206,6 +207,13 @@ test("recommendation handoff accepts only its documented create or idempotent-re
     () => createPurchaseDraftFromRecommendation(createApiClient(), "recommendation-1", "2026-09-14T00:00:00.000Z"),
     (error: unknown) => error instanceof ApiError && error.kind === "server",
   );
+});
+
+test("recommendation handoff UI can require the API's canonical UTC purchaseDate contract", () => {
+  assert.equal(isCanonicalUtcTimestamp("2026-09-14T00:00:00.000Z"), true);
+  assert.equal(isCanonicalUtcTimestamp("2026-09-14"), false);
+  assert.equal(isCanonicalUtcTimestamp("2026-09-14T00:00:00Z"), false);
+  assert.equal(isCanonicalUtcTimestamp("2026-09-14T00:00:00.000+09:00"), false);
 });
 
 test("recommendation handoff lineage is a passive exact-200 read contract", async (t) => {

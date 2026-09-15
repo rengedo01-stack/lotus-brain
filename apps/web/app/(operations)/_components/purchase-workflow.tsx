@@ -14,6 +14,7 @@ import {
   createPurchaseDraft,
   requestPurchaseList,
   requestPurchaseDetail,
+  requestPurchaseHandoffLineage,
   requestPurchasePosting,
   PURCHASE_STATUSES,
   purchaseFormFromPurchase,
@@ -26,6 +27,7 @@ import {
   type PurchaseFormValues,
   type PurchaseListFilters,
   type PurchaseListPage,
+  type PurchaseHandoffLineage,
   type PurchaseLineFormValues,
 } from "@/lib/purchases";
 import { isSupplierList, isUnitList, type Supplier, type Unit } from "@/lib/master-data";
@@ -56,6 +58,12 @@ type PurchaseListState =
   | { status: "loading" }
   | { status: "ready"; page: PurchaseListPage }
   | { status: "error"; message: string };
+
+type PurchaseHandoffLineageState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; purchaseId: string; handoffs: PurchaseHandoffLineage[] }
+  | { status: "error"; purchaseId: string; message: string };
 
 function protectedPurchaseError(error: unknown, refreshAuthentication: () => void): boolean {
   if (!(error instanceof ApiError)) return false;
@@ -442,10 +450,12 @@ export function PurchaseEditPage({ purchaseId }: Readonly<{ purchaseId: string }
 export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string }>) {
   const { api, permissions, refreshAuthentication } = useOperationalApp();
   const [state, setState] = useState<PurchaseState>({ status: "loading" });
+  const [handoffState, setHandoffState] = useState<PurchaseHandoffLineageState>({ status: "idle" });
   const [retryKey, setRetryKey] = useState(0);
   const [action, setAction] = useState<"confirm" | "post" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [reloadRequired, setReloadRequired] = useState(false);
+  const canReadHandoffLineage = ["inventory.read", "purchase.read", "master.read"].every((permission) => permissions.has(permission));
 
   useEffect(() => {
     let active = true;
@@ -461,6 +471,30 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
     });
     return () => { active = false; };
   }, [api, purchaseId, refreshAuthentication, retryKey]);
+
+  useEffect(() => {
+    if (!canReadHandoffLineage) {
+      return;
+    }
+
+    let active = true;
+    void requestPurchaseHandoffLineage(api, purchaseId).then((handoffs) => {
+      if (active) setHandoffState({ status: "ready", purchaseId, handoffs });
+    }).catch((error: unknown) => {
+      if (!active || (error instanceof ApiError && error.kind === "unauthorized")) return;
+      if (error instanceof ApiError && error.kind === "forbidden") { refreshAuthentication(); window.location.assign("/forbidden"); return; }
+      if (active) setHandoffState({ status: "error", purchaseId, message: purchaseErrorMessage(error) });
+    });
+    return () => { active = false; };
+  }, [api, canReadHandoffLineage, purchaseId, refreshAuthentication]);
+
+  const visibleHandoffState: PurchaseHandoffLineageState = !canReadHandoffLineage
+    ? { status: "idle" }
+    : handoffState.status === "ready" && handoffState.purchaseId === purchaseId
+      ? handoffState
+      : handoffState.status === "error" && handoffState.purchaseId === purchaseId
+        ? handoffState
+        : { status: "loading" };
 
   async function confirm() {
     if (action !== null || reloadRequired) return;
@@ -571,9 +605,18 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
             <tbody className="divide-y divide-slate-100">{purchase.items.map((item) => <tr key={item.id}><td className="px-4 py-3 text-slate-700">{item.lineNumber}</td><td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{item.productId}</td><td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{item.unitId}</td><td className="px-4 py-3 text-right text-slate-950">{item.quantity}</td><td className="px-4 py-3 text-right text-slate-950">{item.unitPrice}</td><td className="px-4 py-3 text-right text-slate-950">{item.taxRate}</td><td className="px-4 py-3 text-right font-medium text-slate-950">{item.lineAmount}</td></tr>)}</tbody>
           </table>
         </div>
+        <PurchaseHandoffLineagePanel canRead={canReadHandoffLineage} state={visibleHandoffState} />
       </div>
     </section>
   );
+}
+
+function PurchaseHandoffLineagePanel({ canRead, state }: Readonly<{ canRead: boolean; state: PurchaseHandoffLineageState }>) {
+  if (!canRead) return <section className="mt-8 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">Recommendation由来情報</h2><p className="mt-2 text-sm text-slate-700">表示には在庫・仕入・マスター参照権限が必要です。</p></section>;
+  if (state.status === "idle" || state.status === "loading") return <section className="mt-8 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">Recommendation由来情報</h2><p className="mt-2 text-sm text-slate-700" role="status">不変のhandoff lineageを読み込んでいます…</p></section>;
+  if (state.status === "error") return <section className="mt-8 rounded-xl border border-red-200 bg-red-50 p-6"><h2 className="text-lg font-bold text-red-950">Recommendation由来情報を表示できません</h2><p className="mt-2 text-sm text-red-900" role="alert">{state.message}</p><p className="mt-2 text-sm text-red-900">現在のマスター情報からlineageを推測・再構成することはありません。</p></section>;
+  if (state.handoffs.length === 0) return <section className="mt-8 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">Recommendation由来情報</h2><p className="mt-2 text-sm text-slate-700">このPurchaseにはRecommendation由来の明細はありません。</p></section>;
+  return <section aria-labelledby="purchase-handoff-lineage-title" className="mt-8 rounded-xl border border-emerald-200 bg-emerald-50 p-6"><h2 className="text-lg font-bold text-emerald-950" id="purchase-handoff-lineage-title">Recommendation由来情報</h2><p className="mt-2 text-sm text-emerald-900">以下はhandoff時点で固定された不変snapshotです。現在の仕入先・パッケージ・commercial termsから再構成していません。</p><div className="mt-5 space-y-5">{state.handoffs.map((handoff) => <article className="rounded-lg border border-emerald-200 bg-white p-5" key={handoff.purchaseItemId}><h3 className="font-semibold text-slate-950">明細 {handoff.lineNumber}</h3><dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2"><DetailItem label="source Recommendation ID" value={handoff.sourceRecommendationId} /><DetailItem label="PurchaseItem ID" value={handoff.purchaseItemId} /><DetailItem label="handoff作成時刻" value={handoff.createdAt} /><DetailItem label="推奨数量" value={handoff.source.recommendedQuantity} /><DetailItem label="供給関係 ID" value={handoff.source.relationshipId} /><DetailItem label="仕入先 ID" value={handoff.source.supplierId} /><DetailItem label="パッケージsnapshot" value={handoff.source.package === null ? "なし" : `${handoff.source.package.code} / ${handoff.source.package.quantity} / version ${handoff.source.package.version}`} /><DetailItem label="commercial terms snapshot" value={`JPY ${handoff.source.commercialTerms.unitPrice} / 税率 ${handoff.source.commercialTerms.taxRate} / version ${handoff.source.commercialTerms.version}`} /></dl></article>)}</div></section>;
 }
 
 function PurchaseForm({ errors, formError, isSubmitting, masters, onAddLine, onChange, onRemoveLine, onSubmit, submitLabel, values }: Readonly<{
