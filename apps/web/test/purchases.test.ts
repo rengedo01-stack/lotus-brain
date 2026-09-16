@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   confirmPurchaseDraft,
+  isAmbiguousPurchaseCancellationError,
+  isCancelledPurchaseResult,
   createPurchaseDraftFromRecommendation,
   isRecommendationPurchaseHandoffLineageResponse,
   isPurchaseHandoffLineageResponse,
@@ -12,6 +14,7 @@ import {
   isCanonicalUtcTimestamp,
   isPurchaseListPage,
   mergePostedPurchaseResult,
+  mergeCancelledPurchaseResult,
   purchaseListPath,
   purchaseFormFromPurchase,
   purchasePayload,
@@ -21,9 +24,12 @@ import {
   requestPurchaseHandoffLineage,
   type PurchaseListApi,
   requestPurchasePosting,
+  requestPurchaseCancellation,
   updatePurchaseDraft,
   validatePurchaseForm,
   type PostedPurchaseResult,
+  type CancelledPurchaseResult,
+  type PurchaseCancellationApi,
   type PurchasePostingApi,
   type Purchase,
 } from "../lib/purchases.ts";
@@ -40,6 +46,8 @@ const purchase: Purchase = {
   tax: "0",
   total: "123456789012.123456",
   postedAt: null,
+  cancelledAt: null,
+  cancellationReason: null,
   createdAt: "2026-08-21T00:00:00.000Z",
   updatedAt: "2026-08-21T00:00:00.000Z",
   items: [{
@@ -140,6 +148,12 @@ test("purchase response guards accept only the exact documented draft contract",
   assert.equal(isPurchase({ ...purchase, items: [{ ...purchase.items[0], lineNumber: 0 }] }), false);
   assert.equal(isPurchase({ ...purchase, status: "SAVED" }), false);
   assert.equal(isPurchase({ ...purchase, items: [{ ...purchase.items[0], quantity: 1 }] }), false);
+  assert.equal(isPurchase({ ...purchase, cancelledAt: "2026-08-21T01:02:03.000Z" }), false);
+  assert.equal(isPurchase({ ...purchase, cancellationReason: "not cancelled" }), false);
+  assert.equal(isPurchase({ ...purchase, status: "CANCELLED", cancelledAt: "2026-08-21T01:02:03.000Z", cancellationReason: "supplier withdrew stock" }), true);
+  assert.equal(isPurchase({ ...purchase, status: "CANCELLED", cancelledAt: null, cancellationReason: "supplier withdrew stock" }), false);
+  assert.equal(isPurchase({ ...purchase, status: "CANCELLED", cancelledAt: "2026-08-21T01:02:03.000Z", cancellationReason: "   " }), false);
+  assert.equal(isPurchase({ ...purchase, status: "CANCELLED", cancelledAt: "2026-08-21T01:02:03.000Z", cancellationReason: " supplier withdrew stock " }), false);
 });
 
 test("purchase detail and draft mutations pin their documented success statuses before state changes", async () => {
@@ -447,6 +461,87 @@ test("purchase posting uses the exact 200 response as lifecycle authority withou
   assert.equal(posted.postedAt, "2026-08-21T01:02:03.000Z");
 });
 
+test("purchase cancellation response requires the exact persisted lifecycle authority", () => {
+  const cancelled: CancelledPurchaseResult = {
+    id: purchase.id,
+    status: "CANCELLED",
+    cancelledAt: "2026-08-21T01:02:03.000Z",
+    cancellationReason: "supplier withdrew stock",
+  };
+  assert.equal(isCancelledPurchaseResult(cancelled, purchase.id), true);
+  assert.equal(isCancelledPurchaseResult({ ...cancelled, extra: true }, purchase.id), false);
+  assert.equal(isCancelledPurchaseResult({ ...cancelled, id: "different-purchase" }, purchase.id), false);
+  assert.equal(isCancelledPurchaseResult({ ...cancelled, status: "DRAFT" }, purchase.id), false);
+  assert.equal(isCancelledPurchaseResult({ ...cancelled, cancelledAt: "2026-08-21" }, purchase.id), false);
+  assert.equal(isCancelledPurchaseResult({ ...cancelled, cancellationReason: "   " }, purchase.id), false);
+  assert.equal(isCancelledPurchaseResult({ ...cancelled, cancellationReason: " supplier withdrew stock " }, purchase.id), false);
+  assert.equal(isCancelledPurchaseResult({ ...cancelled, cancellationReason: "x".repeat(10_001) }, purchase.id), false);
+
+  const merged = mergeCancelledPurchaseResult(purchase, cancelled);
+  assert.equal(merged.status, "CANCELLED");
+  assert.equal(merged.postedAt, null);
+  assert.equal(merged.cancelledAt, cancelled.cancelledAt);
+  assert.equal(merged.cancellationReason, cancelled.cancellationReason);
+  assert.equal(merged.items, purchase.items);
+});
+
+test("purchase cancellation posts a reason and accepts only the exact 200 response without a follow-up read", async () => {
+  const calls: Array<{ options: unknown; path: string }> = [];
+  const api: PurchaseCancellationApi = {
+    async request<T>(path: string, options?: unknown): Promise<T> {
+      calls.push({ path, options });
+      return {
+        id: purchase.id,
+        status: "CANCELLED",
+        cancelledAt: "2026-08-21T01:02:03.000Z",
+        cancellationReason: "supplier withdrew stock",
+      } as T;
+    },
+  };
+
+  const cancelled = await requestPurchaseCancellation(api, purchase, "  supplier withdrew stock  ");
+  assert.deepEqual(calls, [{
+    path: `/purchases/${purchase.id}/cancel`,
+    options: { method: "POST", body: { reason: "  supplier withdrew stock  " }, expectedStatus: 200 },
+  }]);
+  assert.equal(cancelled.status, "CANCELLED");
+  assert.equal(cancelled.cancellationReason, "supplier withdrew stock");
+});
+
+test("purchase cancellation rejects unexpected success statuses and malformed completion bodies", async (t) => {
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
+  t.after(() => { process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl; });
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const cancelled = {
+    id: purchase.id,
+    status: "CANCELLED",
+    cancelledAt: "2026-08-21T01:02:03.000Z",
+    cancellationReason: "supplier withdrew stock",
+  };
+  for (const status of [201, 202, 204]) {
+    globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+      ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+      : status === 204
+        ? new Response(null, { status })
+        : new Response(JSON.stringify(cancelled), { status, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => requestPurchaseCancellation(createApiClient(), purchase, "supplier withdrew stock"),
+      (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === status,
+    );
+  }
+
+  globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+    ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+    : new Response(JSON.stringify({ ...cancelled, extra: true }), { headers: { "content-type": "application/json" } });
+  await assert.rejects(
+    () => requestPurchaseCancellation(createApiClient(), purchase, "supplier withdrew stock"),
+    (error: unknown) => error instanceof ApiError && error.kind === "server",
+  );
+});
+
 test("purchase posting rejects unexpected success statuses and malformed completion bodies", async (t) => {
   const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
   process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
@@ -482,4 +577,13 @@ test("ambiguous purchase posting results require explicit reconciliation rather 
   assert.equal(isAmbiguousPurchasePostingError(new ApiError("validation", 422)), false);
   assert.equal(isAmbiguousPurchasePostingError(new ApiError("forbidden", 403)), false);
   assert.equal(isAmbiguousPurchasePostingError(new ApiError("unauthorized", 401)), false);
+});
+
+test("ambiguous purchase cancellation results require explicit reconciliation rather than a retry", () => {
+  assert.equal(isAmbiguousPurchaseCancellationError(new ApiError("server", 201)), true);
+  assert.equal(isAmbiguousPurchaseCancellationError(new ApiError("network")), true);
+  assert.equal(isAmbiguousPurchaseCancellationError(new ApiError("conflict", 409)), true);
+  assert.equal(isAmbiguousPurchaseCancellationError(new ApiError("validation", 422)), false);
+  assert.equal(isAmbiguousPurchaseCancellationError(new ApiError("forbidden", 403)), false);
+  assert.equal(isAmbiguousPurchaseCancellationError(new ApiError("unauthorized", 401)), false);
 });

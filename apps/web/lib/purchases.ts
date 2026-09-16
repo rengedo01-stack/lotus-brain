@@ -16,6 +16,8 @@ export type PurchaseItem = {
 };
 
 export type Purchase = {
+  cancellationReason: string | null;
+  cancelledAt: string | null;
   createdAt: string;
   documentNumber: string | null;
   id: string;
@@ -64,7 +66,15 @@ export type PostedPurchaseResult = {
   status: "POSTED";
 };
 
+export type CancelledPurchaseResult = {
+  cancellationReason: string;
+  cancelledAt: string;
+  id: string;
+  status: "CANCELLED";
+};
+
 export type PurchasePostingApi = Pick<ApiClient, "request">;
+export type PurchaseCancellationApi = Pick<ApiClient, "request">;
 export type PurchaseListApi = Pick<ApiClient, "request">;
 export type PurchaseDraftApi = Pick<ApiClient, "request">;
 export type RecommendationPurchaseHandoffApi = Pick<ApiClient, "request">;
@@ -116,10 +126,11 @@ export type PurchaseFieldErrors = Record<string, string>;
 const DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const POSTED_PURCHASE_RESULT_KEYS = ["id", "status", "postedAt"] as const;
+const CANCELLED_PURCHASE_RESULT_KEYS = ["id", "status", "cancelledAt", "cancellationReason"] as const;
 const PURCHASE_LIST_ITEM_KEYS = ["id", "status", "purchaseDate", "documentNumber", "postedAt", "cancelledAt", "supplier"] as const;
 const PURCHASE_LIST_SUPPLIER_KEYS = ["code", "name"] as const;
 const PURCHASE_LIST_PAGE_KEYS = ["items", "nextCursor"] as const;
-const PURCHASE_KEYS = ["id", "supplier", "status", "purchaseDate", "documentNumber", "note", "subtotal", "tax", "total", "postedAt", "createdAt", "updatedAt", "items"] as const;
+const PURCHASE_KEYS = ["id", "supplier", "status", "purchaseDate", "documentNumber", "note", "subtotal", "tax", "total", "postedAt", "cancelledAt", "cancellationReason", "createdAt", "updatedAt", "items"] as const;
 const PURCHASE_SUPPLIER_KEYS = ["id", "code", "name"] as const;
 const PURCHASE_ITEM_KEYS = ["id", "lineNumber", "productId", "unitId", "quantity", "unitPrice", "taxRate", "lineAmount"] as const;
 const RECOMMENDATION_PURCHASE_HANDOFF_KEYS = ["purchase"] as const;
@@ -159,6 +170,14 @@ function isIsoTimestamp(value: unknown): value is string {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isNormalizedCancellationReason(value: unknown): value is string {
+  return isNonBlankString(value) && value === value.trim() && value.length <= 10_000;
 }
 
 function isPurchaseStatus(value: unknown): value is PurchaseStatus {
@@ -204,6 +223,9 @@ export function isPurchase(value: unknown): value is Purchase {
   const purchase = value;
   if (!isRecord(purchase.supplier) || !hasExactlyKeys(purchase.supplier, PURCHASE_SUPPLIER_KEYS)) return false;
   const supplier = purchase.supplier;
+  const cancellationFieldsAreValid = purchase.status === "CANCELLED"
+    ? purchase.postedAt === null && isIsoTimestamp(purchase.cancelledAt) && isNormalizedCancellationReason(purchase.cancellationReason)
+    : purchase.cancelledAt === null && purchase.cancellationReason === null;
   return (
     isNonEmptyString(purchase.id) &&
     isNonEmptyString(supplier.id) &&
@@ -217,6 +239,7 @@ export function isPurchase(value: unknown): value is Purchase {
     isDecimal(purchase.tax, 14, 6) &&
     isDecimal(purchase.total, 14, 6) &&
     (purchase.postedAt === null || isIsoTimestamp(purchase.postedAt)) &&
+    cancellationFieldsAreValid &&
     isIsoTimestamp(purchase.createdAt) &&
     isIsoTimestamp(purchase.updatedAt) &&
     Array.isArray(purchase.items) &&
@@ -445,8 +468,30 @@ export function isPostedPurchaseResult(value: unknown, purchaseId: string): valu
     && isIsoTimestamp(value.postedAt);
 }
 
+export function isCancelledPurchaseResult(value: unknown, purchaseId: string): value is CancelledPurchaseResult {
+  return isRecord(value)
+    && hasExactlyKeys(value, CANCELLED_PURCHASE_RESULT_KEYS)
+    && typeof value.id === "string"
+    && value.id.trim().length > 0
+    && value.id === purchaseId
+    && value.status === "CANCELLED"
+    && isIsoTimestamp(value.cancelledAt)
+    && isNormalizedCancellationReason(value.cancellationReason);
+}
+
 export function mergePostedPurchaseResult(purchase: Purchase, posted: PostedPurchaseResult): Purchase {
   return { ...purchase, id: posted.id, postedAt: posted.postedAt, status: posted.status };
+}
+
+export function mergeCancelledPurchaseResult(purchase: Purchase, cancelled: CancelledPurchaseResult): Purchase {
+  return {
+    ...purchase,
+    id: cancelled.id,
+    status: cancelled.status,
+    postedAt: null,
+    cancelledAt: cancelled.cancelledAt,
+    cancellationReason: cancelled.cancellationReason,
+  };
 }
 
 /**
@@ -467,6 +512,25 @@ export async function requestPurchasePosting(
 }
 
 /**
+ * Cancellation is terminal and the exact 200 response is the lifecycle
+ * authority. A caller must never infer a successful cancellation from a
+ * follow-up read or retry after an ambiguous transport outcome.
+ */
+export async function requestPurchaseCancellation(
+  api: PurchaseCancellationApi,
+  purchase: Purchase,
+  reason: string,
+): Promise<Purchase> {
+  const payload = await api.request<unknown>(`/purchases/${encodeURIComponent(purchase.id)}/cancel`, {
+    method: "POST",
+    body: { reason },
+    expectedStatus: 200,
+  });
+  if (!isCancelledPurchaseResult(payload, purchase.id)) throw new ApiError("server");
+  return mergeCancelledPurchaseResult(purchase, payload);
+}
+
+/**
  * A response can be ambiguous after the request crosses the network boundary.
  * These outcomes require an explicit read before any further purchase mutation;
  * they are never an invitation to automatically post again.
@@ -474,6 +538,10 @@ export async function requestPurchasePosting(
 export function isAmbiguousPurchasePostingError(error: unknown): boolean {
   if (!(error instanceof ApiError)) return true;
   return error.kind === "conflict" || error.kind === "server" || error.kind === "network";
+}
+
+export function isAmbiguousPurchaseCancellationError(error: unknown): boolean {
+  return isAmbiguousPurchasePostingError(error);
 }
 
 export function emptyPurchaseLine(rowKey: string): PurchaseLineFormValues {
