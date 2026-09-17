@@ -9,7 +9,9 @@ import {
   emptyPurchaseLine,
   formatPurchaseDate,
   formatPurchaseTimestamp,
+  isAmbiguousPurchaseCancellationError,
   isAmbiguousPurchasePostingError,
+  requestPurchaseCancellation,
   confirmPurchaseDraft,
   createPurchaseDraft,
   requestPurchaseList,
@@ -452,8 +454,10 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
   const [state, setState] = useState<PurchaseState>({ status: "loading" });
   const [handoffState, setHandoffState] = useState<PurchaseHandoffLineageState>({ status: "idle" });
   const [retryKey, setRetryKey] = useState(0);
-  const [action, setAction] = useState<"confirm" | "post" | null>(null);
+  const [action, setAction] = useState<"confirm" | "post" | "cancel" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [cancellationReason, setCancellationReason] = useState("");
+  const [cancellationOpen, setCancellationOpen] = useState(false);
   const [reloadRequired, setReloadRequired] = useState(false);
   const canReadHandoffLineage = ["inventory.read", "purchase.read", "master.read"].every((permission) => permissions.has(permission));
 
@@ -549,9 +553,76 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
     }
   }
 
+  function openCancellation() {
+    if (action !== null || reloadRequired) return;
+    setActionError(null);
+    setCancellationReason("");
+    setCancellationOpen(true);
+  }
+
+  function closeCancellation() {
+    if (action !== null) return;
+    setActionError(null);
+    setCancellationReason("");
+    setCancellationOpen(false);
+  }
+
+  async function cancel(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (action !== null || reloadRequired) return;
+    const normalizedReason = cancellationReason.trim();
+    setActionError(null);
+    if (normalizedReason.length === 0) {
+      setActionError("取消理由を入力してください。");
+      return;
+    }
+    if (normalizedReason.length > 10_000) {
+      setActionError("取消理由は10,000文字以内で入力してください。");
+      return;
+    }
+
+    setAction("cancel");
+    let latest: Purchase;
+    try {
+      latest = await requestPurchase(api, purchaseId);
+      setState({ status: "ready", purchase: latest });
+    } catch (error: unknown) {
+      if (!protectedPurchaseError(error, refreshAuthentication)) setActionError(purchaseErrorMessage(error));
+      setAction(null);
+      return;
+    }
+
+    if (latest.status !== "DRAFT" && latest.status !== "CONFIRMED") {
+      setCancellationOpen(false);
+      setActionError("仕入の状態が更新されています。取消できるのは下書きまたは確認済みの仕入だけです。");
+      setAction(null);
+      return;
+    }
+
+    try {
+      const cancelled = await requestPurchaseCancellation(api, latest, cancellationReason);
+      setState({ status: "ready", purchase: cancelled });
+      setCancellationReason("");
+      setCancellationOpen(false);
+    } catch (error: unknown) {
+      if (protectedPurchaseError(error, refreshAuthentication)) return;
+      if (isAmbiguousPurchaseCancellationError(error)) {
+        setCancellationOpen(false);
+        setReloadRequired(true);
+        setActionError("取消結果を確認できません。再取消は行わず、最新状態を再読み込みしてから続けてください。");
+        return;
+      }
+      setActionError(purchaseErrorMessage(error));
+    } finally {
+      setAction(null);
+    }
+  }
+
   function reloadPurchase() {
     if (action !== null) return;
     setActionError(null);
+    setCancellationOpen(false);
+    setCancellationReason("");
     setReloadRequired(false);
     setState({ status: "loading" });
     setRetryKey((current) => current + 1);
@@ -575,25 +646,38 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
           </div>
           <PurchaseStatusBadge status={purchase.status} />
         </div>
-        <p className="mt-5 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">下書きは編集できます。確認後は編集できません。既存APIの契約により、下書きまたは確認済みの仕入を計上できます。計上済み・取消済みは再計上できません。</p>
+        <p className="mt-5 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">下書きは編集できます。確認後は編集できません。下書きまたは確認済みの仕入は、理由を記録して取り消せます。計上済み・取消済みは、計上も取消もできません。</p>
         <div className="mt-5 flex flex-wrap gap-3">
-          {!reloadRequired && purchase.status === "DRAFT" && permissions.has("purchase.write") && (
+          {!reloadRequired && !cancellationOpen && purchase.status === "DRAFT" && permissions.has("purchase.write") && (
             <Link className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/purchases/${encodeURIComponent(purchase.id)}/edit`}>下書きを編集</Link>
           )}
-          {!reloadRequired && purchase.status === "DRAFT" && permissions.has("purchase.confirm") && (
+          {!reloadRequired && !cancellationOpen && purchase.status === "DRAFT" && permissions.has("purchase.confirm") && (
             <button className="rounded-md border border-amber-400 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700" disabled={action !== null} onClick={() => void confirm()} type="button">{action === "confirm" ? "確認しています…" : "仕入を確認"}</button>
           )}
-          {!reloadRequired && (purchase.status === "DRAFT" || purchase.status === "CONFIRMED") && permissions.has("purchase.post") && (
+          {!reloadRequired && !cancellationOpen && (purchase.status === "DRAFT" || purchase.status === "CONFIRMED") && permissions.has("purchase.post") && (
             <button className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700" disabled={action !== null} onClick={() => void post()} type="button">{action === "post" ? "計上しています…" : "仕入を計上"}</button>
           )}
+          {!reloadRequired && !cancellationOpen && ((purchase.status === "DRAFT" && permissions.has("purchase.write")) || (purchase.status === "CONFIRMED" && permissions.has("purchase.confirm"))) && (
+            <button className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-900 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700" disabled={action !== null} onClick={openCancellation} type="button">仕入を取り消す</button>
+          )}
         </div>
-        {reloadRequired && <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4" role="alert"><p className="text-sm text-amber-950">計上結果が不明なため、この画面の変更操作を停止しています。最新状態を確認するまで再計上しないでください。</p><button className="mt-3 rounded-md border border-amber-300 px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100" onClick={reloadPurchase} type="button">最新状態を再読み込み</button></div>}
-        <FormError message={actionError} />
+        {cancellationOpen && (
+          <form aria-labelledby="purchase-cancellation-title" className="mt-5 rounded-lg border border-red-200 bg-red-50 p-5" noValidate onSubmit={(event) => void cancel(event)}>
+            <h2 className="text-lg font-bold text-red-950" id="purchase-cancellation-title">仕入を取り消す</h2>
+            <p className="mt-2 text-sm text-red-900">取り消すと元に戻せません。未計上の仕入だけが対象で、在庫・価格・Recommendationは変更しません。</p>
+            <div className="mt-4"><Field error={actionError ?? undefined} htmlFor="purchase-cancellation-reason" label="取消理由" required><TextArea aria-describedby={actionError === null ? undefined : "purchase-cancellation-reason-error"} aria-invalid={actionError === null ? undefined : true} id="purchase-cancellation-reason" maxLength={10_000} onChange={(event) => { setCancellationReason(event.target.value); setActionError(null); }} required rows={4} value={cancellationReason} /></Field><p className="mt-2 text-right text-xs text-slate-600">{cancellationReason.length.toLocaleString("ja-JP")} / 10,000文字</p></div>
+            <div className="mt-5 flex flex-wrap gap-3"><button className="rounded-md bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:bg-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700" disabled={action !== null} type="submit">{action === "cancel" ? "取り消しています…" : "理由を記録して取り消す"}</button><button className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-white disabled:cursor-not-allowed disabled:text-slate-400" disabled={action !== null} onClick={closeCancellation} type="button">戻る</button></div>
+          </form>
+        )}
+        {reloadRequired && <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4" role="alert"><p className="text-sm text-amber-950">操作結果が不明なため、この画面の変更操作を停止しています。最新状態を確認するまで、再計上・再取消はしないでください。</p><button className="mt-3 rounded-md border border-amber-300 px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100" onClick={reloadPurchase} type="button">最新状態を再読み込み</button></div>}
+        <FormError message={cancellationOpen ? null : actionError} />
         <dl className="mt-8 grid gap-x-8 gap-y-6 border-t border-slate-200 pt-6 text-sm sm:grid-cols-2">
           <DetailItem label="仕入日" value={formatPurchaseDate(purchase.purchaseDate)} />
           <DetailItem label="伝票番号" value={purchase.documentNumber ?? "—"} />
           <DetailItem label="メモ" value={purchase.note ?? "—"} />
           <DetailItem label="計上日時" value={formatPurchaseTimestamp(purchase.postedAt)} />
+          {purchase.status === "CANCELLED" && <DetailItem label="取消日時" value={formatPurchaseTimestamp(purchase.cancelledAt)} />}
+          {purchase.status === "CANCELLED" && <DetailItem label="取消理由" value={purchase.cancellationReason ?? "—"} />}
           <DetailItem label="小計（サーバー計算）" value={purchase.subtotal} />
           <DetailItem label="税額（サーバー計算）" value={purchase.tax} />
           <DetailItem label="合計（サーバー計算）" value={purchase.total} />
@@ -735,7 +819,7 @@ function PurchaseNavigation() {
 }
 
 function PurchaseStatusBadge({ status }: Readonly<{ status: Purchase["status"] }>) {
-  const className = status === "POSTED" ? "bg-emerald-100 text-emerald-800" : status === "CONFIRMED" ? "bg-amber-100 text-amber-900" : "bg-slate-200 text-slate-700";
+  const className = status === "POSTED" ? "bg-emerald-100 text-emerald-800" : status === "CONFIRMED" ? "bg-amber-100 text-amber-900" : status === "CANCELLED" ? "bg-red-100 text-red-800" : "bg-slate-200 text-slate-700";
   return <span className={`rounded-full px-3 py-1 text-sm font-medium ${className}`}>{purchaseStatusLabel(status)}</span>;
 }
 

@@ -85,7 +85,7 @@ const purchaseDraftItemSchema = {
 export const purchaseDraftResponseSchema = {
   type: "object" as const,
   additionalProperties: false,
-  required: ["id", "supplier", "status", "purchaseDate", "documentNumber", "note", "subtotal", "tax", "total", "postedAt", "createdAt", "updatedAt", "items"],
+  required: ["id", "supplier", "status", "purchaseDate", "documentNumber", "note", "subtotal", "tax", "total", "postedAt", "cancelledAt", "cancellationReason", "createdAt", "updatedAt", "items"],
   properties: {
     id: { type: "string" as const, minLength: 1 },
     supplier: purchaseDraftSupplierSchema,
@@ -97,6 +97,8 @@ export const purchaseDraftResponseSchema = {
     tax: moneyDecimalSchema,
     total: moneyDecimalSchema,
     postedAt: { oneOf: [{ type: "string" as const, format: "date-time" }, { type: "null" as const }] },
+    cancelledAt: { oneOf: [{ type: "string" as const, format: "date-time" }, { type: "null" as const }] },
+    cancellationReason: { oneOf: [{ type: "string" as const, minLength: 1, maxLength: 10_000 }, { type: "null" as const }] },
     createdAt: { type: "string" as const, format: "date-time" },
     updatedAt: { type: "string" as const, format: "date-time" },
     items: { type: "array" as const, items: purchaseDraftItemSchema },

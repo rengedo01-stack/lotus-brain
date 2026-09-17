@@ -63,13 +63,15 @@ if (databaseUrl === undefined) {
         prisma.role.create({ data: { code: `${fixture}-POST`, name: "post" } }),
         prisma.role.create({ data: { code: `${fixture}-DENIED`, name: "denied" } }),
       ]);
-      const [writePermission, confirmPermission, postPermission] = await Promise.all([
+      const [writePermission, confirmPermission, postPermission, readPermission] = await Promise.all([
         prisma.permission.findUniqueOrThrow({ where: { code: "purchase.write" } }),
         prisma.permission.findUniqueOrThrow({ where: { code: "purchase.confirm" } }),
         prisma.permission.findUniqueOrThrow({ where: { code: "purchase.post" } }),
+        prisma.permission.findUniqueOrThrow({ where: { code: "purchase.read" } }),
       ]);
       await prisma.rolePermission.createMany({ data: [
         { roleId: writeRole.id, permissionId: writePermission.id },
+        { roleId: writeRole.id, permissionId: readPermission.id },
         { roleId: confirmRole.id, permissionId: confirmPermission.id },
         { roleId: postRole.id, permissionId: postPermission.id },
       ] });
@@ -120,6 +122,15 @@ if (databaseUrl === undefined) {
       assert.equal(cancelledBody.status, "CANCELLED");
       assert.equal(cancelledBody.cancellationReason, "supplier withdrew stock");
       assert.equal(new Date(cancelledBody.cancelledAt).toISOString(), cancelledBody.cancelledAt);
+      const cancelledDetailResponse = await request("GET", `/purchases/${draft.id}`, writerSession);
+      assert.equal(cancelledDetailResponse.status, 200);
+      assert.equal(cancelledDetailResponse.headers.get("cache-control"), "private, no-store");
+      const cancelledDetail = await cancelledDetailResponse.json();
+      assert.deepEqual(Object.keys(cancelledDetail).sort(), ["cancellationReason", "cancelledAt", "createdAt", "documentNumber", "id", "items", "note", "postedAt", "purchaseDate", "status", "subtotal", "supplier", "tax", "total", "updatedAt"]);
+      assert.equal(cancelledDetail.status, "CANCELLED");
+      assert.equal(cancelledDetail.postedAt, null);
+      assert.equal(cancelledDetail.cancelledAt, cancelledBody.cancelledAt);
+      assert.equal(cancelledDetail.cancellationReason, "supplier withdrew stock");
       const cancelled = await prisma.purchase.findUniqueOrThrow({ where: { id: draft.id }, include: { items: true, logs: true } });
       assert.equal(cancelled.status, "CANCELLED");
       assert.equal(cancelled.cancellationReason, "supplier withdrew stock");

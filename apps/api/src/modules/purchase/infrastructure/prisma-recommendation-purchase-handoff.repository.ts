@@ -313,6 +313,8 @@ export class PrismaPurchaseRecommendationHandoffRepository implements PurchaseRe
       tax: purchase.tax.toString(),
       total: purchase.total.toString(),
       postedAt: purchase.postedAt,
+      cancelledAt: purchase.cancelledAt,
+      cancellationReason: purchase.cancellationReason,
       createdAt: purchase.createdAt,
       updatedAt: purchase.updatedAt,
       items: purchase.items.map((item) => ({
