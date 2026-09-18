@@ -1,7 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const databaseUrl = process.env.PASSWORD_RECOVERY_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("PASSWORD_RECOVERY_DATABASE_URL");
 
 if (databaseUrl === undefined) {
   test("password-recovery real database proof is opt-in", { skip: "PASSWORD_RECOVERY_DATABASE_URL is not set" }, () => {});

@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
 
-const databaseUrl = process.env.SESSION_TERMINATION_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("SESSION_TERMINATION_DATABASE_URL");
 
 if (databaseUrl === undefined) {
   test("session termination real database proof is opt-in", { skip: "SESSION_TERMINATION_DATABASE_URL is not set" }, () => {});

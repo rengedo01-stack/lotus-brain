@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality-and-fast-tests:
+    name: Quality and fast tests
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3001/api/v1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check pull-request whitespace errors
+        if: github.event_name == 'pull_request'
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+      - name: Check push whitespace errors
+        if: github.event_name == 'push'
+        run: git diff --check "${{ github.event.before }}...${{ github.sha }}"
+      - name: Validate Prisma schema
+        run: pnpm --filter @lotus-brain/api prisma:validate
+      - name: Lint
+        run: pnpm lint
+      - name: Build
+        run: pnpm build
+      - name: API tests
+        run: pnpm --filter @lotus-brain/api test:unit
+      - name: Web tests
+        run: pnpm --filter @lotus-brain/web test
+
+  database-integration:
+    name: Database integration (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: purchase-posting
+            database: lotus_brain_pr005x_purchase_posting_test
+          - target: purchase-cancellation
+            database: lotus_brain_pr006c24_purchase_cancellation_test
+          - target: production-lifecycle
+            database: lotus_brain_pr005e1
+          - target: stocktake-posting
+            database: lotus_brain_pr005y_stocktake_posting_test
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: ${{ matrix.database }}
+          POSTGRES_USER: lotus_test
+          POSTGRES_PASSWORD: lotus_test
+        options: >-
+          --health-cmd "pg_isready -U lotus_test -d ${{ matrix.database }}"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+        ports:
+          - 5432:5432
+    env:
+      LOTUS_REAL_DB_TEST_MODE: "1"
+      LOTUS_TEST_DATABASE_URL: postgresql://lotus_test:lotus_test@127.0.0.1:5432/${{ matrix.database }}?schema=public
+      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3001/api/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build API
+        run: pnpm --filter @lotus-brain/api build
+      - name: Apply migrations to a new isolated database and run the proof
+        run: node apps/api/scripts/run-disposable-db-target.cjs "${{ matrix.target }}" --migrate

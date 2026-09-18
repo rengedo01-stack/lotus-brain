@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHash, randomUUID } = require("node:crypto");
 
-const databaseUrl = process.env.PURCHASE_LIST_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("PURCHASE_LIST_DATABASE_URL");
 const allowedDatabaseName = "lotus_brain_pr006b1_purchase_list_test";
 
 if (databaseUrl === undefined) {

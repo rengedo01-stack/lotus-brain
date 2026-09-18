@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const argon2 = require("argon2");
 
-const databaseUrl = process.env.PASSKEY_ENROLLMENT_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("PASSKEY_ENROLLMENT_DATABASE_URL");
 
 const passkeyViewKeys = [
   "backedUp",

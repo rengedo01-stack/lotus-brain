@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHash, randomUUID } = require("node:crypto");
 
-const databaseUrl = process.env.PURCHASE_CANCELLATION_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("PURCHASE_CANCELLATION_DATABASE_URL");
 const allowedDatabaseName = "lotus_brain_pr006c24_purchase_cancellation_test";
 
 if (databaseUrl === undefined) {

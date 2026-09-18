@@ -1,7 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const databaseUrl = process.env.PASSKEY_MFA_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("PASSKEY_MFA_DATABASE_URL");
 
 function assertExactMfaStatus(status, expected) {
   assert.deepEqual(Object.keys(status).sort(), ["activePasskeyCount", "enabled", "recoveryEmailVerified"]);

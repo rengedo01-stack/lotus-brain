@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
 
-const databaseUrl = process.env.IDENTITY_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("IDENTITY_DATABASE_URL");
 
 if (databaseUrl === undefined) {
   test("identity administration real database proof is opt-in", { skip: "IDENTITY_DATABASE_URL is not set" }, () => {});

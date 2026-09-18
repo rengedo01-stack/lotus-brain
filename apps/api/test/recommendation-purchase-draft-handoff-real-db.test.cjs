@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
 
-const databaseUrl = process.env.RECOMMENDATION_PURCHASE_DRAFT_HANDOFF_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("RECOMMENDATION_PURCHASE_DRAFT_HANDOFF_DATABASE_URL");
 const allowedDatabaseName = "lotus_brain_pr006c21b_handoff_test";
 
 if (databaseUrl === undefined) {

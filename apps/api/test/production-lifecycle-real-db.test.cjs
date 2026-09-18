@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { randomUUID, createHash } = require("node:crypto");
 
-const databaseUrl = process.env.PRODUCTION_LIFECYCLE_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("PRODUCTION_LIFECYCLE_DATABASE_URL");
 
 if (databaseUrl === undefined) {
   test("production lifecycle real database proof is opt-in", { skip: "PRODUCTION_LIFECYCLE_DATABASE_URL is not set" }, () => {});

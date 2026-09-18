@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { Client } = require("pg");
 
-const databaseUrl = process.env.MULTI_TOKEN_CSRF_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("MULTI_TOKEN_CSRF_DATABASE_URL");
 
 if (databaseUrl === undefined) {
   test("multi-token CSRF PostgreSQL proof is opt-in", { skip: "MULTI_TOKEN_CSRF_DATABASE_URL is not set" }, () => {});
