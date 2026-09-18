@@ -1,7 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const databaseUrl = process.env.USER_INVITATION_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("USER_INVITATION_DATABASE_URL");
 
 if (databaseUrl === undefined) {
   test("user-invitation real database proof is opt-in", { skip: "USER_INVITATION_DATABASE_URL is not set" }, () => {});

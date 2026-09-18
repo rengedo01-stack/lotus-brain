@@ -4,7 +4,8 @@ const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 const { randomUUID } = require("node:crypto");
 
-const databaseUrl = process.env.INVENTORY_REVISION_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("INVENTORY_REVISION_DATABASE_URL");
 const allowedDatabaseName = "lotus_brain_pr006c15a_inventory_revision_test";
 
 if (databaseUrl === undefined) {

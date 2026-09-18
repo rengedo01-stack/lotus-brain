@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
 
-const databaseUrl = process.env.RECIPE_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("RECIPE_DATABASE_URL");
 
 if (databaseUrl === undefined) {
   test("recipe foundation real database proof is opt-in", { skip: "RECIPE_DATABASE_URL is not set" }, () => {});

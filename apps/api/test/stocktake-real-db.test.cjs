@@ -1,7 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const databaseUrl = process.env.STOCKTAKE_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("STOCKTAKE_DATABASE_URL");
 
 if (databaseUrl === undefined) {
   test("stocktake real database proof is opt-in", { skip: "STOCKTAKE_DATABASE_URL is not set" }, () => {});

@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHash, randomUUID } = require("node:crypto");
 
-const databaseUrl = process.env.REPLENISHMENT_QUANTITY_PREVIEW_DATABASE_URL;
+const { readDisposableDatabaseUrl } = require("./support/disposable-database.cjs");
+const databaseUrl = readDisposableDatabaseUrl("REPLENISHMENT_QUANTITY_PREVIEW_DATABASE_URL");
 const allowedDatabaseName = "lotus_brain_pr006c14_quantity_preview_test";
 
 if (databaseUrl === undefined) {
