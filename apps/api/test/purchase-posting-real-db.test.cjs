@@ -92,12 +92,12 @@ if (databaseUrl === undefined) {
         });
 
         const repository = new PrismaPurchaseDraftRepository(prisma);
-        const createConfirmedPurchase = async (documentNumber) => {
+        const createConfirmedPurchase = async (documentNumber, unitPrice = "120.000000") => {
           const draft = await repository.create({
             supplierId: supplier.id,
             purchaseDate: "2026-09-03T00:00:00.000Z",
             documentNumber,
-            items: [{ productId: product.id, unitId: unit.id, quantity: "2.500000000", unitPrice: "120.000000", taxRate: "0.1" }],
+            items: [{ productId: product.id, unitId: unit.id, quantity: "2.500000000", unitPrice, taxRate: "0.1" }],
           });
           const confirmed = await repository.confirm(draft.id);
           assert.notEqual(confirmed, "NOT_FOUND");
@@ -149,7 +149,14 @@ if (databaseUrl === undefined) {
         assert.equal(posted.postedAt.toISOString(), body.postedAt);
         const sourceItem = posted.items[0];
         assert.ok(sourceItem);
-        assert.equal(await prisma.priceHistory.count({ where: { sourcePurchaseItemId: sourceItem.id } }), 1);
+        const initialPriceHistory = await prisma.priceHistory.findUniqueOrThrow({ where: { sourcePurchaseItemId: sourceItem.id } });
+        const initialPriceMaster = await prisma.priceMaster.findUniqueOrThrow({
+          where: { productId_supplierId: { productId: product.id, supplierId: supplier.id } },
+        });
+        assert.equal(initialPriceHistory.eventType, "PURCHASE_POSTING");
+        assert.equal(initialPriceMaster.currentPriceHistoryId, initialPriceHistory.id);
+        assert.equal(initialPriceMaster.currentUnitPrice.toString(), "120");
+        assert.equal(initialPriceMaster.version, 1);
         assert.equal(await prisma.inventoryHistory.count({ where: { sourcePurchaseItemId: sourceItem.id, type: "RECEIPT" } }), 1);
         const inventory = await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } });
         assert.equal(inventory.quantity.toString(), "2.5");
@@ -163,11 +170,20 @@ if (databaseUrl === undefined) {
         assert.equal(await prisma.inventoryHistory.count({ where: { sourcePurchaseItemId: sourceItem.id, type: "RECEIPT" } }), 1);
 
         const additionalReceipts = [
-          await createConfirmedPurchase(`${fixture}-additional-a`),
-          await createConfirmedPurchase(`${fixture}-additional-b`),
+          await createConfirmedPurchase(`${fixture}-additional-a`, "130.000000"),
+          await createConfirmedPurchase(`${fixture}-additional-b`, "140.000000"),
         ];
-        for (const additionalPurchase of additionalReceipts) {
+        for (const [index, additionalPurchase] of additionalReceipts.entries()) {
           assert.equal((await request(`/purchases/${additionalPurchase.id}/post`, { method: "POST" })).status, 200);
+          const additionalItem = await prisma.purchaseItem.findFirstOrThrow({ where: { purchaseId: additionalPurchase.id } });
+          const additionalPriceHistory = await prisma.priceHistory.findUniqueOrThrow({ where: { sourcePurchaseItemId: additionalItem.id } });
+          const additionalPriceMaster = await prisma.priceMaster.findUniqueOrThrow({
+            where: { productId_supplierId: { productId: product.id, supplierId: supplier.id } },
+          });
+          assert.equal(additionalPriceHistory.eventType, "PURCHASE_POSTING");
+          assert.equal(additionalPriceMaster.currentPriceHistoryId, additionalPriceHistory.id);
+          assert.equal(additionalPriceMaster.currentUnitPrice.toString(), index === 0 ? "130" : "140");
+          assert.equal(additionalPriceMaster.version, index + 2);
         }
         const afterAdditionalReceipts = await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } });
         assert.equal(afterAdditionalReceipts.quantity.toString(), "7.5");
@@ -176,6 +192,9 @@ if (databaseUrl === undefined) {
         const rollbackPurchase = await createConfirmedPurchase(`${fixture}-rollback`);
         const rollbackItem = await prisma.purchaseItem.findFirstOrThrow({ where: { purchaseId: rollbackPurchase.id } });
         const beforeRollback = await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } });
+        const beforeRollbackPriceMaster = await prisma.priceMaster.findUniqueOrThrow({
+          where: { productId_supplierId: { productId: product.id, supplierId: supplier.id } },
+        });
         const functionName = `pr005x_purchase_rollback_${Date.now()}`;
         const triggerName = `${functionName}_trigger`;
         await prisma.$executeRawUnsafe(`CREATE FUNCTION "${functionName}"() RETURNS TRIGGER AS $$ BEGIN IF NEW."sourcePurchaseItemId" = '${rollbackItem.id}' THEN RAISE EXCEPTION 'forced purchase posting failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql;`);
@@ -188,6 +207,12 @@ if (databaseUrl === undefined) {
           const afterRollback = await prisma.inventory.findUniqueOrThrow({ where: { productId: product.id } });
           assert.equal(afterRollback.quantity.toString(), beforeRollback.quantity.toString());
           assert.equal(afterRollback.version, beforeRollback.version);
+          const afterRollbackPriceMaster = await prisma.priceMaster.findUniqueOrThrow({
+            where: { id: beforeRollbackPriceMaster.id },
+          });
+          assert.equal(afterRollbackPriceMaster.currentPriceHistoryId, beforeRollbackPriceMaster.currentPriceHistoryId);
+          assert.equal(afterRollbackPriceMaster.currentUnitPrice.toString(), beforeRollbackPriceMaster.currentUnitPrice.toString());
+          assert.equal(afterRollbackPriceMaster.version, beforeRollbackPriceMaster.version);
         } finally {
           await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${triggerName}" ON "InventoryHistory";`);
           await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${functionName}"();`);

@@ -141,6 +141,14 @@ enum PurchaseLogEventType {
   IMPORTED
 }
 
+// Price history is an append-only business record.  LEGACY_UNKNOWN marks
+// records that predate provenance tracking; it is not a guess about their
+// origin.  PURCHASE_POSTING is written only by the POSTED purchase flow.
+enum PriceHistoryEventType {
+  LEGACY_UNKNOWN
+  PURCHASE_POSTING
+}
+
 enum RecipeStatus {
   DRAFT
   ACTIVE
@@ -856,14 +864,22 @@ model PriceMaster {
   currentUnitPrice        Decimal      @db.Decimal(20, 6)
   currency                String       @default("JPY") @db.Char(3)
   currentPriceEffectiveAt DateTime     @default(now())
+  // Nullable only for a PriceMaster whose pre-provenance source is genuinely
+  // unknown.  New purchase posting supplies a matching history source in the
+  // same transaction.
+  currentPriceHistoryId   String?      @unique
+  // A monotonic current-state revision.  Database protection requires every
+  // PriceMaster mutation to increment it exactly once.
+  version                 Int          @default(1)
   status                  MasterStatus @default(ACTIVE)
   createdAt               DateTime     @default(now())
   updatedAt               DateTime     @updatedAt
   deletedAt               DateTime?
 
-  product        Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
-  supplier       Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  priceHistories PriceHistory[]
+  product             Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  supplier            Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  priceHistories      PriceHistory[]
+  currentPriceHistory PriceHistory?  @relation("PriceMasterCurrentPriceHistory", fields: [currentPriceHistoryId], references: [id], onDelete: Restrict)
 
   @@unique([productId, supplierId])
   @@index([productId, status])
@@ -873,6 +889,7 @@ model PriceMaster {
 model PriceHistory {
   id                   String   @id @default(cuid())
   priceMasterId        String
+  eventType            PriceHistoryEventType
   // When present, one historical price snapshot is attributable to exactly one
   // purchase line. Manual price changes can leave this unset.
   sourcePurchaseItemId String?  @unique
@@ -884,11 +901,13 @@ model PriceHistory {
   note                 String?
   createdAt            DateTime @default(now())
 
-  priceMaster        PriceMaster   @relation(fields: [priceMasterId], references: [id], onDelete: Restrict)
-  sourcePurchaseItem PurchaseItem? @relation("PriceHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
-  inventoryUnit      Unit          @relation("PriceHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+  priceMaster           PriceMaster   @relation(fields: [priceMasterId], references: [id], onDelete: Restrict)
+  currentForPriceMaster PriceMaster?  @relation("PriceMasterCurrentPriceHistory")
+  sourcePurchaseItem    PurchaseItem? @relation("PriceHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
+  inventoryUnit         Unit          @relation("PriceHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
   @@index([priceMasterId, effectiveAt])
+  @@index([priceMasterId, eventType, effectiveAt])
   @@index([inventoryUnitId])
 }
 

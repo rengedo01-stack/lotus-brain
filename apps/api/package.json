@@ -13,6 +13,7 @@
     "test:unit": "node --test --test-concurrency=1 test/*.test.cjs",
     "test:db:purchase-posting": "node scripts/run-disposable-postgres.cjs purchase-posting",
     "test:db:purchase-cancellation": "node scripts/run-disposable-postgres.cjs purchase-cancellation",
+    "test:db:price-provenance": "node scripts/run-disposable-postgres.cjs price-provenance-migration-compatibility",
     "test:db:critical": "node scripts/run-disposable-postgres.cjs purchase-posting purchase-cancellation production-lifecycle stocktake-posting",
     "prisma:validate": "prisma validate --config ./prisma.config.ts",
     "prisma:generate": "prisma generate --config ./prisma.config.ts"

@@ -59,6 +59,8 @@ jobs:
             database: lotus_brain_pr005e1
           - target: stocktake-posting
             database: lotus_brain_pr005y_stocktake_posting_test
+          - target: price-provenance-migration-compatibility
+            database: lotus_brain_pr006c24c1_price_provenance_test
     services:
       postgres:
         image: postgres:17-alpine

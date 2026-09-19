@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { Prisma } from "../../../generated/prisma/client";
 import type { TransactionClient } from "../../../generated/prisma/internal/prismaNamespace";
 import { PrismaService } from "../../../prisma/prisma.service";
@@ -18,6 +19,10 @@ type LockedPurchaseRow = {
   purchaseDate: Date;
   currency: string;
   status: PurchasePostingStatus;
+};
+
+type PriceMasterIdRow = {
+  id: string;
 };
 
 @Injectable()
@@ -92,38 +97,102 @@ class PrismaPurchasePostingTransaction implements PurchasePostingTransaction {
     purchase: PurchaseForPosting,
     item: PurchaseItemForPosting,
   ): Promise<void> {
-    const priceMaster = await this.prisma.priceMaster.upsert({
-      where: {
-        productId_supplierId: {
-          productId: item.productId,
-          supplierId: purchase.supplierId,
-        },
-      },
-      create: {
-        productId: item.productId,
-        supplierId: purchase.supplierId,
-        currentUnitPrice: item.unitPrice,
-        currency: purchase.currency,
-        currentPriceEffectiveAt: purchase.purchaseDate,
-      },
-      update: {
-        currentUnitPrice: item.unitPrice,
-        currency: purchase.currency,
-        currentPriceEffectiveAt: purchase.purchaseDate,
-        status: "ACTIVE",
-        deletedAt: null,
-      },
-      select: { id: true },
-    });
+    // A newly-observed price must have one append-only source.  The nullable
+    // pointer is reserved for rows that genuinely predate C24C-1 provenance;
+    // this posting path never creates such an unknown row.
+    const proposedPriceMasterId = randomUUID();
+    const proposedPriceHistoryId = randomUUID();
+    const now = new Date();
+    const insertedRows = await this.prisma.$queryRaw<PriceMasterIdRow[]>(Prisma.sql`
+      INSERT INTO "PriceMaster" (
+        "id",
+        "productId",
+        "supplierId",
+        "currentUnitPrice",
+        "currency",
+        "currentPriceEffectiveAt",
+        "currentPriceHistoryId",
+        "version",
+        "status",
+        "createdAt",
+        "updatedAt"
+      )
+      VALUES (
+        ${proposedPriceMasterId},
+        ${item.productId},
+        ${purchase.supplierId},
+        ${item.unitPrice},
+        ${purchase.currency},
+        ${purchase.purchaseDate},
+        ${proposedPriceHistoryId},
+        1,
+        'ACTIVE'::"MasterStatus",
+        ${now},
+        ${now}
+      )
+      ON CONFLICT ("productId", "supplierId") DO NOTHING
+      RETURNING "id"
+    `);
 
-    await this.prisma.priceHistory.create({
+    const insertedPriceMaster = insertedRows[0];
+    if (insertedPriceMaster !== undefined) {
+      // The provenance FK and source validator are intentionally deferred.
+      // This makes the two mutually-referencing rows visible only when this
+      // outer purchase-posting transaction commits.
+      await this.prisma.priceHistory.create({
+        data: {
+          id: proposedPriceHistoryId,
+          priceMasterId: insertedPriceMaster.id,
+          eventType: "PURCHASE_POSTING",
+          sourcePurchaseItemId: item.id,
+          inventoryUnitId: item.inventoryUnitId,
+          unitPrice: item.unitPrice,
+          currency: purchase.currency,
+          effectiveAt: purchase.purchaseDate,
+        },
+      });
+      return;
+    }
+
+    // Serialize all later price observations for this Product / Supplier
+    // pair.  This prevents one writer from replacing a source selected by a
+    // concurrent posting while retaining the same source/version invariant.
+    const existingRows = await this.prisma.$queryRaw<PriceMasterIdRow[]>(Prisma.sql`
+      SELECT "id"
+      FROM "PriceMaster"
+      WHERE "productId" = ${item.productId}
+        AND "supplierId" = ${purchase.supplierId}
+      FOR UPDATE
+    `);
+    const existingPriceMaster = existingRows[0];
+    if (existingPriceMaster === undefined) {
+      throw new Error("PriceMaster disappeared after its Product / Supplier conflict.");
+    }
+
+    const priceHistory = await this.prisma.priceHistory.create({
       data: {
-        priceMasterId: priceMaster.id,
+        id: proposedPriceHistoryId,
+        priceMasterId: existingPriceMaster.id,
+        eventType: "PURCHASE_POSTING",
         sourcePurchaseItemId: item.id,
         inventoryUnitId: item.inventoryUnitId,
         unitPrice: item.unitPrice,
         currency: purchase.currency,
         effectiveAt: purchase.purchaseDate,
+      },
+      select: { id: true },
+    });
+
+    await this.prisma.priceMaster.update({
+      where: { id: existingPriceMaster.id },
+      data: {
+        currentUnitPrice: item.unitPrice,
+        currency: purchase.currency,
+        currentPriceEffectiveAt: purchase.purchaseDate,
+        currentPriceHistoryId: priceHistory.id,
+        version: { increment: 1 },
+        status: "ACTIVE",
+        deletedAt: null,
       },
     });
   }
