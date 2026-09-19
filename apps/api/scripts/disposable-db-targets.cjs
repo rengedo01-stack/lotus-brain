@@ -19,6 +19,17 @@ const targets = {
     environmentVariable: "STOCKTAKE_POSTING_DATABASE_URL",
     testFile: "test/stocktake-posting-http-real-db.test.cjs",
   },
+  "price-provenance-migration-compatibility": {
+    databaseName: "lotus_brain_pr006c24c1_price_provenance_test",
+    environmentVariable: "PRICE_PROVENANCE_MIGRATION_COMPATIBILITY_DATABASE_URL",
+    testFile: "test/price-provenance-migration-compatibility-real-db.test.cjs",
+    // This proof deploys the exact pre-C24C-1 migration set, seeds a legacy
+    // price pair, then deploys the forward migration under test.
+    migrationCompatibility: {
+      firstNewMigration: "20260919090000_add_price_master_provenance_foundation",
+      legacyFixtureScript: "scripts/create-price-provenance-legacy-fixture.cjs",
+    },
+  },
 };
 
 function readTarget(name) {
