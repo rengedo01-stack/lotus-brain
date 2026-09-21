@@ -64,7 +64,11 @@ if (option === "--migrate") {
     const legacyMigrationsDirectory = createLegacyMigrationsDirectory(compatibility.firstNewMigration);
     try {
       runMigrations({ ...migrationEnvironment, LOTUS_PRISMA_MIGRATIONS_PATH: legacyMigrationsDirectory });
-      run(process.execPath, [compatibility.legacyFixtureScript], migrationEnvironment);
+      run(process.execPath, [compatibility.legacyFixtureScript], {
+        ...migrationEnvironment,
+        LOTUS_LEGACY_FIXTURE_DATABASE_NAME: target.databaseName,
+        ...(compatibility.legacyFixtureEnvironment ?? {}),
+      });
     } finally {
       rmSync(legacyMigrationsDirectory, { recursive: true, force: true });
     }

@@ -5,7 +5,8 @@ const databaseUrl = process.env.LOTUS_TEST_DATABASE_URL;
 if (databaseUrl === undefined) throw new Error("LOTUS_TEST_DATABASE_URL is required for the legacy price fixture.");
 assertDisposableDatabaseUrl(databaseUrl, "LOTUS_TEST_DATABASE_URL");
 
-const expectedDatabaseName = "lotus_brain_pr006c24c1_price_provenance_test";
+const expectedDatabaseName = process.env.LOTUS_LEGACY_FIXTURE_DATABASE_NAME ?? "lotus_brain_pr006c24c1_price_provenance_test";
+const eventType = process.env.LOTUS_LEGACY_FIXTURE_EVENT_TYPE;
 if (decodeURIComponent(new URL(databaseUrl).pathname.slice(1)) !== expectedDatabaseName) {
   throw new Error(`Legacy price fixture must target ${expectedDatabaseName}.`);
 }
@@ -63,11 +64,17 @@ async function main() {
       ) VALUES ($1, $2, $3, 7000, 'JPY', '2026-09-01T00:00:00.000Z', 'ACTIVE'::"MasterStatus", CURRENT_TIMESTAMP)`,
       [legacy.priceMasterId, legacy.productId, legacy.supplierId],
     );
+    const priceHistoryColumns = eventType === undefined
+      ? `"id", "priceMasterId", "sourcePurchaseItemId", "inventoryUnitId", "unitPrice", "currency", "effectiveAt", "note"`
+      : `"id", "priceMasterId", "sourcePurchaseItemId", "inventoryUnitId", "unitPrice", "currency", "effectiveAt", "note", "eventType"`;
+    const priceHistoryValues = eventType === undefined
+      ? `$1, $2, $3, $4, 7000, 'JPY', '2026-09-01T00:00:00.000Z', 'C24C-1 legacy fixture'`
+      : `$1, $2, $3, $4, 7000, 'JPY', '2026-09-01T00:00:00.000Z', 'C24C-1 legacy fixture', $5::"PriceHistoryEventType"`;
     await client.query(
-      `INSERT INTO "PriceHistory" (
-        "id", "priceMasterId", "sourcePurchaseItemId", "inventoryUnitId", "unitPrice", "currency", "effectiveAt", "note"
-      ) VALUES ($1, $2, $3, $4, 7000, 'JPY', '2026-09-01T00:00:00.000Z', 'C24C-1 legacy fixture')`,
-      [legacy.priceHistoryId, legacy.priceMasterId, legacy.purchaseItemId, legacy.unitId],
+      `INSERT INTO "PriceHistory" (${priceHistoryColumns}) VALUES (${priceHistoryValues})`,
+      eventType === undefined
+        ? [legacy.priceHistoryId, legacy.priceMasterId, legacy.purchaseItemId, legacy.unitId]
+        : [legacy.priceHistoryId, legacy.priceMasterId, legacy.purchaseItemId, legacy.unitId, eventType],
     );
     await client.query("COMMIT");
     transactionOpen = false;

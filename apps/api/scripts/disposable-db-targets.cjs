@@ -30,6 +30,16 @@ const targets = {
       legacyFixtureScript: "scripts/create-price-provenance-legacy-fixture.cjs",
     },
   },
+  "purchase-posted-reversal": {
+    databaseName: "lotus_brain_pr006c24c2a_purchase_posted_reversal_test",
+    environmentVariable: "PURCHASE_POSTED_REVERSAL_DATABASE_URL",
+    testFile: "test/purchase-posted-reversal-real-db.test.cjs",
+    migrationCompatibility: {
+      firstNewMigration: "20260920090000_add_purchase_posted_reversal_foundation",
+      legacyFixtureScript: "scripts/create-price-provenance-legacy-fixture.cjs",
+      legacyFixtureEnvironment: { LOTUS_LEGACY_FIXTURE_EVENT_TYPE: "LEGACY_UNKNOWN" },
+    },
+  },
 };
 
 function readTarget(name) {

@@ -122,6 +122,7 @@ enum UnitDimension {
 
 enum InventoryTransactionType {
   RECEIPT
+  PURCHASE_REVERSAL
   CONSUMPTION
   PRODUCTION_RECEIPT
   STOCKTAKE_ADJUSTMENT
@@ -139,6 +140,7 @@ enum PurchaseLogEventType {
   CREATED
   STATUS_CHANGED
   IMPORTED
+  POSTED_REVERSED
 }
 
 // Price history is an append-only business record.  LEGACY_UNKNOWN marks
@@ -147,6 +149,16 @@ enum PurchaseLogEventType {
 enum PriceHistoryEventType {
   LEGACY_UNKNOWN
   PURCHASE_POSTING
+  PURCHASE_REVERSAL
+}
+
+// Records why a posted-purchase reversal did or did not replace the current
+// PriceMaster source.  It is an audit snapshot, never a request to infer an
+// earlier price.
+enum PurchaseReversalPriceEffectSource {
+  ORIGINAL_PURCHASE_CURRENT
+  SUBSEQUENT_PRICE_HISTORY_CURRENT
+  LEGACY_UNKNOWN_CURRENT
 }
 
 enum RecipeStatus {
@@ -203,6 +215,8 @@ model Unit {
   priceHistories            PriceHistory[]            @relation("PriceHistoryInventoryUnit")
   inventoryHistories        InventoryHistory[]        @relation("InventoryHistoryInventoryUnit")
   purchaseItems             PurchaseItem[]            @relation("PurchaseItemInventoryUnit")
+  purchaseReversalItems     PurchaseReversalItem[]
+  purchaseReversalInventoryEffects PurchaseReversalInventoryEffect[]
   recipeYields              Recipe[]                  @relation("RecipeYieldUnit")
   recipeItems               RecipeItem[]              @relation("RecipeItemUnit")
   productionOutputSnapshots Production[]              @relation("ProductionOutputUnitSnapshot")
@@ -239,6 +253,8 @@ model Product {
   priceMasters              PriceMaster[]
   inventory                 Inventory?
   purchaseItems             PurchaseItem[]              @relation("PurchaseItemProductInventoryUnit")
+  purchaseReversalItems     PurchaseReversalItem[]
+  purchaseReversalInventoryEffects PurchaseReversalInventoryEffect[]
   outputRecipes             Recipe[]                    @relation("RecipeOutputProduct")
   productionOutputSnapshots Production[]                @relation("ProductionOutputProductSnapshot")
   recipeItems               RecipeItem[]                @relation("RecipeItemProduct")
@@ -405,6 +421,7 @@ model Supplier {
 
   priceMasters        PriceMaster[]
   purchases           Purchase[]
+  purchaseDocumentClaims PurchaseDocumentClaim[]
   supplyRelationships ProductSupplyRelationship[]
 
   @@index([status, deletedAt])
@@ -555,6 +572,7 @@ model User {
   replenishmentRecommendationsCreated    ReplenishmentRecommendation[] @relation("ReplenishmentRecommendationCreatedBy")
   replenishmentRecommendationsSuperseded ReplenishmentRecommendation[] @relation("ReplenishmentRecommendationSupersededBy")
   replenishmentRecommendationsDismissed  ReplenishmentRecommendation[] @relation("ReplenishmentRecommendationDismissedBy")
+  purchaseReversals                       PurchaseReversal[]            @relation("PurchaseReversalActor")
 
   @@index([status, deletedAt])
 }
@@ -879,6 +897,7 @@ model PriceMaster {
   product             Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
   supplier            Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   priceHistories      PriceHistory[]
+  purchaseReversalPriceEffects PurchaseReversalPriceEffect[]
   currentPriceHistory PriceHistory?  @relation("PriceMasterCurrentPriceHistory", fields: [currentPriceHistoryId], references: [id], onDelete: Restrict)
 
   @@unique([productId, supplierId])
@@ -893,6 +912,8 @@ model PriceHistory {
   // When present, one historical price snapshot is attributable to exactly one
   // purchase line. Manual price changes can leave this unset.
   sourcePurchaseItemId String?  @unique
+  // A reversal price effect creates exactly one append-only reversal history.
+  sourcePurchaseReversalPriceEffectId String? @unique
   // Snapshot the inventory unit so price history remains interpretable after master changes.
   inventoryUnitId      String
   unitPrice            Decimal  @db.Decimal(20, 6)
@@ -904,6 +925,7 @@ model PriceHistory {
   priceMaster           PriceMaster   @relation(fields: [priceMasterId], references: [id], onDelete: Restrict)
   currentForPriceMaster PriceMaster?  @relation("PriceMasterCurrentPriceHistory")
   sourcePurchaseItem    PurchaseItem? @relation("PriceHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
+  sourcePurchaseReversalPriceEffect PurchaseReversalPriceEffect? @relation("PriceHistorySourcePurchaseReversalPriceEffect", fields: [sourcePurchaseReversalPriceEffectId], references: [id], onDelete: Restrict)
   inventoryUnit         Unit          @relation("PriceHistoryInventoryUnit", fields: [inventoryUnitId], references: [id], onDelete: Restrict)
 
   @@index([priceMasterId, effectiveAt])
@@ -928,6 +950,7 @@ model Inventory {
   product                  Product                   @relation(fields: [productId], references: [id], onDelete: Restrict)
   histories                InventoryHistory[]
   inventoryAdjustmentItems InventoryAdjustmentItem[]
+  purchaseReversalEffects  PurchaseReversalInventoryEffect[]
 }
 
 model InventoryHistory {
@@ -937,6 +960,8 @@ model InventoryHistory {
   // duplicate POSTED transition unable to create a second stock movement. A
   // PostgreSQL trigger also permits this source only while its Purchase is POSTED.
   sourcePurchaseItemId            String?                  @unique
+  // A reversal aggregate effect creates exactly one negative inventory history.
+  sourcePurchaseReversalInventoryEffectId String?           @unique
   // A production consumption can create at most one stock-consumption history.
   // A PostgreSQL trigger permits this source only while its Production is POSTED.
   sourceProductionConsumptionId   String?                  @unique
@@ -955,6 +980,7 @@ model InventoryHistory {
 
   inventory                     Inventory                @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
   sourcePurchaseItem            PurchaseItem?            @relation("InventoryHistorySourcePurchaseItem", fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
+  sourcePurchaseReversalInventoryEffect PurchaseReversalInventoryEffect? @relation("InventoryHistorySourcePurchaseReversalInventoryEffect", fields: [sourcePurchaseReversalInventoryEffectId], references: [id], onDelete: Restrict)
   sourceProductionConsumption   ProductionConsumption?   @relation("InventoryHistorySourceProductionConsumption", fields: [sourceProductionConsumptionId], references: [id], onDelete: Restrict)
   sourceProduction              Production?              @relation("InventoryHistorySourceProduction", fields: [sourceProductionId], references: [id], onDelete: Restrict)
   sourceInventoryAdjustmentItem InventoryAdjustmentItem? @relation("InventoryHistorySourceInventoryAdjustmentItem", fields: [sourceInventoryAdjustmentItemId], references: [id], onDelete: Restrict)
@@ -990,10 +1016,11 @@ model Purchase {
   supplier Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   items    PurchaseItem[]
   logs     PurchaseLog[]
+  postedReversal PurchaseReversal? @relation("PurchasePostedReversal")
+  documentClaim PurchaseDocumentClaim?
 
   // A supplier's document number is idempotent when it is available; PostgreSQL
   // permits multiple nulls for purchases that do not yet have a document number.
-  @@unique([supplierId, documentNumber])
   @@index([supplierId, purchaseDate])
   @@index([status, purchaseDate])
   @@index([purchaseDate(sort: Desc), id(sort: Desc)])
@@ -1028,6 +1055,7 @@ model PurchaseItem {
   priceHistory     PriceHistory?     @relation("PriceHistorySourcePurchaseItem")
   inventoryHistory InventoryHistory? @relation("InventoryHistorySourcePurchaseItem")
   recommendationHandoff RecommendationPurchaseHandoff?
+  purchaseReversalItem  PurchaseReversalItem?
 
   @@unique([purchaseId, lineNumber])
   @@index([purchaseId, productId])
@@ -1038,6 +1066,7 @@ model PurchaseItem {
 model PurchaseLog {
   id         String               @id @default(cuid())
   purchaseId String
+  sourcePurchaseReversalId String? @unique
   eventType  PurchaseLogEventType
   fromStatus PurchaseStatus?
   toStatus   PurchaseStatus?
@@ -1048,9 +1077,127 @@ model PurchaseLog {
   // Purchase workflow history is intentionally separate from InventoryHistory,
   // which exclusively records real stock movements.
   purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  sourcePurchaseReversal PurchaseReversal? @relation(fields: [sourcePurchaseReversalId], references: [id], onDelete: Restrict)
 
   @@index([purchaseId, occurredAt])
   @@index([toStatus, occurredAt])
+}
+
+// An immutable correction record for one already POSTED Purchase.  The source
+// purchase stays POSTED; all current-state effects are held in the child
+// records below and are written atomically with this audit row.
+model PurchaseReversal {
+  id                 String   @id @default(cuid())
+  purchaseId         String   @unique
+  actorUserId        String
+  reason             String
+  idempotencyKey     String   @unique @db.VarChar(36)
+  requestFingerprint String   @db.Char(64)
+  previewVersion     String   @db.Char(64)
+  reversedAt         DateTime @default(now())
+  createdAt          DateTime @default(now())
+
+  purchase         Purchase                       @relation("PurchasePostedReversal", fields: [purchaseId], references: [id], onDelete: Restrict)
+  actor            User                           @relation("PurchaseReversalActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  items            PurchaseReversalItem[]
+  inventoryEffects PurchaseReversalInventoryEffect[]
+  priceEffects     PurchaseReversalPriceEffect[]
+  purchaseLog      PurchaseLog?
+
+  @@index([actorUserId, reversedAt])
+}
+
+// A permanent snapshot of one original PurchaseItem.  A unique source item
+// prevents a line from being reversed twice, including through a different
+// request idempotency key.
+model PurchaseReversalItem {
+  id                 String   @id @default(cuid())
+  purchaseReversalId String
+  purchaseItemId     String   @unique
+  productId          String
+  inventoryUnitId    String
+  quantity           Decimal  @db.Decimal(24, 9)
+  unitPrice          Decimal  @db.Decimal(20, 6)
+  currency           String   @db.Char(3)
+  createdAt          DateTime @default(now())
+
+  purchaseReversal PurchaseReversal @relation(fields: [purchaseReversalId], references: [id], onDelete: Restrict)
+  purchaseItem     PurchaseItem     @relation(fields: [purchaseItemId], references: [id], onDelete: Restrict)
+  product          Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  inventoryUnit    Unit             @relation(fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+
+  @@unique([purchaseReversalId, purchaseItemId])
+  @@index([purchaseReversalId, productId])
+  @@index([productId])
+}
+
+// One negative current-stock effect per reversed Product, regardless of how
+// many original PurchaseItem lines used that Product.  Cost is snapshotted but
+// never recalculated by a reversal.
+model PurchaseReversalInventoryEffect {
+  id                 String   @id @default(cuid())
+  purchaseReversalId String
+  productId          String
+  inventoryId        String
+  inventoryUnitId    String
+  quantityDelta      Decimal  @db.Decimal(24, 9)
+  quantityAfter      Decimal  @db.Decimal(24, 9)
+  averageUnitCost    Decimal? @db.Decimal(20, 6)
+  createdAt          DateTime @default(now())
+
+  purchaseReversal PurchaseReversal @relation(fields: [purchaseReversalId], references: [id], onDelete: Restrict)
+  product          Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  inventory        Inventory        @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
+  inventoryUnit    Unit             @relation(fields: [inventoryUnitId], references: [id], onDelete: Restrict)
+  inventoryHistory InventoryHistory? @relation("InventoryHistorySourcePurchaseReversalInventoryEffect")
+
+  @@unique([purchaseReversalId, productId])
+  @@index([inventoryId])
+}
+
+// One PriceMaster audit effect per reversed Product.  A later PriceHistory may
+// remain current; otherwise the explicitly supplied correction price becomes
+// the new current source through an append-only PriceHistory row.
+model PurchaseReversalPriceEffect {
+  id                          String                             @id @default(cuid())
+  purchaseReversalId          String
+  priceMasterId               String
+  source                      PurchaseReversalPriceEffectSource
+  previousCurrentPriceHistoryId String?
+  previousVersion             Int
+  appliedUnitPrice            Decimal                            @db.Decimal(20, 6)
+  appliedCurrency             String                             @db.Char(3)
+  effectiveAt                 DateTime
+  becomesCurrent              Boolean
+  createdAt                   DateTime                           @default(now())
+
+  purchaseReversal PurchaseReversal @relation(fields: [purchaseReversalId], references: [id], onDelete: Restrict)
+  priceMaster      PriceMaster      @relation(fields: [priceMasterId], references: [id], onDelete: Restrict)
+  priceHistory     PriceHistory?    @relation("PriceHistorySourcePurchaseReversalPriceEffect")
+
+  @@unique([purchaseReversalId, priceMasterId])
+  @@index([priceMasterId])
+}
+
+// A durable claim replaces Purchase's former compound unique constraint.  An
+// active claim blocks duplicate supplier/document combinations; a successful
+// posted-purchase reversal releases only that active claim without rewriting
+// the original Purchase document number.
+model PurchaseDocumentClaim {
+  id             String   @id @default(cuid())
+  purchaseId     String   @unique
+  supplierId     String
+  documentNumber String   @db.VarChar(100)
+  claimedAt      DateTime @default(now())
+  releasedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@index([supplierId, documentNumber])
+  @@index([releasedAt])
 }
 
 model Recipe {

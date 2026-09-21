@@ -14,6 +14,8 @@ import { PrismaPurchaseRecommendationHandoffRepository } from "./infrastructure/
 import { CreateRecommendationPurchaseDraftUseCase } from "./application/recommendation-purchase-handoff.use-case";
 import { GetRecommendationPurchaseHandoffUseCase } from "./application/get-recommendation-purchase-handoff.use-case";
 import { GetPurchaseHandoffLineageUseCase } from "./application/get-purchase-handoff-lineage.use-case";
+import { PurchasePostedReversalService } from "./application/purchase-posted-reversal.service";
+import { PrismaPurchasePostedReversalRepository } from "./infrastructure/prisma-purchase-posted-reversal.repository";
 
 @Module({
   imports: [PrismaModule],
@@ -30,6 +32,8 @@ import { GetPurchaseHandoffLineageUseCase } from "./application/get-purchase-han
     CreateRecommendationPurchaseDraftUseCase,
     GetRecommendationPurchaseHandoffUseCase,
     GetPurchaseHandoffLineageUseCase,
+    PurchasePostedReversalService,
+    PrismaPurchasePostedReversalRepository,
     {
       provide: PURCHASE_POSTING_REPOSITORY,
       useClass: PrismaPurchasePostingRepository,
