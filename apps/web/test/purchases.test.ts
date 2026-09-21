@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   confirmPurchaseDraft,
+  canExecutePurchaseReversal,
+  canSubmitPurchaseReversal,
+  canStartPurchaseReversal,
+  completePurchaseReversal,
+  createPurchaseReversalRequest,
   isAmbiguousPurchaseCancellationError,
   isCancelledPurchaseResult,
   createPurchaseDraftFromRecommendation,
@@ -9,6 +14,10 @@ import {
   isPurchaseHandoffLineageResponse,
   createPurchaseDraft,
   isAmbiguousPurchasePostingError,
+  isAmbiguousPurchaseReversalError,
+  isPurchaseReversalExecution,
+  isPurchaseReversalPreview,
+  isPurchaseReversalRequest,
   isPostedPurchaseResult,
   isPurchase,
   isCanonicalUtcTimestamp,
@@ -25,12 +34,21 @@ import {
   type PurchaseListApi,
   requestPurchasePosting,
   requestPurchaseCancellation,
+  requestPurchaseReversal,
+  requestPurchaseReversalPreview,
+  settlePurchaseReversalPreview,
+  startPurchaseReversalPreview,
+  markPurchaseReversalUnknown,
   updatePurchaseDraft,
   validatePurchaseForm,
   type PostedPurchaseResult,
   type CancelledPurchaseResult,
   type PurchaseCancellationApi,
   type PurchasePostingApi,
+  type PurchaseReversalApi,
+  type PurchaseReversalExecution,
+  type PurchaseReversalPreview,
+  type PurchaseReversalWorkflowState,
   type Purchase,
 } from "../lib/purchases.ts";
 import { ApiError, createApiClient } from "../lib/api-client.ts";
@@ -108,6 +126,40 @@ const purchaseHandoffLineage = {
       source: { ...handoffLineage.handoff.source, relationshipId: "relationship-2" },
     },
   ],
+};
+
+const reversalPreview: PurchaseReversalPreview = {
+  purchaseId: purchase.id,
+  canReverse: true,
+  refusalReasons: [],
+  previewVersion: "a".repeat(64),
+  existingReversal: null,
+  inventoryEffects: [{
+    productId: "product-1",
+    inventoryId: "inventory-1",
+    inventoryVersion: 7,
+    inventoryUnitId: "unit-1",
+    quantityDelta: "-10.000000000",
+    quantityAfter: "15.000000000",
+    averageUnitCost: "12.345678",
+  }],
+  priceEffects: [{
+    productId: "product-1",
+    priceMasterId: "price-master-1",
+    version: 4,
+    currentPriceHistoryId: "price-history-1",
+    currentUnitPrice: "12.345678",
+    currency: "JPY",
+    source: "ORIGINAL_PURCHASE_CURRENT",
+    requiresPriceResolution: true,
+  }],
+};
+
+const reversalExecution: PurchaseReversalExecution = {
+  id: "reversal-1",
+  purchaseId: purchase.id,
+  reversedAt: "2026-09-22T00:00:00.000Z",
+  replayed: false,
 };
 
 test("purchase create/update payload preserves decimal strings and excludes UI/server item identity", () => {
@@ -586,4 +638,128 @@ test("ambiguous purchase cancellation results require explicit reconciliation ra
   assert.equal(isAmbiguousPurchaseCancellationError(new ApiError("validation", 422)), false);
   assert.equal(isAmbiguousPurchaseCancellationError(new ApiError("forbidden", 403)), false);
   assert.equal(isAmbiguousPurchaseCancellationError(new ApiError("unauthorized", 401)), false);
+});
+
+test("posted purchase reversal accepts only its strict preview, request, and completion contracts", () => {
+  assert.equal(isPurchaseReversalPreview(reversalPreview), true);
+  assert.equal(isPurchaseReversalPreview({ ...reversalPreview, extra: true }), false);
+  assert.equal(isPurchaseReversalPreview({ ...reversalPreview, previewVersion: "not-a-preview" }), false);
+  assert.equal(isPurchaseReversalPreview({ ...reversalPreview, inventoryEffects: [{ ...reversalPreview.inventoryEffects[0]!, inventoryVersion: 0 }] }), false);
+  assert.equal(isPurchaseReversalPreview({ ...reversalPreview, priceEffects: [{ ...reversalPreview.priceEffects[0]!, source: "UNSUPPORTED" }] }), false);
+  assert.equal(isPurchaseReversalPreview({ ...reversalPreview, priceEffects: [reversalPreview.priceEffects[0]!, reversalPreview.priceEffects[0]!] }), false);
+  assert.equal(isPurchaseReversalPreview({ ...reversalPreview, existingReversal: { id: "reversal-1", reversedAt: "not-a-timestamp" } }), false);
+
+  const request = createPurchaseReversalRequest(reversalPreview, "  duplicate supplier receipt  ", "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6a", {
+    "product-1": { currentUnitPrice: "12.345678", currency: "JPY" },
+  });
+  assert.deepEqual(request, {
+    reason: "duplicate supplier receipt",
+    previewVersion: reversalPreview.previewVersion,
+    idempotencyKey: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6a",
+    priceResolutions: [{ productId: "product-1", expectedPriceMasterVersion: 4, currentUnitPrice: "12.345678", currency: "JPY" }],
+  });
+  assert.equal(isPurchaseReversalRequest(request), true);
+  assert.equal(isPurchaseReversalRequest({ ...request, priceResolutions: [...request.priceResolutions, request.priceResolutions[0]!] }), false);
+  assert.equal(isPurchaseReversalRequest({ ...request, idempotencyKey: "not-a-uuid" }), false);
+  const laterPriceRemainsCurrent: PurchaseReversalPreview = {
+    ...reversalPreview,
+    priceEffects: [{ ...reversalPreview.priceEffects[0]!, source: "SUBSEQUENT_PRICE_HISTORY_CURRENT", requiresPriceResolution: false }],
+  };
+  assert.deepEqual(createPurchaseReversalRequest(laterPriceRemainsCurrent, "correction", "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6a", {}).priceResolutions, []);
+  assert.equal(isPurchaseReversalExecution(reversalExecution, purchase.id), true);
+  assert.equal(isPurchaseReversalExecution({ ...reversalExecution, replayed: "false" }, purchase.id), false);
+});
+
+test("posted purchase reversal pins preview and execute requests to their documented methods, bodies, and success statuses", async () => {
+  const calls: Array<{ path: string; options: unknown }> = [];
+  const api: PurchaseReversalApi = {
+    async request<T>(path: string, options?: unknown): Promise<T> {
+      calls.push({ path, options });
+      return path.endsWith("/reversal-preview") ? reversalPreview as T : reversalExecution as T;
+    },
+  };
+  const preview = await requestPurchaseReversalPreview(api, purchase.id);
+  const request = createPurchaseReversalRequest(preview, "correction", "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6a", {
+    "product-1": { currentUnitPrice: "12.345678", currency: "JPY" },
+  });
+  assert.equal((await requestPurchaseReversal(api, purchase.id, request)).id, reversalExecution.id);
+  assert.deepEqual(calls, [
+    { path: `/purchases/${purchase.id}/reversal-preview`, options: { expectedStatus: 200 } },
+    { path: `/purchases/${purchase.id}/reversals`, options: { method: "POST", body: request, expectedStatus: [200, 201] } },
+  ]);
+});
+
+test("posted purchase reversal rejects unexpected success statuses and malformed responses", async (t) => {
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
+  t.after(() => { process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl; });
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const request = createPurchaseReversalRequest(reversalPreview, "correction", "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6a", {
+    "product-1": { currentUnitPrice: "12.345678", currency: "JPY" },
+  });
+
+  for (const status of [200, 201]) {
+    globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+      ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+      : new Response(JSON.stringify({ ...reversalExecution, replayed: status === 200 }), { status, headers: { "content-type": "application/json" } });
+    assert.equal((await requestPurchaseReversal(createApiClient(), purchase.id, request)).replayed, status === 200);
+  }
+
+  for (const status of [201, 202, 204]) {
+    globalThis.fetch = async () => status === 204
+      ? new Response(null, { status })
+      : new Response(JSON.stringify(reversalPreview), { status, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => requestPurchaseReversalPreview(createApiClient(), purchase.id),
+      (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === status,
+    );
+  }
+  for (const status of [202, 204]) {
+    globalThis.fetch = async (input) => String(input).endsWith("/auth/csrf")
+      ? new Response(JSON.stringify({ csrfToken: "csrf-token" }), { headers: { "content-type": "application/json" } })
+      : status === 204
+        ? new Response(null, { status })
+        : new Response(JSON.stringify(reversalExecution), { status, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => requestPurchaseReversal(createApiClient(), purchase.id, request),
+      (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === status,
+    );
+  }
+  globalThis.fetch = async () => new Response(JSON.stringify({ ...reversalPreview, extra: true }), { headers: { "content-type": "application/json" } });
+  await assert.rejects(
+    () => requestPurchaseReversalPreview(createApiClient(), purchase.id),
+    (error: unknown) => error instanceof ApiError && error.kind === "server",
+  );
+});
+
+test("posted purchase reversal workflow state prevents duplicate writes and requires reconciliation after ambiguity", () => {
+  const postedPurchase: Purchase = { ...purchase, status: "POSTED", postedAt: "2026-09-21T00:00:00.000Z" };
+  let state: PurchaseReversalWorkflowState = { phase: "idle" };
+  assert.equal(canStartPurchaseReversal(purchase, true, state), false);
+  assert.equal(canStartPurchaseReversal(postedPurchase, false, state), false);
+  assert.equal(canStartPurchaseReversal(postedPurchase, true, state), true);
+
+  state = startPurchaseReversalPreview(false);
+  assert.equal(canSubmitPurchaseReversal(state, false), false);
+  const executable = settlePurchaseReversalPreview(reversalPreview, true);
+  assert.equal(canExecutePurchaseReversal(executable), true);
+  assert.equal(canSubmitPurchaseReversal(executable, true), false);
+  assert.equal(canSubmitPurchaseReversal(executable, false), true);
+  assert.equal(isAmbiguousPurchaseReversalError(new ApiError("validation", 422)), false);
+  assert.equal(canSubmitPurchaseReversal(executable, false), true);
+
+  const completed = completePurchaseReversal(reversalExecution);
+  assert.equal(canStartPurchaseReversal(postedPurchase, true, completed), false);
+  const existing = settlePurchaseReversalPreview({ ...reversalPreview, canReverse: false, refusalReasons: ["This purchase has already been corrected."], existingReversal: { id: reversalExecution.id, reversedAt: reversalExecution.reversedAt } }, true);
+  assert.deepEqual(existing, completed);
+
+  const unknown = markPurchaseReversalUnknown();
+  assert.equal(canSubmitPurchaseReversal(unknown, false), false);
+  const reconciledWithoutReversal = settlePurchaseReversalPreview(reversalPreview, false);
+  assert.equal(canSubmitPurchaseReversal(reconciledWithoutReversal, false), false);
+  assert.equal(canSubmitPurchaseReversal(settlePurchaseReversalPreview(reversalPreview, true), false), true);
+  assert.equal(isAmbiguousPurchaseReversalError(new ApiError("conflict", 409)), true);
+  assert.equal(isAmbiguousPurchaseReversalError(new ApiError("server", 500)), true);
+  assert.equal(isAmbiguousPurchaseReversalError(new ApiError("network")), true);
 });

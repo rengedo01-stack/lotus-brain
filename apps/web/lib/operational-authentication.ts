@@ -25,6 +25,7 @@ export type OperationalPermissionCode =
   | "purchase.write"
   | "purchase.confirm"
   | "purchase.post"
+  | "purchase.reversePosted"
   | "production.read"
   | "production.write"
   | "production.confirm"
@@ -50,6 +51,7 @@ const KNOWN_OPERATIONAL_PERMISSION_CODES = new Set<OperationalPermissionCode>([
   "purchase.write",
   "purchase.confirm",
   "purchase.post",
+  "purchase.reversePosted",
   "production.read",
   "production.write",
   "production.confirm",
