@@ -66,12 +66,13 @@ Run the purchase proofs from the repository root:
 pnpm --filter @lotus-brain/api test:db:purchase-posting
 pnpm --filter @lotus-brain/api test:db:purchase-cancellation
 pnpm --filter @lotus-brain/api test:db:price-provenance
+pnpm --filter @lotus-brain/api test:db:purchase-posted-reversal
 pnpm --filter @lotus-brain/api test:db:critical
 ```
 
 The runner refuses to start unless Docker is available. It removes `DATABASE_URL` from child processes and requires `LOTUS_REAL_DB_TEST_MODE=1`, the `lotus_test` role, a `lotus_brain_` database name, and a generated `127.0.0.1` port other than `5432`. In GitHub Actions, the same guard accepts only the mapped loopback port `127.0.0.1:5432` of its isolated PostgreSQL service. A rejected endpoint stops before migrations, fixtures, or destructive cleanup run.
 
-The CI database matrix covers purchase posting, purchase cancellation, production lifecycle, stocktake posting, and the PriceMaster provenance migration proof. The provenance proof applies the exact migration set before C24C-1 to a fresh isolated database, seeds legacy price rows, then applies C24C-1 and verifies that legacy sources remain explicitly unknown. Add later real-database proofs to the target manifest; do not replace them with skipped or weakened tests.
+The CI database matrix covers purchase posting, purchase cancellation, production lifecycle, stocktake posting, the PriceMaster provenance migration proof, and posted-purchase correction. The provenance proof applies the exact migration set before C24C-1 to a fresh isolated database, seeds legacy price rows, then applies C24C-1 and verifies that legacy sources remain explicitly unknown. The posted-purchase correction proof applies C24C-1 first, retains a legacy unknown price source, then applies C24C-2A and verifies the correction ledger, document claims, price provenance branches, immutable audit rows, idempotency, and authorization. Add later real-database proofs to the target manifest; do not replace them with skipped or weakened tests.
 
 Production `actualQuantity` is the finished output expressed in immutable `outputUnitIdSnapshot`; Recipe scaling is `actualQuantity / yieldQuantitySnapshot`. `sourceProductionConsumptionId` identifies a raw-material `CONSUMPTION`, while `sourceProductionId` identifies one finished-goods `PRODUCTION_RECEIPT`. A production output receipt requires the referenced Production to be `POSTED`, uses its output product's inventory and inventory unit, and is unique per Production. `Inventory.averageUnitCost` remains the future Production cost source; `PriceMaster` remains supplier-specific purchase pricing.
 

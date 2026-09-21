@@ -423,7 +423,7 @@ test("permission registry is fixed and RequirePermissions rejects unknown codes"
   assert.deepEqual(ALL_PERMISSION_CODES, [
     "authorization.read", "authorization.manage",
     "identity.read", "identity.manage",
-    "master.read", "master.write", "inventory.read", "replenishment.manage", "purchase.read", "purchase.write", "purchase.confirm", "purchase.post",
+    "master.read", "master.write", "inventory.read", "replenishment.manage", "purchase.read", "purchase.write", "purchase.confirm", "purchase.post", "purchase.reversePosted",
     "production.read", "production.write", "production.confirm", "production.post",
     "stocktake.read", "stocktake.write", "stocktake.confirm", "stocktake.post",
   ]);
@@ -496,6 +496,8 @@ test("every existing business endpoint has the exact required permission", () =>
     [PurchaseController, "updatePurchaseMetadata", Permissions.PURCHASE_WRITE],
     [PurchaseController, "confirmPurchase", Permissions.PURCHASE_CONFIRM],
     [PurchaseController, "postPurchase", Permissions.PURCHASE_POST],
+    [PurchaseController, "getPurchaseReversalPreview", Permissions.PURCHASE_REVERSE_POSTED],
+    [PurchaseController, "createPurchaseReversal", Permissions.PURCHASE_REVERSE_POSTED],
     [ProductionController, "createProduction", Permissions.PRODUCTION_WRITE],
     [ProductionController, "getProduction", Permissions.PRODUCTION_READ],
     [ProductionController, "updateProduction", Permissions.PRODUCTION_WRITE],

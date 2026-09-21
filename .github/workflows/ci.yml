@@ -61,6 +61,8 @@ jobs:
             database: lotus_brain_pr005y_stocktake_posting_test
           - target: price-provenance-migration-compatibility
             database: lotus_brain_pr006c24c1_price_provenance_test
+          - target: purchase-posted-reversal
+            database: lotus_brain_pr006c24c2a_purchase_posted_reversal_test
     services:
       postgres:
         image: postgres:17-alpine

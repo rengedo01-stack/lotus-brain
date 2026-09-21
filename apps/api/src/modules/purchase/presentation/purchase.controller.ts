@@ -61,6 +61,7 @@ import { CreatePurchaseDto } from "./dto/create-purchase.dto";
 import { UpdatePurchaseDto } from "./dto/update-purchase.dto";
 import { UpdatePurchaseMetadataDto } from "./dto/update-purchase-metadata.dto";
 import { CancelPurchaseDto } from "./dto/cancel-purchase.dto";
+import { CreatePurchaseReversalDto } from "./dto/create-purchase-reversal.dto";
 import { CreateRecommendationPurchaseDraftDto } from "./dto/create-recommendation-purchase-draft.dto";
 import { cancelledPurchaseResponseSchema, postedPurchaseResponseSchema, purchaseDraftResponseSchema, purchaseHandoffLineageResponseSchema, purchaseListPageResponseSchema, recommendationPurchaseDraftHandoffResponseSchema, recommendationPurchaseHandoffLineageResponseSchema } from "./purchase-response.schemas";
 import { ListPurchasesQueryDto, PURCHASE_STATUSES } from "./dto/list-purchases-query.dto";
@@ -72,6 +73,12 @@ import { GetPurchaseHandoffLineageUseCase } from "../application/get-purchase-ha
 import { PurchaseRecommendationHandoffLineageNotFoundError, RecommendationPurchaseHandoffConflictError, RecommendationPurchaseHandoffNotFoundError } from "../application/recommendation-purchase-handoff.errors";
 import type { AuthenticatedRequest } from "../../auth/auth.types";
 import { AuthenticatedOnly } from "../../authorization/decorators/authenticated-only.decorator";
+import { PurchasePostedReversalService } from "../application/purchase-posted-reversal.service";
+import {
+  PurchasePostedReversalConflictError,
+  PurchasePostedReversalNotFoundError,
+  PurchasePostedReversalValidationError,
+} from "../application/purchase-posted-reversal.errors";
 
 type PostedPurchaseResponse = {
   id: string;
@@ -95,6 +102,7 @@ export class PurchaseController {
     private readonly getRecommendationPurchaseHandoffUseCase: GetRecommendationPurchaseHandoffUseCase,
     private readonly getPurchaseHandoffLineageUseCase: GetPurchaseHandoffLineageUseCase,
     private readonly cancelPurchaseUseCase: CancelPurchaseUseCase,
+    private readonly purchasePostedReversalService: PurchasePostedReversalService,
   ) {}
 
   @Get()
@@ -215,6 +223,73 @@ export class PurchaseController {
       return { handoffs: await this.getPurchaseHandoffLineageUseCase.execute(purchaseId) };
     } catch (error: unknown) {
       if (error instanceof PurchaseRecommendationHandoffLineageNotFoundError) throw new NotFoundException(error.message);
+      throw error;
+    }
+  }
+
+  @Get(":id/reversal-preview")
+  @Header("Cache-Control", "private, no-store")
+  @RequirePermissions(Permissions.PURCHASE_REVERSE_POSTED)
+  @ApiOperation({ summary: "Preview an audited correction of a POSTED purchase" })
+  @ApiOkResponse({ description: "The correction preview includes refusal reasons, current inventory effects, PriceMaster versions, and required explicit price resolutions." })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "purchase.reversePosted is required." })
+  @ApiNotFoundResponse({ description: "The Purchase does not exist." })
+  async getPurchaseReversalPreview(@Param("id") purchaseId: string) {
+    try {
+      return await this.purchasePostedReversalService.preview(purchaseId);
+    } catch (error: unknown) {
+      if (error instanceof PurchasePostedReversalNotFoundError) throw new NotFoundException(error.message);
+      throw error;
+    }
+  }
+
+  @Post(":id/reversals")
+  @Header("Cache-Control", "private, no-store")
+  @RequirePermissions(Permissions.PURCHASE_REVERSE_POSTED)
+  @ApiOperation({ summary: "Apply one auditable current-time correction for a POSTED purchase" })
+  @ApiBody({
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["reason", "previewVersion", "idempotencyKey", "priceResolutions"],
+      properties: {
+        reason: { type: "string", minLength: 1, maxLength: 10_000 },
+        previewVersion: { type: "string", pattern: "^[a-f0-9]{64}$" },
+        idempotencyKey: { type: "string", format: "uuid" },
+        priceResolutions: { type: "array" },
+      },
+    },
+  })
+  @ApiCreatedResponse({ description: "The correction was recorded, or an idempotent retry returned the existing correction." })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "purchase.reversePosted is required." })
+  @ApiNotFoundResponse({ description: "The Purchase does not exist." })
+  @ApiConflictResponse({ description: "The preview is stale, the Purchase was already corrected, an inventory safety condition failed, or another operation conflicted." })
+  @ApiUnprocessableEntityResponse({ description: "The correction request is invalid." })
+  async createPurchaseReversal(
+    @Req() request: AuthenticatedRequest,
+    @Param("id") purchaseId: string,
+    @Body() dto: CreatePurchaseReversalDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const actorUserId = request.authUser?.id;
+    if (actorUserId === undefined) throw new UnauthorizedException("Authentication required.");
+    try {
+      const result = await this.purchasePostedReversalService.execute({
+        purchaseId,
+        actorUserId,
+        reason: dto.reason,
+        previewVersion: dto.previewVersion,
+        idempotencyKey: dto.idempotencyKey,
+        priceResolutions: dto.priceResolutions,
+      });
+      response.status(result.replayed ? 200 : 201);
+      return result;
+    } catch (error: unknown) {
+      if (error instanceof PurchasePostedReversalNotFoundError) throw new NotFoundException(error.message);
+      if (error instanceof PurchasePostedReversalConflictError) throw new ConflictException(error.message);
+      if (error instanceof PurchasePostedReversalValidationError) throw new UnprocessableEntityException(error.message);
       throw error;
     }
   }
