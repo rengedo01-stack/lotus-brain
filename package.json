@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "lint": "turbo run lint"
+    "lint": "turbo run lint",
+    "test:e2e:purchase-posted-reversal": "node apps/api/scripts/run-disposable-web-e2e.cjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "turbo": "^2.10.8"
   }
 }
