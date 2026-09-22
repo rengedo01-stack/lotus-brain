@@ -73,8 +73,70 @@ export type CancelledPurchaseResult = {
   status: "CANCELLED";
 };
 
+export type PurchaseReversalPriceResolution = {
+  productId: string;
+  expectedPriceMasterVersion: number;
+  currentUnitPrice: string;
+  currency: string;
+};
+
+export type PurchaseReversalRequest = {
+  reason: string;
+  previewVersion: string;
+  idempotencyKey: string;
+  priceResolutions: PurchaseReversalPriceResolution[];
+};
+
+export type PurchaseReversalPreview = {
+  purchaseId: string;
+  canReverse: boolean;
+  refusalReasons: string[];
+  previewVersion: string;
+  existingReversal: { id: string; reversedAt: string } | null;
+  inventoryEffects: Array<{
+    productId: string;
+    inventoryId: string | null;
+    inventoryVersion: number | null;
+    inventoryUnitId: string;
+    quantityDelta: string;
+    quantityAfter: string | null;
+    averageUnitCost: string | null;
+  }>;
+  priceEffects: Array<{
+    productId: string;
+    priceMasterId: string | null;
+    version: number | null;
+    currentPriceHistoryId: string | null;
+    currentUnitPrice: string | null;
+    currency: string | null;
+    source: "ORIGINAL_PURCHASE_CURRENT" | "SUBSEQUENT_PRICE_HISTORY_CURRENT" | "LEGACY_UNKNOWN_CURRENT" | "MISSING_PRICE_MASTER";
+    requiresPriceResolution: boolean;
+  }>;
+};
+
+export type PurchaseReversalExecution = {
+  id: string;
+  purchaseId: string;
+  reversedAt: string;
+  replayed: boolean;
+};
+
+export type PurchaseReversalResolutionValues = Readonly<Record<string, Readonly<{
+  currentUnitPrice: string;
+  currency: string;
+}>>>;
+
+export type PurchaseReversalWorkflowState =
+  | { phase: "idle" }
+  | { phase: "preview_loading"; reconciliation: boolean }
+  | { phase: "preview_ready"; preview: PurchaseReversalPreview; canExecute: boolean }
+  | { phase: "preview_error"; reconciliation: boolean }
+  | { phase: "unknown_result" }
+  | { phase: "completed"; purchaseId: string; reversal: { id: string; reversedAt: string } };
+
 export type PurchasePostingApi = Pick<ApiClient, "request">;
 export type PurchaseCancellationApi = Pick<ApiClient, "request">;
+export type PurchaseReversalApi = Pick<ApiClient, "request">;
 export type PurchaseListApi = Pick<ApiClient, "request">;
 export type PurchaseDraftApi = Pick<ApiClient, "request">;
 export type RecommendationPurchaseHandoffApi = Pick<ApiClient, "request">;
@@ -127,6 +189,11 @@ const DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const POSTED_PURCHASE_RESULT_KEYS = ["id", "status", "postedAt"] as const;
 const CANCELLED_PURCHASE_RESULT_KEYS = ["id", "status", "cancelledAt", "cancellationReason"] as const;
+const PURCHASE_REVERSAL_PREVIEW_KEYS = ["purchaseId", "canReverse", "refusalReasons", "previewVersion", "existingReversal", "inventoryEffects", "priceEffects"] as const;
+const PURCHASE_REVERSAL_EXISTING_KEYS = ["id", "reversedAt"] as const;
+const PURCHASE_REVERSAL_INVENTORY_EFFECT_KEYS = ["productId", "inventoryId", "inventoryVersion", "inventoryUnitId", "quantityDelta", "quantityAfter", "averageUnitCost"] as const;
+const PURCHASE_REVERSAL_PRICE_EFFECT_KEYS = ["productId", "priceMasterId", "version", "currentPriceHistoryId", "currentUnitPrice", "currency", "source", "requiresPriceResolution"] as const;
+const PURCHASE_REVERSAL_EXECUTION_KEYS = ["id", "purchaseId", "reversedAt", "replayed"] as const;
 const PURCHASE_LIST_ITEM_KEYS = ["id", "status", "purchaseDate", "documentNumber", "postedAt", "cancelledAt", "supplier"] as const;
 const PURCHASE_LIST_SUPPLIER_KEYS = ["code", "name"] as const;
 const PURCHASE_LIST_PAGE_KEYS = ["items", "nextCursor"] as const;
@@ -203,6 +270,22 @@ function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
+function isNegativeDecimal(value: unknown, maximumIntegerDigits: number, maximumFractionDigits: number): value is string {
+  return typeof value === "string" && value.startsWith("-") && isPositiveDecimal(value.slice(1), maximumIntegerDigits, maximumFractionDigits);
+}
+
+function isCurrency(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Z]{3}$/.test(value);
+}
+
+function isPreviewVersion(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+}
+
+function isUuidV4(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function isPurchaseItem(value: unknown): value is PurchaseItem {
   if (!isRecord(value) || !hasExactlyKeys(value, PURCHASE_ITEM_KEYS)) return false;
   const item = value;
@@ -245,6 +328,94 @@ export function isPurchase(value: unknown): value is Purchase {
     Array.isArray(purchase.items) &&
     purchase.items.every(isPurchaseItem)
   );
+}
+
+function isPurchaseReversalInventoryEffect(value: unknown): value is PurchaseReversalPreview["inventoryEffects"][number] {
+  if (!isRecord(value) || !hasExactlyKeys(value, PURCHASE_REVERSAL_INVENTORY_EFFECT_KEYS)) return false;
+  return isNonBlankString(value.productId)
+    && (value.inventoryId === null || isNonBlankString(value.inventoryId))
+    && (value.inventoryVersion === null || isPositiveInteger(value.inventoryVersion))
+    && isNonBlankString(value.inventoryUnitId)
+    && isNegativeDecimal(value.quantityDelta, 15, 9)
+    && (value.quantityAfter === null || isDecimal(value.quantityAfter, 15, 9))
+    && (value.averageUnitCost === null || isDecimal(value.averageUnitCost, 14, 6))
+    && ((value.inventoryId === null && value.inventoryVersion === null && value.quantityAfter === null)
+      || (isNonBlankString(value.inventoryId) && isPositiveInteger(value.inventoryVersion) && isDecimal(value.quantityAfter, 15, 9)));
+}
+
+function isPurchaseReversalPriceEffect(value: unknown): value is PurchaseReversalPreview["priceEffects"][number] {
+  if (!isRecord(value) || !hasExactlyKeys(value, PURCHASE_REVERSAL_PRICE_EFFECT_KEYS)) return false;
+  if (!isNonBlankString(value.productId) || typeof value.requiresPriceResolution !== "boolean") return false;
+  if (value.source === "MISSING_PRICE_MASTER") {
+    return value.priceMasterId === null
+      && value.version === null
+      && value.currentPriceHistoryId === null
+      && value.currentUnitPrice === null
+      && value.currency === null
+      && value.requiresPriceResolution === false;
+  }
+  if (value.source !== "ORIGINAL_PURCHASE_CURRENT"
+    && value.source !== "SUBSEQUENT_PRICE_HISTORY_CURRENT"
+    && value.source !== "LEGACY_UNKNOWN_CURRENT") return false;
+  return isNonBlankString(value.priceMasterId)
+    && isPositiveInteger(value.version)
+    && (value.currentPriceHistoryId === null || isNonBlankString(value.currentPriceHistoryId))
+    && isDecimal(value.currentUnitPrice, 14, 6)
+    && isCurrency(value.currency)
+    && value.requiresPriceResolution === (value.source !== "SUBSEQUENT_PRICE_HISTORY_CURRENT");
+}
+
+export function isPurchaseReversalPreview(value: unknown): value is PurchaseReversalPreview {
+  if (!isRecord(value) || !hasExactlyKeys(value, PURCHASE_REVERSAL_PREVIEW_KEYS)) return false;
+  if (!isNonBlankString(value.purchaseId)
+    || typeof value.canReverse !== "boolean"
+    || !Array.isArray(value.refusalReasons)
+    || !value.refusalReasons.every(isNonBlankString)
+    || new Set(value.refusalReasons).size !== value.refusalReasons.length
+    || !isPreviewVersion(value.previewVersion)
+    || !Array.isArray(value.inventoryEffects)
+    || !value.inventoryEffects.every(isPurchaseReversalInventoryEffect)
+    || !Array.isArray(value.priceEffects)
+    || !value.priceEffects.every(isPurchaseReversalPriceEffect)) return false;
+  if (value.existingReversal !== null && (!isRecord(value.existingReversal)
+    || !hasExactlyKeys(value.existingReversal, PURCHASE_REVERSAL_EXISTING_KEYS)
+    || !isNonBlankString(value.existingReversal.id)
+    || !isIsoTimestamp(value.existingReversal.reversedAt))) return false;
+  const inventoryProductIds = value.inventoryEffects.map((effect) => effect.productId);
+  const priceProductIds = value.priceEffects.map((effect) => effect.productId);
+  if (new Set(inventoryProductIds).size !== inventoryProductIds.length
+    || new Set(priceProductIds).size !== priceProductIds.length
+    || inventoryProductIds.length !== priceProductIds.length
+    || !inventoryProductIds.every((productId) => priceProductIds.includes(productId))) return false;
+  return value.canReverse === (value.refusalReasons.length === 0)
+    && (value.existingReversal === null || value.canReverse === false);
+}
+
+export function isPurchaseReversalRequest(value: unknown): value is PurchaseReversalRequest {
+  if (!isRecord(value) || !hasExactlyKeys(value, ["reason", "previewVersion", "idempotencyKey", "priceResolutions"])) return false;
+  if (!isNormalizedCancellationReason(value.reason) || !isPreviewVersion(value.previewVersion) || !isUuidV4(value.idempotencyKey)
+    || !Array.isArray(value.priceResolutions) || value.priceResolutions.length > 1_000) return false;
+  const productIds = new Set<string>();
+  return value.priceResolutions.every((resolution) => {
+    if (!isRecord(resolution)
+      || !hasExactlyKeys(resolution, ["productId", "expectedPriceMasterVersion", "currentUnitPrice", "currency"])
+      || !isNonBlankString(resolution.productId)
+      || !isPositiveInteger(resolution.expectedPriceMasterVersion)
+      || !isDecimal(resolution.currentUnitPrice, 14, 6)
+      || !isCurrency(resolution.currency)
+      || productIds.has(resolution.productId)) return false;
+    productIds.add(resolution.productId);
+    return true;
+  });
+}
+
+export function isPurchaseReversalExecution(value: unknown, purchaseId: string): value is PurchaseReversalExecution {
+  return isRecord(value)
+    && hasExactlyKeys(value, PURCHASE_REVERSAL_EXECUTION_KEYS)
+    && isNonBlankString(value.id)
+    && value.purchaseId === purchaseId
+    && isIsoTimestamp(value.reversedAt)
+    && typeof value.replayed === "boolean";
 }
 
 export async function requestPurchaseDetail(api: PurchaseDraftApi, purchaseId: string): Promise<Purchase> {
@@ -530,6 +701,113 @@ export async function requestPurchaseCancellation(
   return mergeCancelledPurchaseResult(purchase, payload);
 }
 
+/** The preview is read-only and is the only authority for reversal state. */
+export async function requestPurchaseReversalPreview(
+  api: PurchaseReversalApi,
+  purchaseId: string,
+): Promise<PurchaseReversalPreview> {
+  const payload = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}/reversal-preview`, {
+    expectedStatus: 200,
+  });
+  if (!isPurchaseReversalPreview(payload)) throw new ApiError("server");
+  if (payload.purchaseId !== purchaseId) throw new ApiError("server");
+  return payload;
+}
+
+/**
+ * Build the write payload solely from one preview. In particular, the
+ * PriceMaster version is never read again or recomputed by the browser.
+ */
+export function createPurchaseReversalRequest(
+  preview: PurchaseReversalPreview,
+  reason: string,
+  idempotencyKey: string,
+  resolutionValues: PurchaseReversalResolutionValues,
+): PurchaseReversalRequest {
+  const requiredEffects = preview.priceEffects.filter((effect) => effect.requiresPriceResolution);
+  const requiredProductIds = new Set(requiredEffects.map((effect) => effect.productId));
+  const suppliedProductIds = Object.keys(resolutionValues);
+  if (suppliedProductIds.length !== requiredProductIds.size || suppliedProductIds.some((productId) => !requiredProductIds.has(productId))) {
+    throw new ApiError("validation");
+  }
+  const priceResolutions = requiredEffects.map((effect) => {
+    const values = resolutionValues[effect.productId];
+    if (values === undefined || effect.version === null) throw new ApiError("validation");
+    return {
+      productId: effect.productId,
+      expectedPriceMasterVersion: effect.version,
+      currentUnitPrice: values.currentUnitPrice,
+      currency: values.currency,
+    };
+  });
+  const request = {
+    reason: reason.trim(),
+    previewVersion: preview.previewVersion,
+    idempotencyKey,
+    priceResolutions,
+  };
+  if (!isPurchaseReversalRequest(request)) throw new ApiError("validation");
+  return request;
+}
+
+/** Both a first write and the server's idempotent replay are successful. */
+export async function requestPurchaseReversal(
+  api: PurchaseReversalApi,
+  purchaseId: string,
+  request: PurchaseReversalRequest,
+): Promise<PurchaseReversalExecution> {
+  if (!isPurchaseReversalRequest(request)) throw new ApiError("validation");
+  const payload = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}/reversals`, {
+    method: "POST",
+    body: request,
+    expectedStatus: [200, 201],
+  });
+  if (!isPurchaseReversalExecution(payload, purchaseId)) throw new ApiError("server");
+  return payload;
+}
+
+export function startPurchaseReversalPreview(reconciliation: boolean): PurchaseReversalWorkflowState {
+  return { phase: "preview_loading", reconciliation };
+}
+
+export function settlePurchaseReversalPreview(
+  preview: PurchaseReversalPreview,
+  canExecute: boolean,
+): PurchaseReversalWorkflowState {
+  if (preview.existingReversal !== null) {
+    return { phase: "completed", purchaseId: preview.purchaseId, reversal: preview.existingReversal };
+  }
+  return { phase: "preview_ready", preview, canExecute };
+}
+
+export function failPurchaseReversalPreview(reconciliation: boolean): PurchaseReversalWorkflowState {
+  return { phase: "preview_error", reconciliation };
+}
+
+export function markPurchaseReversalUnknown(): PurchaseReversalWorkflowState {
+  return { phase: "unknown_result" };
+}
+
+export function completePurchaseReversal(execution: PurchaseReversalExecution): PurchaseReversalWorkflowState {
+  return { phase: "completed", purchaseId: execution.purchaseId, reversal: { id: execution.id, reversedAt: execution.reversedAt } };
+}
+
+export function canStartPurchaseReversal(
+  purchase: Pick<Purchase, "status">,
+  hasReversePermission: boolean,
+  state: PurchaseReversalWorkflowState,
+): boolean {
+  return purchase.status === "POSTED" && hasReversePermission && state.phase === "idle";
+}
+
+export function canExecutePurchaseReversal(state: PurchaseReversalWorkflowState): boolean {
+  return state.phase === "preview_ready" && state.canExecute && state.preview.canReverse && state.preview.existingReversal === null;
+}
+
+export function canSubmitPurchaseReversal(state: PurchaseReversalWorkflowState, isSubmitting: boolean): boolean {
+  return !isSubmitting && canExecutePurchaseReversal(state);
+}
+
 /**
  * A response can be ambiguous after the request crosses the network boundary.
  * These outcomes require an explicit read before any further purchase mutation;
@@ -541,6 +819,14 @@ export function isAmbiguousPurchasePostingError(error: unknown): boolean {
 }
 
 export function isAmbiguousPurchaseCancellationError(error: unknown): boolean {
+  return isAmbiguousPurchasePostingError(error);
+}
+
+/**
+ * A mutation outcome is reconcilable only after a fresh preview. This includes
+ * 409 because the client intentionally does not infer which conflict occurred.
+ */
+export function isAmbiguousPurchaseReversalError(error: unknown): boolean {
   return isAmbiguousPurchasePostingError(error);
 }
 

@@ -7,10 +7,18 @@ import { ApiError, type ApiClient } from "@/lib/api-client";
 import {
   emptyPurchaseForm,
   emptyPurchaseLine,
+  canExecutePurchaseReversal,
+  canSubmitPurchaseReversal,
+  canStartPurchaseReversal,
+  completePurchaseReversal,
+  createPurchaseReversalRequest,
+  failPurchaseReversalPreview,
   formatPurchaseDate,
   formatPurchaseTimestamp,
   isAmbiguousPurchaseCancellationError,
   isAmbiguousPurchasePostingError,
+  isAmbiguousPurchaseReversalError,
+  markPurchaseReversalUnknown,
   requestPurchaseCancellation,
   confirmPurchaseDraft,
   createPurchaseDraft,
@@ -18,6 +26,10 @@ import {
   requestPurchaseDetail,
   requestPurchaseHandoffLineage,
   requestPurchasePosting,
+  requestPurchaseReversal,
+  requestPurchaseReversalPreview,
+  settlePurchaseReversalPreview,
+  startPurchaseReversalPreview,
   PURCHASE_STATUSES,
   purchaseFormFromPurchase,
   purchasePayload,
@@ -29,6 +41,9 @@ import {
   type PurchaseFormValues,
   type PurchaseListFilters,
   type PurchaseListPage,
+  type PurchaseReversalPreview,
+  type PurchaseReversalResolutionValues,
+  type PurchaseReversalWorkflowState,
   type PurchaseHandoffLineage,
   type PurchaseLineFormValues,
 } from "@/lib/purchases";
@@ -454,12 +469,18 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
   const [state, setState] = useState<PurchaseState>({ status: "loading" });
   const [handoffState, setHandoffState] = useState<PurchaseHandoffLineageState>({ status: "idle" });
   const [retryKey, setRetryKey] = useState(0);
-  const [action, setAction] = useState<"confirm" | "post" | "cancel" | null>(null);
+  const [action, setAction] = useState<"confirm" | "post" | "cancel" | "reversal_preview" | "reversal_execute" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [cancellationReason, setCancellationReason] = useState("");
   const [cancellationOpen, setCancellationOpen] = useState(false);
   const [reloadRequired, setReloadRequired] = useState(false);
+  const [reversalState, setReversalState] = useState<PurchaseReversalWorkflowState>({ phase: "idle" });
+  const [reversalError, setReversalError] = useState<string | null>(null);
+  const [reversalReason, setReversalReason] = useState("");
+  const [reversalResolutionValues, setReversalResolutionValues] = useState<PurchaseReversalResolutionValues>({});
+  const reversalIdempotencyKey = useRef<string | null>(null);
   const canReadHandoffLineage = ["inventory.read", "purchase.read", "master.read"].every((permission) => permissions.has(permission));
+  const hasReversePermission = permissions.has("purchase.reversePosted");
 
   useEffect(() => {
     let active = true;
@@ -618,6 +639,102 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
     }
   }
 
+  function resetReversalDraft() {
+    reversalIdempotencyKey.current = null;
+    setReversalReason("");
+    setReversalResolutionValues({});
+  }
+
+  function resolutionValuesFromPreview(preview: Extract<PurchaseReversalWorkflowState, { phase: "preview_ready" }>["preview"]): PurchaseReversalResolutionValues {
+    return Object.fromEntries(preview.priceEffects
+      .filter((effect) => effect.requiresPriceResolution)
+      .map((effect) => [effect.productId, {
+        currentUnitPrice: effect.currentUnitPrice ?? "",
+        currency: effect.currency ?? "",
+      }]));
+  }
+
+  async function loadReversalPreview(reconciliation: boolean) {
+    if (action !== null || reloadRequired) return;
+    setAction("reversal_preview");
+    setReversalError(null);
+    setReversalState(startPurchaseReversalPreview(reconciliation));
+    try {
+      const preview = await requestPurchaseReversalPreview(api, purchaseId);
+      const next = settlePurchaseReversalPreview(preview, !reconciliation);
+      setReversalState(next);
+      if (next.phase === "preview_ready") {
+        resetReversalDraft();
+        setReversalResolutionValues(resolutionValuesFromPreview(next.preview));
+        if (!reconciliation) reversalIdempotencyKey.current = globalThis.crypto.randomUUID();
+      } else {
+        resetReversalDraft();
+      }
+    } catch (error: unknown) {
+      if (!protectedPurchaseError(error, refreshAuthentication)) {
+        setReversalState(failPurchaseReversalPreview(reconciliation));
+        setReversalError(purchaseErrorMessage(error));
+      }
+    } finally {
+      setAction(null);
+    }
+  }
+
+  function closeReversalPreview() {
+    if (action !== null || reversalState.phase === "unknown_result" || reversalState.phase === "completed") return;
+    resetReversalDraft();
+    setReversalError(null);
+    setReversalState({ phase: "idle" });
+  }
+
+  async function executeReversal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (reversalState.phase !== "preview_ready" || reloadRequired || !canSubmitPurchaseReversal(reversalState, action !== null)) return;
+    const normalizedReason = reversalReason.trim();
+    if (normalizedReason.length === 0) {
+      setReversalError("補正理由を入力してください。");
+      return;
+    }
+    if (normalizedReason.length > 10_000) {
+      setReversalError("補正理由は10,000文字以内で入力してください。");
+      return;
+    }
+    const idempotencyKey = reversalIdempotencyKey.current;
+    if (idempotencyKey === null) {
+      setReversalState(markPurchaseReversalUnknown());
+      setReversalError("補正結果を安全に確認できません。最新の補正内容を確認してください。");
+      return;
+    }
+
+    setAction("reversal_execute");
+    setReversalError(null);
+    try {
+      const request = createPurchaseReversalRequest(
+        reversalState.preview,
+        normalizedReason,
+        idempotencyKey,
+        reversalResolutionValues,
+      );
+      const reversal = await requestPurchaseReversal(api, purchaseId, request);
+      setReversalState(completePurchaseReversal(reversal));
+      resetReversalDraft();
+    } catch (error: unknown) {
+      if (protectedPurchaseError(error, refreshAuthentication)) return;
+      if (error instanceof ApiError && error.kind === "validation") {
+        setReversalError("入力内容を確認してください。補正は記録されていません。");
+        return;
+      }
+      if (isAmbiguousPurchaseReversalError(error)) {
+        setReversalState(markPurchaseReversalUnknown());
+        setReversalError("補正結果を確認できません。再実行は行わず、最新の補正内容を確認してください。");
+        return;
+      }
+      setReversalError(purchaseErrorMessage(error));
+    } finally {
+      setAction(null);
+    }
+  }
+
   function reloadPurchase() {
     if (action !== null) return;
     setActionError(null);
@@ -646,7 +763,7 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
           </div>
           <PurchaseStatusBadge status={purchase.status} />
         </div>
-        <p className="mt-5 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">下書きは編集できます。確認後は編集できません。下書きまたは確認済みの仕入は、理由を記録して取り消せます。計上済み・取消済みは、計上も取消もできません。</p>
+        <p className="mt-5 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">下書きは編集できます。確認後は編集できません。下書きまたは確認済みの仕入は、理由を記録して取り消せます。計上済みの仕入は通常の取消対象ではありません。権限を持つ利用者だけが、現在時点の補正内容を確認できます。</p>
         <div className="mt-5 flex flex-wrap gap-3">
           {!reloadRequired && !cancellationOpen && purchase.status === "DRAFT" && permissions.has("purchase.write") && (
             <Link className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href={`/purchases/${encodeURIComponent(purchase.id)}/edit`}>下書きを編集</Link>
@@ -660,6 +777,9 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
           {!reloadRequired && !cancellationOpen && ((purchase.status === "DRAFT" && permissions.has("purchase.write")) || (purchase.status === "CONFIRMED" && permissions.has("purchase.confirm"))) && (
             <button className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-900 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700" disabled={action !== null} onClick={openCancellation} type="button">仕入を取り消す</button>
           )}
+          {!reloadRequired && !cancellationOpen && canStartPurchaseReversal(purchase, hasReversePermission, reversalState) && (
+            <button className="rounded-md border border-violet-400 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-950 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700" disabled={action !== null} onClick={() => void loadReversalPreview(false)} type="button">仕入補正を確認</button>
+          )}
         </div>
         {cancellationOpen && (
           <form aria-labelledby="purchase-cancellation-title" className="mt-5 rounded-lg border border-red-200 bg-red-50 p-5" noValidate onSubmit={(event) => void cancel(event)}>
@@ -668,6 +788,26 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
             <div className="mt-4"><Field error={actionError ?? undefined} htmlFor="purchase-cancellation-reason" label="取消理由" required><TextArea aria-describedby={actionError === null ? undefined : "purchase-cancellation-reason-error"} aria-invalid={actionError === null ? undefined : true} id="purchase-cancellation-reason" maxLength={10_000} onChange={(event) => { setCancellationReason(event.target.value); setActionError(null); }} required rows={4} value={cancellationReason} /></Field><p className="mt-2 text-right text-xs text-slate-600">{cancellationReason.length.toLocaleString("ja-JP")} / 10,000文字</p></div>
             <div className="mt-5 flex flex-wrap gap-3"><button className="rounded-md bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:bg-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700" disabled={action !== null} type="submit">{action === "cancel" ? "取り消しています…" : "理由を記録して取り消す"}</button><button className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-white disabled:cursor-not-allowed disabled:text-slate-400" disabled={action !== null} onClick={closeCancellation} type="button">戻る</button></div>
           </form>
+        )}
+        {reversalState.phase !== "idle" && (
+          <PurchasePostedReversalPanel
+            action={action}
+            error={reversalError}
+            onClose={closeReversalPreview}
+            onExecute={(event) => void executeReversal(event)}
+            onLoadPreview={(reconciliation) => void loadReversalPreview(reconciliation)}
+            onReasonChange={(reason) => { setReversalReason(reason); setReversalError(null); }}
+            onResolutionChange={(productId, field, value) => {
+              setReversalResolutionValues((current) => ({
+                ...current,
+                [productId]: { ...current[productId]!, [field]: value },
+              }));
+              setReversalError(null);
+            }}
+            reason={reversalReason}
+            resolutionValues={reversalResolutionValues}
+            state={reversalState}
+          />
         )}
         {reloadRequired && <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4" role="alert"><p className="text-sm text-amber-950">操作結果が不明なため、この画面の変更操作を停止しています。最新状態を確認するまで、再計上・再取消はしないでください。</p><button className="mt-3 rounded-md border border-amber-300 px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100" onClick={reloadPurchase} type="button">最新状態を再読み込み</button></div>}
         <FormError message={cancellationOpen ? null : actionError} />
@@ -693,6 +833,58 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
       </div>
     </section>
   );
+}
+
+function PurchasePostedReversalPanel({ action, error, onClose, onExecute, onLoadPreview, onReasonChange, onResolutionChange, reason, resolutionValues, state }: Readonly<{
+  action: "confirm" | "post" | "cancel" | "reversal_preview" | "reversal_execute" | null;
+  error: string | null;
+  onClose(): void;
+  onExecute(event: FormEvent<HTMLFormElement>): void;
+  onLoadPreview(reconciliation: boolean): void;
+  onReasonChange(reason: string): void;
+  onResolutionChange(productId: string, field: "currentUnitPrice" | "currency", value: string): void;
+  reason: string;
+  resolutionValues: PurchaseReversalResolutionValues;
+  state: PurchaseReversalWorkflowState;
+}>) {
+  if (state.phase === "preview_loading") {
+    return <section aria-labelledby="purchase-reversal-title" className="mt-5 rounded-lg border border-violet-200 bg-violet-50 p-5"><h2 className="text-lg font-bold text-violet-950" id="purchase-reversal-title">仕入補正を確認</h2><p className="mt-2 text-sm text-violet-900" role="status">現在の在庫・価格影響を確認しています…</p></section>;
+  }
+  if (state.phase === "preview_error") {
+    return <section aria-labelledby="purchase-reversal-title" className="mt-5 rounded-lg border border-red-200 bg-red-50 p-5"><h2 className="text-lg font-bold text-red-950" id="purchase-reversal-title">仕入補正を確認できません</h2><p className="mt-2 text-sm text-red-900" role="alert">{error ?? "補正内容を確認できませんでした。"}</p><div className="mt-5 flex flex-wrap gap-3"><button className="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-900 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60" disabled={action !== null} onClick={() => onLoadPreview(state.reconciliation)} type="button">補正内容を再取得</button><button className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-white disabled:cursor-not-allowed disabled:text-slate-400" disabled={action !== null} onClick={onClose} type="button">戻る</button></div></section>;
+  }
+  if (state.phase === "unknown_result") {
+    return <section aria-labelledby="purchase-reversal-title" className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-5"><h2 className="text-lg font-bold text-amber-950" id="purchase-reversal-title">補正結果を確認する必要があります</h2><p className="mt-2 text-sm text-amber-900" role="alert">{error ?? "補正結果を確認できません。"} 同じ補正を再送せず、最新の補正内容を確認してください。</p><button className="mt-5 rounded-md border border-amber-300 px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60" disabled={action !== null} onClick={() => onLoadPreview(true)} type="button">最新の補正内容を確認</button></section>;
+  }
+  if (state.phase === "completed") {
+    return <section aria-labelledby="purchase-reversal-title" className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-5"><h2 className="text-lg font-bold text-emerald-950" id="purchase-reversal-title">仕入補正済み</h2><p className="mt-2 text-sm text-emerald-900">このPurchaseには補正記録があります。新しい補正操作はできません。</p><dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2"><DetailItem label="対象Purchase" value={state.purchaseId} /><DetailItem label="reversal ID" value={state.reversal.id} /><DetailItem label="記録時刻" value={formatPurchaseTimestamp(state.reversal.reversedAt)} /></dl></section>;
+  }
+  if (state.phase !== "preview_ready") return null;
+
+  const preview = state.preview;
+  const executable = canExecutePurchaseReversal(state);
+  const canSubmit = canSubmitPurchaseReversal(state, action !== null);
+  const requiredPriceEffects = preview.priceEffects.filter((effect) => effect.requiresPriceResolution);
+  return (
+    <section aria-labelledby="purchase-reversal-title" className="mt-5 rounded-lg border border-violet-200 bg-violet-50 p-5">
+      <h2 className="text-lg font-bold text-violet-950" id="purchase-reversal-title">仕入補正を確認</h2>
+      <p className="mt-2 text-sm text-violet-900">元の仕入、receipt、PriceHistoryは変更・削除せず、現在時点の補正記録を追加します。</p>
+      <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2"><DetailItem label="対象Purchase" value={preview.purchaseId} /><DetailItem label="補正可能" value={preview.canReverse ? "可能" : "不可"} /></dl>
+      {preview.refusalReasons.length > 0 && <section className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-4" aria-labelledby="purchase-reversal-refusals-title"><h3 className="font-semibold text-amber-950" id="purchase-reversal-refusals-title">実行できない理由</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-900" role="alert">{preview.refusalReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></section>}
+      <section className="mt-5" aria-labelledby="purchase-reversal-inventory-title"><h3 className="font-semibold text-slate-950" id="purchase-reversal-inventory-title">在庫への予定影響</h3><div className="mt-3 overflow-x-auto rounded-md border border-violet-200 bg-white"><table className="min-w-full divide-y divide-slate-200 text-sm"><thead className="bg-slate-50 text-left text-slate-700"><tr><th className="px-3 py-2">商品ID</th><th className="px-3 py-2 text-right">数量差分</th><th className="px-3 py-2 text-right">補正後数量</th><th className="px-3 py-2">在庫version</th></tr></thead><tbody className="divide-y divide-slate-100">{preview.inventoryEffects.map((effect) => <tr key={effect.productId}><td className="break-all px-3 py-2 font-mono text-xs">{effect.productId}</td><td className="px-3 py-2 text-right">{effect.quantityDelta}</td><td className="px-3 py-2 text-right">{effect.quantityAfter ?? "—"}</td><td className="px-3 py-2">{effect.inventoryVersion ?? "—"}</td></tr>)}</tbody></table></div></section>
+      <section className="mt-5" aria-labelledby="purchase-reversal-price-title"><h3 className="font-semibold text-slate-950" id="purchase-reversal-price-title">価格への予定影響</h3><div className="mt-3 overflow-x-auto rounded-md border border-violet-200 bg-white"><table className="min-w-full divide-y divide-slate-200 text-sm"><thead className="bg-slate-50 text-left text-slate-700"><tr><th className="px-3 py-2">商品ID</th><th className="px-3 py-2">現在価格の由来</th><th className="px-3 py-2 text-right">現在単価</th><th className="px-3 py-2">price resolution</th></tr></thead><tbody className="divide-y divide-slate-100">{preview.priceEffects.map((effect) => <tr key={effect.productId}><td className="break-all px-3 py-2 font-mono text-xs">{effect.productId}</td><td className="px-3 py-2">{purchaseReversalPriceSourceLabel(effect.source)}</td><td className="px-3 py-2 text-right">{effect.currentUnitPrice === null ? "—" : `${effect.currentUnitPrice} ${effect.currency ?? ""}`}</td><td className="px-3 py-2">{effect.requiresPriceResolution ? "入力が必要" : "不要"}</td></tr>)}</tbody></table></div></section>
+      {executable && <form className="mt-5 rounded-md border border-violet-200 bg-white p-4" noValidate onSubmit={onExecute}><Field error={error ?? undefined} htmlFor="purchase-reversal-reason" label="補正理由" required><TextArea aria-describedby={error === null ? undefined : "purchase-reversal-reason-error"} aria-invalid={error === null ? undefined : true} id="purchase-reversal-reason" maxLength={10_000} onChange={(event) => onReasonChange(event.target.value)} required rows={4} value={reason} /></Field><p className="mt-2 text-right text-xs text-slate-600">{reason.length.toLocaleString("ja-JP")} / 10,000文字</p>{requiredPriceEffects.length > 0 && <fieldset className="mt-5 space-y-4"><legend className="font-semibold text-slate-950">必要なprice resolution</legend><p className="mt-1 text-sm text-slate-700">preview取得時点のPriceMaster versionを使います。現在値を再取得して差し替えることはありません。</p>{requiredPriceEffects.map((effect) => { const values = resolutionValues[effect.productId]!; return <div className="grid gap-4 rounded-md border border-slate-200 p-4 sm:grid-cols-2" key={effect.productId}><p className="break-all text-sm font-medium text-slate-950 sm:col-span-2">商品ID: <span className="font-mono text-xs">{effect.productId}</span> / version {effect.version}</p><label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor={`purchase-reversal-price-${effect.productId}`}>現在単価<input className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-950" id={`purchase-reversal-price-${effect.productId}`} inputMode="decimal" onChange={(event) => onResolutionChange(effect.productId, "currentUnitPrice", event.target.value)} value={values?.currentUnitPrice ?? ""} /></label><label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor={`purchase-reversal-currency-${effect.productId}`}>通貨<input className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-950" id={`purchase-reversal-currency-${effect.productId}`} maxLength={3} onChange={(event) => onResolutionChange(effect.productId, "currency", event.target.value.toUpperCase())} value={values?.currency ?? ""} /></label></div>; })}</fieldset>}<div className="mt-5 flex flex-wrap gap-3"><button className="rounded-md bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:bg-slate-400" disabled={!canSubmit} type="submit">{action === "reversal_execute" ? "補正を記録しています…" : "理由を記録して仕入補正を実行"}</button><button className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400" disabled={action !== null} onClick={onClose} type="button">戻る</button></div></form>}
+      {!preview.canReverse && <div className="mt-5"><button className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-white disabled:cursor-not-allowed disabled:text-slate-400" disabled={action !== null} onClick={onClose} type="button">戻る</button></div>}
+      {preview.canReverse && !state.canExecute && <section className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-4"><p className="text-sm text-amber-900">補正は見つかりませんでした。新しい補正手続きを開始する前に、最新のpreviewを取得します。</p><button className="mt-3 rounded-md border border-amber-300 px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60" disabled={action !== null} onClick={() => onLoadPreview(false)} type="button">新しい補正手続きを開始</button></section>}
+    </section>
+  );
+}
+
+function purchaseReversalPriceSourceLabel(source: PurchaseReversalPreview["priceEffects"][number]["source"]): string {
+  if (source === "ORIGINAL_PURCHASE_CURRENT") return "元仕入が現在価格";
+  if (source === "SUBSEQUENT_PRICE_HISTORY_CURRENT") return "後続PriceHistoryが現在価格";
+  if (source === "LEGACY_UNKNOWN_CURRENT") return "既存価格の由来が不明";
+  return "PriceMasterなし";
 }
 
 function PurchaseHandoffLineagePanel({ canRead, state }: Readonly<{ canRead: boolean; state: PurchaseHandoffLineageState }>) {

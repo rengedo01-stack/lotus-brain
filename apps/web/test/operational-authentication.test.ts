@@ -162,10 +162,10 @@ test("valid permission ordering remains a server detail rather than a client boo
   const coordinator = new AuthenticationBootstrapCoordinator();
   const result = await bootstrapOperationalAuthentication(apiWithResponses({
     "/auth/me": { user: currentUser },
-    "/auth/me/permissions": { permissions: ["purchase.read", "master.read"] },
+    "/auth/me/permissions": { permissions: ["purchase.reversePosted", "purchase.read", "master.read"] },
   }), coordinator, coordinator.begin());
 
-  assert.deepEqual([...result?.permissions ?? []], ["purchase.read", "master.read"]);
+  assert.deepEqual([...result?.permissions ?? []], ["purchase.reversePosted", "purchase.read", "master.read"]);
 });
 
 test("a partial bootstrap never returns ready authentication state", async () => {
