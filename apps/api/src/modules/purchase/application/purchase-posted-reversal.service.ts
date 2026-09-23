@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaPurchasePostedReversalRepository } from "../infrastructure/prisma-purchase-posted-reversal.repository";
-import type { PriceResolutionInput, PurchaseReversalExecution, PurchaseReversalPreview } from "./purchase-posted-reversal.types";
+import type { PriceResolutionInput, PurchaseReversalAudit, PurchaseReversalExecution, PurchaseReversalPreview } from "./purchase-posted-reversal.types";
 
 @Injectable()
 export class PurchasePostedReversalService {
@@ -8,6 +8,10 @@ export class PurchasePostedReversalService {
 
   preview(purchaseId: string): Promise<PurchaseReversalPreview> {
     return this.repository.preview(purchaseId);
+  }
+
+  readAudit(purchaseId: string): Promise<PurchaseReversalAudit | null> {
+    return this.repository.readAudit(purchaseId);
   }
 
   execute(input: {

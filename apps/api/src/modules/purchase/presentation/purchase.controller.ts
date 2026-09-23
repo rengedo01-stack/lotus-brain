@@ -63,7 +63,7 @@ import { UpdatePurchaseMetadataDto } from "./dto/update-purchase-metadata.dto";
 import { CancelPurchaseDto } from "./dto/cancel-purchase.dto";
 import { CreatePurchaseReversalDto } from "./dto/create-purchase-reversal.dto";
 import { CreateRecommendationPurchaseDraftDto } from "./dto/create-recommendation-purchase-draft.dto";
-import { cancelledPurchaseResponseSchema, postedPurchaseResponseSchema, purchaseDraftResponseSchema, purchaseHandoffLineageResponseSchema, purchaseListPageResponseSchema, recommendationPurchaseDraftHandoffResponseSchema, recommendationPurchaseHandoffLineageResponseSchema } from "./purchase-response.schemas";
+import { cancelledPurchaseResponseSchema, postedPurchaseResponseSchema, purchaseDraftResponseSchema, purchaseHandoffLineageResponseSchema, purchaseListPageResponseSchema, purchaseReversalAuditResponseSchema, recommendationPurchaseDraftHandoffResponseSchema, recommendationPurchaseHandoffLineageResponseSchema } from "./purchase-response.schemas";
 import { ListPurchasesQueryDto, PURCHASE_STATUSES } from "./dto/list-purchases-query.dto";
 import { RequirePermissions } from "../../authorization/decorators/require-permissions.decorator";
 import { Permissions } from "../../authorization/permission.registry";
@@ -223,6 +223,23 @@ export class PurchaseController {
       return { handoffs: await this.getPurchaseHandoffLineageUseCase.execute(purchaseId) };
     } catch (error: unknown) {
       if (error instanceof PurchaseRecommendationHandoffLineageNotFoundError) throw new NotFoundException(error.message);
+      throw error;
+    }
+  }
+
+  @Get(":id/reversal")
+  @Header("Cache-Control", "private, no-store")
+  @RequirePermissions(Permissions.PURCHASE_READ, Permissions.INVENTORY_READ, Permissions.MASTER_READ)
+  @ApiOperation({ summary: "Read the immutable audit snapshot for one posted-purchase correction" })
+  @ApiOkResponse({ description: "The immutable correction audit record was returned, or null when this Purchase has not been corrected.", schema: purchaseReversalAuditResponseSchema })
+  @ApiUnauthorizedResponse({ description: "The session is missing, pending, revoked, expired, or otherwise unauthenticated." })
+  @ApiForbiddenResponse({ description: "purchase.read, inventory.read, and master.read are all required." })
+  @ApiNotFoundResponse({ description: "The Purchase does not exist." })
+  async getPurchaseReversalAudit(@Param("id") purchaseId: string) {
+    try {
+      return { reversal: await this.purchasePostedReversalService.readAudit(purchaseId) };
+    } catch (error: unknown) {
+      if (error instanceof PurchasePostedReversalNotFoundError) throw new NotFoundException(error.message);
       throw error;
     }
   }

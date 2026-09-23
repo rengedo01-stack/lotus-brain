@@ -215,6 +215,76 @@ export const purchaseHandoffLineageResponseSchema = {
   },
 };
 
+const purchaseReversalAuditItemSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["purchaseItemId", "productId", "inventoryUnitId", "quantity", "unitPrice", "currency"],
+  properties: {
+    purchaseItemId: { type: "string" as const, minLength: 1 },
+    productId: { type: "string" as const, minLength: 1 },
+    inventoryUnitId: { type: "string" as const, minLength: 1 },
+    quantity: positiveQuantityDecimalSchema,
+    unitPrice: moneyDecimalSchema,
+    currency: { type: "string" as const, pattern: "^[A-Z]{3}$" },
+  },
+};
+
+const purchaseReversalAuditInventoryEffectSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["productId", "inventoryId", "inventoryUnitId", "quantityDelta", "quantityAfter", "averageUnitCost"],
+  properties: {
+    productId: { type: "string" as const, minLength: 1 },
+    inventoryId: { type: "string" as const, minLength: 1 },
+    inventoryUnitId: { type: "string" as const, minLength: 1 },
+    quantityDelta: { type: "string" as const, pattern: "^-(?!0(?:\\.0+)?$)(?:0|[1-9][0-9]{0,14})(?:\\.[0-9]{1,9})?$" },
+    quantityAfter: quantityDecimalSchema,
+    averageUnitCost: { oneOf: [moneyDecimalSchema, { type: "null" as const }] },
+  },
+};
+
+const purchaseReversalAuditPriceEffectSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["priceMasterId", "source", "previousCurrentPriceHistoryId", "previousVersion", "appliedUnitPrice", "appliedCurrency", "effectiveAt", "becomesCurrent", "priceHistoryId"],
+  properties: {
+    priceMasterId: { type: "string" as const, minLength: 1 },
+    source: { type: "string" as const, enum: ["ORIGINAL_PURCHASE_CURRENT", "SUBSEQUENT_PRICE_HISTORY_CURRENT", "LEGACY_UNKNOWN_CURRENT"] },
+    previousCurrentPriceHistoryId: { oneOf: [{ type: "string" as const, minLength: 1 }, { type: "null" as const }] },
+    previousVersion: { type: "integer" as const, minimum: 1 },
+    appliedUnitPrice: moneyDecimalSchema,
+    appliedCurrency: { type: "string" as const, pattern: "^[A-Z]{3}$" },
+    effectiveAt: { type: "string" as const, format: "date-time" },
+    becomesCurrent: { type: "boolean" as const },
+    priceHistoryId: { type: "string" as const, minLength: 1 },
+  },
+};
+
+const purchaseReversalAuditSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["id", "purchaseId", "actorUserId", "reason", "reversedAt", "items", "inventoryEffects", "priceEffects"],
+  properties: {
+    id: { type: "string" as const, minLength: 1 },
+    purchaseId: { type: "string" as const, minLength: 1 },
+    actorUserId: { type: "string" as const, minLength: 1 },
+    reason: { type: "string" as const, minLength: 1, maxLength: 10_000 },
+    reversedAt: { type: "string" as const, format: "date-time" },
+    items: { type: "array" as const, items: purchaseReversalAuditItemSchema },
+    inventoryEffects: { type: "array" as const, items: purchaseReversalAuditInventoryEffectSchema },
+    priceEffects: { type: "array" as const, items: purchaseReversalAuditPriceEffectSchema },
+  },
+};
+
+export const purchaseReversalAuditResponseSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["reversal"],
+  properties: {
+    reversal: { oneOf: [purchaseReversalAuditSchema, { type: "null" as const }] },
+  },
+};
+
 const nullableDateTimeSchema = {
   oneOf: [{ type: "string" as const, format: "date-time" }, { type: "null" as const }],
 };

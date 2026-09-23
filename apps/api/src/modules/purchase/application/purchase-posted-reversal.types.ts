@@ -38,3 +38,43 @@ export type PurchaseReversalExecution = Readonly<{
   reversedAt: Date;
   replayed: boolean;
 }>;
+
+/**
+ * A read-only projection of the immutable correction ledger. These values are
+ * deliberately not reconstructed from current Product, User, Inventory, or
+ * PriceMaster state.
+ */
+export type PurchaseReversalAudit = Readonly<{
+  id: string;
+  purchaseId: string;
+  actorUserId: string;
+  reason: string;
+  reversedAt: Date;
+  items: readonly {
+    purchaseItemId: string;
+    productId: string;
+    inventoryUnitId: string;
+    quantity: string;
+    unitPrice: string;
+    currency: string;
+  }[];
+  inventoryEffects: readonly {
+    productId: string;
+    inventoryId: string;
+    inventoryUnitId: string;
+    quantityDelta: string;
+    quantityAfter: string;
+    averageUnitCost: string | null;
+  }[];
+  priceEffects: readonly {
+    priceMasterId: string;
+    source: "ORIGINAL_PURCHASE_CURRENT" | "SUBSEQUENT_PRICE_HISTORY_CURRENT" | "LEGACY_UNKNOWN_CURRENT";
+    previousCurrentPriceHistoryId: string | null;
+    previousVersion: number;
+    appliedUnitPrice: string;
+    appliedCurrency: string;
+    effectiveAt: Date;
+    becomesCurrent: boolean;
+    priceHistoryId: string;
+  }[];
+}>;

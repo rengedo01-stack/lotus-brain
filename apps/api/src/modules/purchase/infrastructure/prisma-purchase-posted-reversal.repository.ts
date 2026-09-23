@@ -10,6 +10,7 @@ import {
 } from "../application/purchase-posted-reversal.errors";
 import type {
   PriceResolutionInput,
+  PurchaseReversalAudit,
   PurchaseReversalExecution,
   PurchaseReversalPreview,
 } from "../application/purchase-posted-reversal.types";
@@ -75,6 +76,99 @@ export class PrismaPurchasePostedReversalRepository {
     );
     if (inspection === null) throw new PurchasePostedReversalNotFoundError(`Purchase ${purchaseId} was not found.`);
     return inspection.preview;
+  }
+
+  async readAudit(purchaseId: string): Promise<PurchaseReversalAudit | null> {
+    const reversal = await this.prisma.purchaseReversal.findUnique({
+      where: { purchaseId },
+      select: {
+        id: true,
+        purchaseId: true,
+        actorUserId: true,
+        reason: true,
+        reversedAt: true,
+        items: {
+          select: {
+            purchaseItemId: true,
+            productId: true,
+            inventoryUnitId: true,
+            quantity: true,
+            unitPrice: true,
+            currency: true,
+          },
+          orderBy: { purchaseItemId: "asc" },
+        },
+        inventoryEffects: {
+          select: {
+            productId: true,
+            inventoryId: true,
+            inventoryUnitId: true,
+            quantityDelta: true,
+            quantityAfter: true,
+            averageUnitCost: true,
+          },
+          orderBy: [{ productId: "asc" }, { inventoryId: "asc" }],
+        },
+        priceEffects: {
+          select: {
+            priceMasterId: true,
+            source: true,
+            previousCurrentPriceHistoryId: true,
+            previousVersion: true,
+            appliedUnitPrice: true,
+            appliedCurrency: true,
+            effectiveAt: true,
+            becomesCurrent: true,
+            priceHistory: { select: { id: true } },
+          },
+          orderBy: { priceMasterId: "asc" },
+        },
+      },
+    });
+    if (reversal === null) {
+      const purchase = await this.prisma.purchase.findUnique({ where: { id: purchaseId }, select: { id: true } });
+      if (purchase === null) throw new PurchasePostedReversalNotFoundError(`Purchase ${purchaseId} was not found.`);
+      return null;
+    }
+    return {
+      id: reversal.id,
+      purchaseId: reversal.purchaseId,
+      actorUserId: reversal.actorUserId,
+      reason: reversal.reason,
+      reversedAt: reversal.reversedAt,
+      items: reversal.items.map((item) => ({
+        purchaseItemId: item.purchaseItemId,
+        productId: item.productId,
+        inventoryUnitId: item.inventoryUnitId,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+        currency: item.currency,
+      })),
+      inventoryEffects: reversal.inventoryEffects.map((effect) => ({
+        productId: effect.productId,
+        inventoryId: effect.inventoryId,
+        inventoryUnitId: effect.inventoryUnitId,
+        quantityDelta: effect.quantityDelta.toString(),
+        quantityAfter: effect.quantityAfter.toString(),
+        averageUnitCost: effect.averageUnitCost?.toString() ?? null,
+      })),
+      priceEffects: reversal.priceEffects.map((effect) => {
+        if (effect.priceHistory === null) {
+          throw new Error(`Purchase reversal price effect ${effect.priceMasterId} has no immutable PriceHistory record.`);
+        }
+        return {
+          priceMasterId: effect.priceMasterId,
+          source: effect.source,
+          previousCurrentPriceHistoryId: effect.previousCurrentPriceHistoryId,
+          previousVersion: effect.previousVersion,
+          appliedUnitPrice: effect.appliedUnitPrice.toString(),
+          appliedCurrency: effect.appliedCurrency,
+          effectiveAt: effect.effectiveAt,
+          becomesCurrent: effect.becomesCurrent,
+          priceHistoryId: effect.priceHistory.id,
+        };
+      }),
+    };
   }
 
   async execute(input: ExecutePurchasePostedReversalInput): Promise<PurchaseReversalExecution> {
