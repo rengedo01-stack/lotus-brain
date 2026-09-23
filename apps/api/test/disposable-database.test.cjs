@@ -39,5 +39,11 @@ test("disposable database guard allows only the mapped GitHub Actions postgres s
   process.env.GITHUB_ACTIONS = "true";
   process.env.LOTUS_REAL_DB_TEST_MODE = "1";
   assert.doesNotThrow(() => assertDisposableDatabaseUrl("postgresql://lotus_test:ci-only@127.0.0.1:5432/lotus_brain_safe_test?schema=public"));
+  assert.throws(() => assertDisposableDatabaseUrl("postgresql://lotus_test:ci-only@127.0.0.1:55432/lotus_brain_safe_test?schema=public"), /port 5432/);
   assert.throws(() => assertDisposableDatabaseUrl("postgresql://lotus_test:ci-only@postgres:5432/lotus_brain_safe_test?schema=public"), /mapped GitHub Actions postgres service/);
+  const browserE2EOptions = { allowGeneratedPortInGitHubActions: true };
+  assert.doesNotThrow(() => assertDisposableDatabaseUrl("postgresql://lotus_test:ci-only@127.0.0.1:55432/lotus_brain_safe_test?schema=public", "browser E2E database URL", browserE2EOptions));
+  assert.throws(() => assertDisposableDatabaseUrl("postgresql://lotus_test:ci-only@127.0.0.1:5432/lotus_brain_safe_test?schema=public", "browser E2E database URL", browserE2EOptions), /generated non-5432 port/);
+  assert.throws(() => assertDisposableDatabaseUrl("postgresql://lotus_test:ci-only@postgres:55432/lotus_brain_safe_test?schema=public", "browser E2E database URL", browserE2EOptions), /mapped GitHub Actions postgres service/);
+  assert.throws(() => assertDisposableDatabaseUrl("postgresql://lotus_test:ci-only@127.0.0.1/lotus_brain_safe_test?schema=public", "browser E2E database URL", browserE2EOptions), /generated non-5432 port/);
 });

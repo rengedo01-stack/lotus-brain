@@ -193,7 +193,7 @@ async function main() {
   const password = randomBytes(24).toString("base64url");
   const databaseUrl = new URL(`postgresql://${TEST_USER}:${password}@127.0.0.1:${postgresPort}/${DATABASE_NAME}`);
   databaseUrl.searchParams.set("schema", "public");
-  assertDisposableDatabaseUrl(databaseUrl.toString(), "generated browser E2E database URL");
+  assertDisposableDatabaseUrl(databaseUrl.toString(), "generated browser E2E database URL", { allowGeneratedPortInGitHubActions: true });
 
   const projectName = `lotus-brain-browser-e2e-${randomBytes(8).toString("hex")}`;
   composeArguments = ["compose", "--project-name", projectName, "--file", composeFile];

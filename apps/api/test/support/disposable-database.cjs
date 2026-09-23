@@ -10,7 +10,7 @@ function readDisposableDatabaseUrl(environmentVariable) {
   return value;
 }
 
-function assertDisposableDatabaseUrl(value, label = "database URL") {
+function assertDisposableDatabaseUrl(value, label = "database URL", options = {}) {
   assert.equal(process.env[TEST_MODE_ENV], "1", `${TEST_MODE_ENV}=1 is required before a disposable database test can start.`);
 
   let parsed;
@@ -28,6 +28,11 @@ function assertDisposableDatabaseUrl(value, label = "database URL") {
 
   if (process.env.GITHUB_ACTIONS === "true") {
     assert.equal(parsed.hostname, "127.0.0.1", `${label} must target the mapped GitHub Actions postgres service.`);
+    if (options.allowGeneratedPortInGitHubActions === true) {
+      const port = Number(parsed.port);
+      assert.ok(Number.isInteger(port) && port > 1024 && port <= 65535 && port !== 5432, `${label} must use an explicit generated non-5432 port in GitHub Actions.`);
+      return;
+    }
     assert.equal(parsed.port || "5432", "5432", `${label} must target port 5432 in GitHub Actions.`);
     return;
   }

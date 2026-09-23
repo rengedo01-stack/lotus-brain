@@ -29,7 +29,7 @@ const { PurchasePostedReversalService } = apiRequire("./dist/modules/purchase/ap
   PurchasePostedReversalService: new (repository: unknown) => PurchasePostedReversalService;
 };
 const { assertDisposableDatabaseUrl } = apiRequire("./test/support/disposable-database.cjs") as {
-  assertDisposableDatabaseUrl(value: string, label?: string): void;
+  assertDisposableDatabaseUrl(value: string, label?: string, options?: { allowGeneratedPortInGitHubActions?: boolean }): void;
 };
 
 const DATABASE_NAME = "lotus_brain_pr006c24c2d_browser_e2e_test";
@@ -114,7 +114,7 @@ export type PurchaseReversalE2EFixture = {
 function databaseUrl(): string {
   const value = process.env.LOTUS_WEB_E2E_DATABASE_URL;
   if (value === undefined || value.length === 0) throw new Error("LOTUS_WEB_E2E_DATABASE_URL is required for browser E2E tests.");
-  assertDisposableDatabaseUrl(value, "LOTUS_WEB_E2E_DATABASE_URL");
+  assertDisposableDatabaseUrl(value, "LOTUS_WEB_E2E_DATABASE_URL", { allowGeneratedPortInGitHubActions: true });
   const parsed = new URL(value);
   if (decodeURIComponent(parsed.pathname.slice(1)) !== DATABASE_NAME) {
     throw new Error(`LOTUS_WEB_E2E_DATABASE_URL must target ${DATABASE_NAME}.`);
