@@ -96,3 +96,29 @@ jobs:
         run: pnpm --filter @lotus-brain/api build
       - name: Apply migrations to a new isolated database and run the proof
         run: node apps/api/scripts/run-disposable-db-target.cjs "${{ matrix.target }}" --migrate
+
+  browser-e2e:
+    name: Browser E2E (purchase posted reversal)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run isolated posted purchase reversal browser E2E
+        run: pnpm test:e2e:purchase-posted-reversal
+      - name: Upload sanitized browser failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-e2e-purchase-posted-reversal-failure
+          path: .artifacts/browser-e2e
+          if-no-files-found: ignore
