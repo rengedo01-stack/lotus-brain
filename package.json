@@ -7,7 +7,8 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "test:e2e:purchase-posted-reversal": "node apps/api/scripts/run-disposable-web-e2e.cjs"
+    "test:e2e:purchase-posted-reversal": "node apps/api/scripts/run-disposable-web-e2e.cjs purchase-posted-reversal",
+    "test:e2e:recommendation-purchase-reorder": "node apps/api/scripts/run-disposable-web-e2e.cjs recommendation-purchase-reorder"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

@@ -40,6 +40,11 @@ const targets = {
       legacyFixtureEnvironment: { LOTUS_LEGACY_FIXTURE_EVENT_TYPE: "LEGACY_UNKNOWN" },
     },
   },
+  "recommendation-purchase-reorder": {
+    databaseName: "lotus_brain_pr006c26_recommendation_purchase_reorder_test",
+    environmentVariable: "RECOMMENDATION_PURCHASE_REORDER_DATABASE_URL",
+    testFile: "test/recommendation-purchase-reorder-real-db.test.cjs",
+  },
 };
 
 function readTarget(name) {

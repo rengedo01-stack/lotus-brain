@@ -32,7 +32,9 @@ const { assertDisposableDatabaseUrl } = apiRequire("./test/support/disposable-da
   assertDisposableDatabaseUrl(value: string, label?: string, options?: { allowGeneratedPortInGitHubActions?: boolean }): void;
 };
 
-const DATABASE_NAME = "lotus_brain_pr006c24c2d_browser_e2e_test";
+const C24C2D_DATABASE_NAME = "lotus_brain_pr006c24c2d_browser_e2e_test";
+const C26_DATABASE_NAME = "lotus_brain_pr006c26_recommendation_purchase_reorder_browser_e2e_test";
+const DATABASE_NAME = process.env.LOTUS_WEB_E2E_DATABASE_NAME ?? C24C2D_DATABASE_NAME;
 const ADMIN_EMAIL = "c24c2d-browser-admin@example.test";
 const LEGACY_EMAIL = "c24c2d-browser-legacy@example.test";
 const PASSWORD = "C24C2D browser fixture password";
@@ -116,6 +118,9 @@ function databaseUrl(): string {
   if (value === undefined || value.length === 0) throw new Error("LOTUS_WEB_E2E_DATABASE_URL is required for browser E2E tests.");
   assertDisposableDatabaseUrl(value, "LOTUS_WEB_E2E_DATABASE_URL", { allowGeneratedPortInGitHubActions: true });
   const parsed = new URL(value);
+  if (![C24C2D_DATABASE_NAME, C26_DATABASE_NAME].includes(DATABASE_NAME)) {
+    throw new Error("LOTUS_WEB_E2E_DATABASE_NAME is not an approved disposable browser E2E database.");
+  }
   if (decodeURIComponent(parsed.pathname.slice(1)) !== DATABASE_NAME) {
     throw new Error(`LOTUS_WEB_E2E_DATABASE_URL must target ${DATABASE_NAME}.`);
   }

@@ -63,6 +63,8 @@ jobs:
             database: lotus_brain_pr006c24c1_price_provenance_test
           - target: purchase-posted-reversal
             database: lotus_brain_pr006c24c2a_purchase_posted_reversal_test
+          - target: recommendation-purchase-reorder
+            database: lotus_brain_pr006c26_recommendation_purchase_reorder_test
     services:
       postgres:
         image: postgres:17-alpine
@@ -98,7 +100,7 @@ jobs:
         run: node apps/api/scripts/run-disposable-db-target.cjs "${{ matrix.target }}" --migrate
 
   browser-e2e:
-    name: Browser E2E (purchase posted reversal)
+    name: Browser E2E (purchase reversal and recommendation reorder)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -115,10 +117,12 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Run isolated posted purchase reversal browser E2E
         run: pnpm test:e2e:purchase-posted-reversal
+      - name: Run isolated recommendation purchase reorder browser E2E
+        run: pnpm test:e2e:recommendation-purchase-reorder
       - name: Upload sanitized browser failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-e2e-purchase-posted-reversal-failure
+          name: browser-e2e-failure
           path: .artifacts/browser-e2e
           if-no-files-found: ignore
