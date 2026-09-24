@@ -303,7 +303,12 @@ function PurchaseListBody({ onNext, onRetry, state }: Readonly<{
             {state.page.items.map((purchase) => (
               <tr key={purchase.id}>
                 <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatPurchaseDate(purchase.purchaseDate)}</td>
-                <td className="px-4 py-3"><PurchaseStatusBadge status={purchase.status} /></td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-2">
+                    <PurchaseStatusBadge status={purchase.status} />
+                    {purchase.correction !== null && <span className="rounded-full bg-violet-100 px-3 py-1 text-sm font-medium text-violet-900">補正済み</span>}
+                  </div>
+                </td>
                 <td className="px-4 py-3 text-slate-950"><span className="font-mono text-xs text-slate-700">{purchase.supplier.code}</span><span className="ml-2">{purchase.supplier.name}</span></td>
                 <td className="px-4 py-3 text-slate-700">{purchase.documentNumber ?? "—"}</td>
                 <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatPurchaseTimestamp(purchase.postedAt)}</td>

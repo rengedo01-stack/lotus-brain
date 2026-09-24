@@ -38,6 +38,7 @@ export type Purchase = {
  * notes, and inventory/price-history references. Those remain detail-only.
  */
 export type PurchaseListItem = {
+  correction: PurchaseListCorrectionSummary | null;
   id: string;
   status: PurchaseStatus;
   purchaseDate: string;
@@ -45,6 +46,12 @@ export type PurchaseListItem = {
   postedAt: string | null;
   cancelledAt: string | null;
   supplier: { code: string; name: string };
+};
+
+/** Minimal immutable correction evidence for a POSTED purchase list row. */
+export type PurchaseListCorrectionSummary = {
+  id: string;
+  reversedAt: string;
 };
 
 export type PurchaseListPage = {
@@ -238,8 +245,9 @@ const PURCHASE_REVERSAL_AUDIT_KEYS = ["id", "purchaseId", "actorUserId", "reason
 const PURCHASE_REVERSAL_AUDIT_ITEM_KEYS = ["purchaseItemId", "productId", "inventoryUnitId", "quantity", "unitPrice", "currency"] as const;
 const PURCHASE_REVERSAL_AUDIT_INVENTORY_EFFECT_KEYS = ["productId", "inventoryId", "inventoryUnitId", "quantityDelta", "quantityAfter", "averageUnitCost"] as const;
 const PURCHASE_REVERSAL_AUDIT_PRICE_EFFECT_KEYS = ["priceMasterId", "source", "previousCurrentPriceHistoryId", "previousVersion", "appliedUnitPrice", "appliedCurrency", "effectiveAt", "becomesCurrent", "priceHistoryId"] as const;
-const PURCHASE_LIST_ITEM_KEYS = ["id", "status", "purchaseDate", "documentNumber", "postedAt", "cancelledAt", "supplier"] as const;
+const PURCHASE_LIST_ITEM_KEYS = ["id", "status", "purchaseDate", "documentNumber", "postedAt", "cancelledAt", "supplier", "correction"] as const;
 const PURCHASE_LIST_SUPPLIER_KEYS = ["code", "name"] as const;
+const PURCHASE_LIST_CORRECTION_KEYS = ["id", "reversedAt"] as const;
 const PURCHASE_LIST_PAGE_KEYS = ["items", "nextCursor"] as const;
 const PURCHASE_KEYS = ["id", "supplier", "status", "purchaseDate", "documentNumber", "note", "subtotal", "tax", "total", "postedAt", "cancelledAt", "cancellationReason", "createdAt", "updatedAt", "items"] as const;
 const PURCHASE_SUPPLIER_KEYS = ["id", "code", "name"] as const;
@@ -692,6 +700,13 @@ function isHandoffLineageSource(value: unknown): value is PurchaseHandoffLineage
   );
 }
 
+function isPurchaseListCorrectionSummary(value: unknown): value is PurchaseListCorrectionSummary {
+  return isRecord(value)
+    && hasExactlyKeys(value, PURCHASE_LIST_CORRECTION_KEYS)
+    && isNonBlankString(value.id)
+    && isIsoTimestamp(value.reversedAt);
+}
+
 function isPurchaseListItem(value: unknown): value is PurchaseListItem {
   if (!isRecord(value) || !hasExactlyKeys(value, PURCHASE_LIST_ITEM_KEYS)) return false;
   if (!isRecord(value.supplier) || !hasExactlyKeys(value.supplier, PURCHASE_LIST_SUPPLIER_KEYS)) return false;
@@ -704,6 +719,8 @@ function isPurchaseListItem(value: unknown): value is PurchaseListItem {
     && (value.cancelledAt === null || isIsoTimestamp(value.cancelledAt))
     && isNonEmptyString(value.supplier.code)
     && isNonEmptyString(value.supplier.name)
+    && (value.correction === null || isPurchaseListCorrectionSummary(value.correction))
+    && (value.correction === null || value.status === "POSTED")
   );
 }
 

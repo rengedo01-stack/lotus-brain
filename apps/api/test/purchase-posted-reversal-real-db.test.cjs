@@ -281,6 +281,16 @@ if (databaseUrl === undefined) {
       assert.equal(reversalA.priceEffects[0].source, "ORIGINAL_PURCHASE_CURRENT");
       assert.equal(reversalA.priceEffects[0].becomesCurrent, true);
       assert.equal((await prisma.purchase.findUniqueOrThrow({ where: { id: purchaseA.id } })).status, "POSTED");
+      const correctedListResponse = await request(`/purchases?documentNumber=${encodeURIComponent(`${fixture}-document-a`)}`);
+      assert.equal(correctedListResponse.status, 200);
+      const correctedList = await correctedListResponse.json();
+      assert.deepEqual(Object.keys(correctedList), ["items", "nextCursor"]);
+      assert.equal(correctedList.items.length, 1);
+      assert.deepEqual(Object.keys(correctedList.items[0]).sort(), ["cancelledAt", "correction", "documentNumber", "id", "postedAt", "purchaseDate", "status", "supplier"]);
+      assert.equal(correctedList.items[0].id, purchaseA.id);
+      assert.equal(correctedList.items[0].status, "POSTED");
+      assert.deepEqual(correctedList.items[0].correction, { id: reversalA.id, reversedAt: reversalA.reversedAt.toISOString() });
+      assert.equal(JSON.stringify(correctedList.items[0].correction).match(/reason|actor|items|inventory|price|history/i), null);
       assert.equal((await prisma.inventoryHistory.findUniqueOrThrow({ where: { id: originalReceipt.id } })).quantityDelta.toString(), "2");
       assert.equal((await prisma.priceHistory.findUniqueOrThrow({ where: { id: originalHistory.id } })).eventType, "PURCHASE_POSTING");
       const inventoryA = await prisma.inventory.findUniqueOrThrow({ where: { productId: productA.id } });

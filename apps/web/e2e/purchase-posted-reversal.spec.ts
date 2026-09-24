@@ -120,6 +120,14 @@ test("C. browser reversal receives 201 and reaches the terminal completed state"
   await expect(auditPrice.getByText(auditBody.reversal.priceEffects[0]!.appliedUnitPrice, { exact: true })).toBeVisible();
   await expect(auditPrice.getByText(auditBody.reversal.priceEffects[0]!.appliedCurrency, { exact: true })).toBeVisible();
   expect(await fixture.reversalCount(purchase.purchaseId)).toBe(1);
+
+  await page.goto("/purchases");
+  await expect(page.getByRole("heading", { name: "仕入一覧" })).toBeVisible();
+  const row = page.locator(`tr:has(a[href="/purchases/${purchase.purchaseId}"])`);
+  await expect(row).toHaveCount(1);
+  await expect(row.getByText("計上済み", { exact: true })).toBeVisible();
+  await expect(row.getByText("補正済み", { exact: true })).toBeVisible();
+  await expect(row.getByText("取消済み", { exact: true })).toHaveCount(0);
 });
 
 test("D. an actual stale 409 reconciles through existingReversal without another POST", async ({ page }) => {
