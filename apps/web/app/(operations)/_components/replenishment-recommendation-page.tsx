@@ -9,9 +9,16 @@ import {
   formatPurchaseDate,
   isCanonicalUtcTimestamp,
   purchaseStatusLabel,
+  requestPurchaseReversalAudit,
   requestRecommendationPurchaseHandoffLineage,
+  type PurchaseReversalAudit,
   type RecommendationPurchaseHandoffLineage,
 } from "@/lib/purchases";
+import {
+  classifyRecommendationPurchaseHandoffOutcome,
+  recommendationPurchaseHandoffOutcomeMessage,
+  type RecommendationPurchaseHandoffOutcome,
+} from "@/lib/recommendation-purchase-handoff-outcome";
 import { dismissReplenishmentRecommendation, recalculateReplenishmentRecommendation, requestActiveReplenishmentRecommendation, type ReplenishmentRecommendation } from "@/lib/replenishment-recommendations";
 import { useOperationalApp } from "./operational-app";
 
@@ -21,12 +28,18 @@ type HandoffState =
   | { status: "loading" }
   | { status: "ready"; recommendationId: string; handoff: RecommendationPurchaseHandoffLineage | null }
   | { status: "error"; recommendationId: string; message: string };
+type PostedReversalState =
+  | { status: "idle" }
+  | { status: "loading"; purchaseId: string }
+  | { status: "ready"; purchaseId: string; reversal: PurchaseReversalAudit | null }
+  | { status: "error"; purchaseId: string; message: string };
 
 export function ReplenishmentRecommendationPage({ productId }: Readonly<{ productId: string }>) {
   const router = useRouter();
   const { api, permissions, refreshAuthentication } = useOperationalApp();
   const [state, setState] = useState<PageState>({ status: "loading" });
   const [handoffState, setHandoffState] = useState<HandoffState>({ status: "idle" });
+  const [postedReversalState, setPostedReversalState] = useState<PostedReversalState>({ status: "idle" });
   const [retryKey, setRetryKey] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -71,6 +84,37 @@ export function ReplenishmentRecommendationPage({ productId }: Readonly<{ produc
         ? handoffState
         : { status: "loading" };
 
+  const linkedPostedPurchaseId = visibleHandoffState.status === "ready"
+    && visibleHandoffState.handoff !== null
+    && visibleHandoffState.handoff.purchase.status === "POSTED"
+    ? visibleHandoffState.handoff.purchase.id
+    : null;
+  useEffect(() => {
+    if (linkedPostedPurchaseId === null) return;
+
+    let active = true;
+    void requestPurchaseReversalAudit(api, linkedPostedPurchaseId).then((reversal) => {
+      if (active) setPostedReversalState({ status: "ready", purchaseId: linkedPostedPurchaseId, reversal });
+    }).catch((error: unknown) => {
+      if (!active || (error instanceof ApiError && error.kind === "unauthorized")) return;
+      if (error instanceof ApiError && error.kind === "forbidden") { refreshAuthentication(); window.location.assign("/forbidden"); return; }
+      if (active) setPostedReversalState({
+        status: "error",
+        purchaseId: linkedPostedPurchaseId,
+        message: error instanceof ApiError ? error.message : "Purchaseの補正状態を確認できませんでした。",
+      });
+    });
+    return () => { active = false; };
+  }, [api, linkedPostedPurchaseId, refreshAuthentication]);
+
+  const visiblePostedReversalState: PostedReversalState = linkedPostedPurchaseId === null
+    ? { status: "idle" }
+    : postedReversalState.status === "ready" && postedReversalState.purchaseId === linkedPostedPurchaseId
+      ? postedReversalState
+      : postedReversalState.status === "error" && postedReversalState.purchaseId === linkedPostedPurchaseId
+        ? postedReversalState
+        : { status: "loading", purchaseId: linkedPostedPurchaseId };
+
   async function recalculate() {
     if (!canManage || isSubmitting) return;
     setIsSubmitting(true); setMessage(null);
@@ -106,7 +150,7 @@ export function ReplenishmentRecommendationPage({ productId }: Readonly<{ produc
     <Link className="text-sm font-medium text-blue-700 underline-offset-2 hover:underline" href={`/inventory/${encodeURIComponent(productId)}/replenishment-quantity-preview`}>← 補充数量の制約計算</Link>
     <div className="mt-5 rounded-xl bg-white p-6 shadow-sm"><h1 className="text-3xl font-bold text-slate-950" id="replenishment-recommendation-title">補充recommendation</h1><p className="mt-2 text-sm text-slate-700">これはREADY時点の不変snapshotです。Purchaseは作成せず、DRAFT・CONFIRMED数量も数量計算へ加算・控除しません。</p></div>
     {message !== null && <p className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status">{message}</p>}
-    {state.recommendation === null ? <NoActiveRecommendation canManage={canManage} isSubmitting={isSubmitting} onRecalculate={() => void recalculate()} /> : <RecommendationDetails canCreateHandoff={canCreateHandoff} canManage={canManage} handoffState={visibleHandoffState} isSubmitting={isSubmitting} onDismiss={() => void dismiss()} onHandoff={async (purchaseDate) => {
+    {state.recommendation === null ? <NoActiveRecommendation canManage={canManage} isSubmitting={isSubmitting} onRecalculate={() => void recalculate()} /> : <RecommendationDetails canCreateHandoff={canCreateHandoff} canManage={canManage} handoffState={visibleHandoffState} postedReversalState={visiblePostedReversalState} isSubmitting={isSubmitting} onDismiss={() => void dismiss()} onHandoff={async (purchaseDate) => {
       if (isSubmitting || handoffState.status !== "ready" || handoffState.handoff !== null) return;
       setIsSubmitting(true); setMessage(null);
       try {
@@ -127,12 +171,12 @@ function NoActiveRecommendation({ canManage, isSubmitting, onRecalculate }: Read
   return <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">有効なrecommendationはありません</h2><p className="mt-2 text-sm text-slate-700">不変snapshotは、現在の制約計算がREADYのときだけ明示的に作成できます。</p>{canManage ? <button className="mt-5 rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:bg-slate-400" disabled={isSubmitting} onClick={onRecalculate} type="button">{isSubmitting ? "作成しています…" : "現在の条件で作成"}</button> : <p className="mt-5 text-sm text-slate-700">作成・再計算・却下には補充管理権限が必要です。</p>}</section>;
 }
 
-function RecommendationDetails({ recommendation, canManage, canCreateHandoff, handoffState, isSubmitting, onRecalculate, onDismiss, onHandoff }: Readonly<{ recommendation: ReplenishmentRecommendation; canManage: boolean; canCreateHandoff: boolean; handoffState: HandoffState; isSubmitting: boolean; onRecalculate(): void; onDismiss(): void; onHandoff(purchaseDate: string): Promise<void> }>) {
+function RecommendationDetails({ recommendation, canManage, canCreateHandoff, handoffState, postedReversalState, isSubmitting, onRecalculate, onDismiss, onHandoff }: Readonly<{ recommendation: ReplenishmentRecommendation; canManage: boolean; canCreateHandoff: boolean; handoffState: HandoffState; postedReversalState: PostedReversalState; isSubmitting: boolean; onRecalculate(): void; onDismiss(): void; onHandoff(purchaseDate: string): Promise<void> }>) {
   const unit = recommendation.inventoryUnit.symbol;
-  return <><div className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><p className="font-mono text-sm text-slate-600">{recommendation.product.code}</p><h2 className="mt-1 text-2xl font-bold text-slate-950">{recommendation.product.name}</h2><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact label="snapshot状態" value={dispositionLabel(recommendation.disposition)} /><Fact label="現在との整合性" value={freshnessLabel(recommendation.freshness)} /><Fact label="作成時刻" value={recommendation.createdAt} /><Fact label="計算ポリシーversion" value={String(recommendation.calculationPolicyVersion)} /></dl></div><section className="mt-6 rounded-xl border border-blue-200 bg-blue-50 p-6"><h2 className="text-lg font-bold text-slate-950">確定時の数量説明</h2><dl className="mt-4 grid gap-4 sm:grid-cols-2"><Fact label="現在庫" value={quantity(recommendation.snapshot.currentQuantity, unit)} /><Fact label="発注点" value={quantity(recommendation.snapshot.reorderPointQuantity, unit)} /><Fact label="目標在庫" value={quantity(recommendation.snapshot.targetStockQuantity, unit)} /><Fact label="raw target gap" value={quantity(recommendation.snapshot.result.rawTargetGap, unit)} /><Fact label="MOQ" value={quantity(recommendation.snapshot.orderingTerms?.minimumOrderQuantity ?? null, unit)} /><Fact label="発注倍数" value={quantity(recommendation.snapshot.orderingTerms?.orderMultipleQuantity ?? null, unit)} /><Fact label="実行可能数量" value={quantity(recommendation.snapshot.result.feasibleQuantity, unit)} /><Fact label="over-order" value={quantity(recommendation.snapshot.result.overOrderQuantity, unit)} /><Fact label="優先仕入先" value={`${recommendation.snapshot.preferredSupplier.supplier.code} — ${recommendation.snapshot.preferredSupplier.supplier.name}`} /><Fact label="優先パッケージ" value={recommendation.snapshot.preferredPackage === null ? "未設定（package制約なし）" : `${recommendation.snapshot.preferredPackage.code} — ${recommendation.snapshot.preferredPackage.name}`} /><Fact label="パッケージ数" value={recommendation.snapshot.result.packageCount ?? "—"} /><Fact label="Inventory revision" value={String(recommendation.snapshot.inventoryVersion)} /></dl></section><section className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">参考情報（数量計算には使用しません）</h2><dl className="mt-4 grid gap-4 sm:grid-cols-2"><Fact label="DRAFT Purchaseの未計上明細数量" value={quantity(recommendation.snapshot.draftPurchaseQuantity, unit)} /><Fact label="CONFIRMED Purchaseの未計上明細数量" value={quantity(recommendation.snapshot.confirmedPurchaseQuantity, unit)} /></dl></section><RecommendationHandoffPanel canCreateHandoff={canCreateHandoff} handoffState={handoffState} isSubmitting={isSubmitting} onHandoff={onHandoff} recommendation={recommendation} />{canManage ? <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">ライフサイクル操作</h2><p className="mt-2 text-sm text-slate-700">再計算は新しいimmutable snapshotを作成し、この記録をSUPERSEDEDにします。却下は数量・入力snapshotを変更せず、ACTIVE記録をDISMISSEDにします。</p><div className="mt-5 flex flex-wrap gap-3"><button className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:bg-slate-400" disabled={isSubmitting} onClick={onRecalculate} type="button">{isSubmitting ? "処理しています…" : "現在の条件で再計算"}</button><button className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-50 disabled:text-slate-400" disabled={isSubmitting} onClick={onDismiss} type="button">却下</button></div></section> : <p className="mt-6 text-sm text-slate-700">このsnapshotの作成・再計算・却下には補充管理権限が必要です。</p>}</>;
+  return <><div className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><p className="font-mono text-sm text-slate-600">{recommendation.product.code}</p><h2 className="mt-1 text-2xl font-bold text-slate-950">{recommendation.product.name}</h2><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Fact label="snapshot状態" value={dispositionLabel(recommendation.disposition)} /><Fact label="現在との整合性" value={freshnessLabel(recommendation.freshness)} /><Fact label="作成時刻" value={recommendation.createdAt} /><Fact label="計算ポリシーversion" value={String(recommendation.calculationPolicyVersion)} /></dl></div><section className="mt-6 rounded-xl border border-blue-200 bg-blue-50 p-6"><h2 className="text-lg font-bold text-slate-950">確定時の数量説明</h2><dl className="mt-4 grid gap-4 sm:grid-cols-2"><Fact label="現在庫" value={quantity(recommendation.snapshot.currentQuantity, unit)} /><Fact label="発注点" value={quantity(recommendation.snapshot.reorderPointQuantity, unit)} /><Fact label="目標在庫" value={quantity(recommendation.snapshot.targetStockQuantity, unit)} /><Fact label="raw target gap" value={quantity(recommendation.snapshot.result.rawTargetGap, unit)} /><Fact label="MOQ" value={quantity(recommendation.snapshot.orderingTerms?.minimumOrderQuantity ?? null, unit)} /><Fact label="発注倍数" value={quantity(recommendation.snapshot.orderingTerms?.orderMultipleQuantity ?? null, unit)} /><Fact label="実行可能数量" value={quantity(recommendation.snapshot.result.feasibleQuantity, unit)} /><Fact label="over-order" value={quantity(recommendation.snapshot.result.overOrderQuantity, unit)} /><Fact label="優先仕入先" value={`${recommendation.snapshot.preferredSupplier.supplier.code} — ${recommendation.snapshot.preferredSupplier.supplier.name}`} /><Fact label="優先パッケージ" value={recommendation.snapshot.preferredPackage === null ? "未設定（package制約なし）" : `${recommendation.snapshot.preferredPackage.code} — ${recommendation.snapshot.preferredPackage.name}`} /><Fact label="パッケージ数" value={recommendation.snapshot.result.packageCount ?? "—"} /><Fact label="Inventory revision" value={String(recommendation.snapshot.inventoryVersion)} /></dl></section><section className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">参考情報（数量計算には使用しません）</h2><dl className="mt-4 grid gap-4 sm:grid-cols-2"><Fact label="DRAFT Purchaseの未計上明細数量" value={quantity(recommendation.snapshot.draftPurchaseQuantity, unit)} /><Fact label="CONFIRMED Purchaseの未計上明細数量" value={quantity(recommendation.snapshot.confirmedPurchaseQuantity, unit)} /></dl></section><RecommendationHandoffPanel canCreateHandoff={canCreateHandoff} handoffState={handoffState} postedReversalState={postedReversalState} isSubmitting={isSubmitting} onHandoff={onHandoff} recommendation={recommendation} />{canManage ? <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">ライフサイクル操作</h2><p className="mt-2 text-sm text-slate-700">再計算は新しいimmutable snapshotを作成し、この記録をSUPERSEDEDにします。却下は数量・入力snapshotを変更せず、ACTIVE記録をDISMISSEDにします。</p><div className="mt-5 flex flex-wrap gap-3"><button className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:bg-slate-400" disabled={isSubmitting} onClick={onRecalculate} type="button">{isSubmitting ? "処理しています…" : "現在の条件で再計算"}</button><button className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-50 disabled:text-slate-400" disabled={isSubmitting} onClick={onDismiss} type="button">却下</button></div></section> : <p className="mt-6 text-sm text-slate-700">このsnapshotの作成・再計算・却下には補充管理権限が必要です。</p>}</>;
 }
 
-function RecommendationHandoffPanel({ recommendation, canCreateHandoff, handoffState, isSubmitting, onHandoff }: Readonly<{ recommendation: ReplenishmentRecommendation; canCreateHandoff: boolean; handoffState: HandoffState; isSubmitting: boolean; onHandoff(purchaseDate: string): Promise<void> }>) {
+function RecommendationHandoffPanel({ recommendation, canCreateHandoff, handoffState, postedReversalState, isSubmitting, onHandoff }: Readonly<{ recommendation: ReplenishmentRecommendation; canCreateHandoff: boolean; handoffState: HandoffState; postedReversalState: PostedReversalState; isSubmitting: boolean; onHandoff(purchaseDate: string): Promise<void> }>) {
   const [purchaseDate, setPurchaseDate] = useState("");
   const [dateError, setDateError] = useState<string | null>(null);
 
@@ -149,10 +193,49 @@ function RecommendationHandoffPanel({ recommendation, canCreateHandoff, handoffS
   if (handoffState.status === "idle") return <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">Purchase handoff</h2><p className="mt-2 text-sm text-slate-700">handoff状態の表示には在庫・仕入・マスター参照権限が必要です。</p></section>;
   if (handoffState.status === "loading") return <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">Purchase handoff</h2><p className="mt-2 text-sm text-slate-700" role="status">handoff状態を確認しています…</p></section>;
   if (handoffState.status === "error") return <section className="mt-6 rounded-xl border border-red-200 bg-red-50 p-6"><h2 className="text-lg font-bold text-red-950">Purchase handoffを確認できません</h2><p className="mt-2 text-sm text-red-900" role="alert">{handoffState.message}</p><p className="mt-2 text-sm text-red-900">状態を安全に確認できるまで、Purchase下書きは作成しません。</p></section>;
-  if (handoffState.handoff !== null) return <section className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-6"><h2 className="text-lg font-bold text-emerald-950">Purchase handoff済み</h2><p className="mt-2 text-sm text-emerald-900">このrecommendationは、既存のPurchase下書きへ一度だけ引き渡されています。</p><dl className="mt-4 grid gap-4 sm:grid-cols-2"><Fact label="Purchase状態" value={purchaseStatusLabel(handoffState.handoff.purchase.status)} /><Fact label="仕入日" value={formatPurchaseDate(handoffState.handoff.purchase.purchaseDate)} /><Fact label="引渡し時刻" value={handoffState.handoff.createdAt} /><Fact label="PurchaseItem ID" value={handoffState.handoff.purchaseItem.id} /></dl><Link className="mt-5 inline-flex rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800" href={`/purchases/${encodeURIComponent(handoffState.handoff.purchase.id)}`}>Purchase詳細を開く</Link></section>;
+  if (handoffState.handoff !== null) {
+    const purchase = handoffState.handoff.purchase;
+    if (purchase.status === "POSTED" && postedReversalState.status === "loading") {
+      return <HandoffOutcomePanel handoff={handoffState.handoff} message="Purchaseの補正状態を確認しています…" />;
+    }
+    if (purchase.status === "POSTED" && postedReversalState.status === "error") {
+      return <HandoffOutcomePanel handoff={handoffState.handoff} error={postedReversalState.message} />;
+    }
+    const reversal = purchase.status === "POSTED" && postedReversalState.status === "ready"
+      ? postedReversalState.reversal
+      : undefined;
+    return <HandoffOutcomePanel
+      handoff={handoffState.handoff}
+      outcome={classifyRecommendationPurchaseHandoffOutcome(purchase.status, reversal)}
+    />;
+  }
   if (!canCreateHandoff) return <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-bold text-slate-950">Purchase handoff</h2><p className="mt-2 text-sm text-slate-700">Purchase下書きの作成には、補充管理と仕入書込を含む必要な権限が必要です。</p></section>;
   if (recommendation.disposition !== "ACTIVE" || recommendation.freshness !== "CURRENT") return <section className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-6"><h2 className="text-lg font-bold text-amber-950">Purchase handoffはできません</h2><p className="mt-2 text-sm text-amber-900">ACTIVEかつCURRENTのrecommendationだけをPurchase下書きへ引き渡せます。現在の状態を確認し、必要なら明示的に再計算してください。</p></section>;
   return <section className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-6"><h2 className="text-lg font-bold text-emerald-950">Purchase下書きを作成</h2><p className="mt-2 text-sm text-emerald-900">仕入日時は業務上の取引日時です。UTCのcanonical ISO timestampとして明示的に指定してください。現在のcommercial termsをサーバーが再検証して、不変のlineageとともに下書きを作成します。</p><form className="mt-5 flex flex-wrap items-end gap-3" noValidate onSubmit={submit}><label className="grid gap-1 text-sm font-medium text-emerald-950" htmlFor="recommendation-purchase-date">仕入日時（UTC）<input aria-describedby={dateError === null ? undefined : "recommendation-purchase-date-error"} className="rounded-md border border-emerald-300 bg-white px-3 py-2 text-sm text-slate-950" id="recommendation-purchase-date" onChange={(event) => { setPurchaseDate(event.target.value); setDateError(null); }} placeholder="2026-09-15T00:00:00.000Z" required value={purchaseDate} /></label><button className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:bg-slate-400" disabled={isSubmitting} type="submit">{isSubmitting ? "作成しています…" : "Purchase下書きを作成"}</button></form>{dateError !== null && <p className="mt-3 text-sm text-red-900" id="recommendation-purchase-date-error" role="alert">{dateError}</p>}</section>;
+}
+
+function HandoffOutcomePanel({ handoff, outcome, message, error }: Readonly<{
+  handoff: RecommendationPurchaseHandoffLineage;
+  outcome?: RecommendationPurchaseHandoffOutcome;
+  message?: string;
+  error?: string;
+}>) {
+  const purchase = handoff.purchase;
+  const link = <Link className="mt-5 inline-flex rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800" href={`/purchases/${encodeURIComponent(purchase.id)}`}>Purchase詳細を開く</Link>;
+  if (error !== undefined) {
+    return <section className="mt-6 rounded-xl border border-red-200 bg-red-50 p-6"><h2 className="text-lg font-bold text-red-950">Purchaseの補正状態を確認できません</h2><p className="mt-2 text-sm text-red-900" role="alert">{error}</p><p className="mt-2 text-sm text-red-900">POSTED Purchaseを補正記録なしとは推測せず、現在のマスター情報から補完することもありません。</p><HandoffFacts handoff={handoff} />{link}</section>;
+  }
+  if (message !== undefined) {
+    return <section className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-6"><h2 className="text-lg font-bold text-emerald-950">Purchase handoff済み</h2><p className="mt-2 text-sm text-emerald-900" role="status">{message}</p><HandoffFacts handoff={handoff} />{link}</section>;
+  }
+  if (outcome === undefined) throw new Error("A ready handoff outcome is required.");
+  const content = recommendationPurchaseHandoffOutcomeMessage(outcome);
+  const isUnknown = outcome.kind === "POSTED_REVERSAL_UNKNOWN";
+  return <section className={`mt-6 rounded-xl border p-6 ${isUnknown ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`}><h2 className={`text-lg font-bold ${isUnknown ? "text-red-950" : "text-emerald-950"}`}>{isUnknown ? "Purchaseの補正状態を確認できません" : "Purchase handoff済み"}</h2><p className={`mt-2 text-sm ${isUnknown ? "text-red-900" : "text-emerald-900"}`}>{content}</p>{outcome.kind === "POSTED_REVERSED" && <dl className="mt-4 grid gap-4 sm:grid-cols-2"><Fact label="reversal ID" value={outcome.reversalId} /><Fact label="補正日時" value={outcome.reversedAt} /></dl>}<HandoffFacts handoff={handoff} />{link}</section>;
+}
+
+function HandoffFacts({ handoff }: Readonly<{ handoff: RecommendationPurchaseHandoffLineage }>) {
+  return <dl className="mt-4 grid gap-4 sm:grid-cols-2"><Fact label="Purchase状態" value={purchaseStatusLabel(handoff.purchase.status)} /><Fact label="仕入日" value={formatPurchaseDate(handoff.purchase.purchaseDate)} /><Fact label="引渡し時刻" value={handoff.createdAt} /><Fact label="PurchaseItem ID" value={handoff.purchaseItem.id} /></dl>;
 }
 
 function Fact({ label, value }: Readonly<{ label: string; value: string }>) { return <div className="rounded-xl border border-slate-200 bg-white p-4"><dt className="text-sm text-slate-600">{label}</dt><dd className="mt-1 break-words font-medium text-slate-950">{value}</dd></div>; }

@@ -6,11 +6,26 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { assertDisposableDatabaseUrl, TEST_MODE_ENV, TEST_USER } = require("../test/support/disposable-database.cjs");
 
-const DATABASE_NAME = "lotus_brain_pr006c24c2d_browser_e2e_test";
+const [targetName] = process.argv.slice(2);
+const targets = {
+  "purchase-posted-reversal": {
+    databaseName: "lotus_brain_pr006c24c2d_browser_e2e_test",
+    specPath: "apps/web/e2e/purchase-posted-reversal.spec.ts",
+  },
+  "recommendation-purchase-reorder": {
+    databaseName: "lotus_brain_pr006c26_recommendation_purchase_reorder_browser_e2e_test",
+    specPath: "apps/web/e2e/recommendation-purchase-reorder.spec.ts",
+  },
+};
+const target = targets[targetName];
+if (target === undefined || process.argv.length !== 3) {
+  throw new Error(`Usage: node apps/api/scripts/run-disposable-web-e2e.cjs <${Object.keys(targets).join("|")}>`);
+}
+const DATABASE_NAME = target.databaseName;
 const repositoryRoot = path.resolve(__dirname, "../../..");
 const apiDirectory = path.join(repositoryRoot, "apps", "api");
 const composeFile = path.join(repositoryRoot, "compose.test.yaml");
-const artifactDirectory = path.join(repositoryRoot, ".artifacts", "browser-e2e");
+const artifactDirectory = path.join(repositoryRoot, ".artifacts", "browser-e2e", targetName, randomBytes(10).toString("hex"));
 const stateDirectory = path.join(tmpdir(), `lotus-brain-browser-e2e-state-${randomBytes(10).toString("hex")}`);
 const safeEnvironment = { ...process.env };
 delete safeEnvironment.DATABASE_URL;
@@ -243,12 +258,13 @@ async function main() {
   webProcess = startServer("pnpm", ["--dir", "apps/web", "exec", "next", "start", "--hostname", "localhost", "--port", String(webPort)], webEnvironment, "web.log");
   await waitForHttp(`${webBaseUrl}/login`, "Web", webProcess.child, webProcess.logFile);
 
-  run("pnpm", ["exec", "playwright", "test", "--config", "playwright.config.ts"], {
+  run("pnpm", ["exec", "playwright", "test", "--config", "playwright.config.ts", target.specPath], {
     env: {
       ...safeEnvironment,
       [TEST_MODE_ENV]: "1",
       LOTUS_WEB_E2E_BASE_URL: webBaseUrl,
       LOTUS_WEB_E2E_DATABASE_URL: databaseUrl.toString(),
+      LOTUS_WEB_E2E_DATABASE_NAME: DATABASE_NAME,
       LOTUS_WEB_E2E_ARTIFACT_DIR: artifactDirectory,
       LOTUS_WEB_E2E_STATE_DIR: stateDirectory,
     },
