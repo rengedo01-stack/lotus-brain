@@ -9,7 +9,10 @@ import {
 } from "../application/purchase-list.repository";
 
 type PurchaseListRow = Prisma.PurchaseGetPayload<{
-  include: { supplier: { select: { code: true; name: true } } };
+  include: {
+    supplier: { select: { code: true; name: true } };
+    postedReversal: { select: { id: true; reversedAt: true } };
+  };
 }>;
 
 @Injectable()
@@ -41,7 +44,10 @@ export class PrismaPurchaseListRepository implements PurchaseListRepository {
 
     const rows = await this.prisma.purchase.findMany({
       where,
-      include: { supplier: { select: { code: true, name: true } } },
+      include: {
+        supplier: { select: { code: true, name: true } },
+        postedReversal: { select: { id: true, reversedAt: true } },
+      },
       orderBy: [{ purchaseDate: "desc" }, { id: "desc" }],
       take: query.limit + 1,
     });
@@ -57,6 +63,9 @@ export class PrismaPurchaseListRepository implements PurchaseListRepository {
   }
 
   private map(row: PurchaseListRow): PurchaseListItemView {
+    if (row.postedReversal !== null && row.status !== "POSTED") {
+      throw new Error(`Purchase ${row.id} has a correction record but is not POSTED.`);
+    }
     return {
       id: row.id,
       status: row.status,
@@ -65,6 +74,9 @@ export class PrismaPurchaseListRepository implements PurchaseListRepository {
       postedAt: row.postedAt,
       cancelledAt: row.cancelledAt,
       supplier: { code: row.supplier.code, name: row.supplier.name },
+      correction: row.postedReversal === null
+        ? null
+        : { id: row.postedReversal.id, reversedAt: row.postedReversal.reversedAt },
     };
   }
 }

@@ -6,6 +6,15 @@ export type PurchaseListSupplierView = {
 };
 
 /**
+ * Minimal lifecycle evidence that a POSTED Purchase has an immutable
+ * correction record. Full audit evidence remains detail-only.
+ */
+export type PurchaseListCorrectionView = {
+  id: string;
+  reversedAt: Date;
+};
+
+/**
  * Deliberately narrow projection for the operational list. Amounts, line
  * items, notes, and posting-side inventory information remain detail-only.
  */
@@ -17,6 +26,7 @@ export type PurchaseListItemView = {
   postedAt: Date | null;
   cancelledAt: Date | null;
   supplier: PurchaseListSupplierView;
+  correction: PurchaseListCorrectionView | null;
 };
 
 export type PurchaseListCursor = {

@@ -93,6 +93,7 @@ const purchaseListPage = {
     postedAt: "2026-08-21T01:02:03.000Z",
     cancelledAt: null,
     supplier: { code: "SUP-001", name: "仕入先" },
+    correction: null,
   }],
   nextCursor: "opaque-cursor",
 };
@@ -451,12 +452,25 @@ test("purchase detail and draft mutations reject arbitrary 2xx and malformed suc
 
 test("purchase list accepts only the exact, non-financial page contract", () => {
   assert.equal(isPurchaseListPage(purchaseListPage), true);
+  for (const status of ["DRAFT", "CONFIRMED", "CANCELLED", "POSTED"]) {
+    assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0]!, status, correction: null }] }), true);
+  }
+  const corrected = { id: "purchase-reversal-1", reversedAt: "2026-08-22T01:02:03.000Z" };
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0]!, correction: corrected }] }), true);
   assert.equal(isPurchaseListPage({ ...purchaseListPage, extra: true }), false);
   assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0], subtotal: "100" }] }), false);
   assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0], supplier: { ...purchaseListPage.items[0].supplier, id: "supplier-id" } }] }), false);
   assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0], status: "SAVED" }] }), false);
   assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0], purchaseDate: "2026-08-21" }] }), false);
   assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0], postedAt: "not-a-timestamp" }] }), false);
+  const { correction: omittedCorrection, ...withoutCorrection } = purchaseListPage.items[0]!;
+  void omittedCorrection;
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [withoutCorrection] }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0]!, correction: { ...corrected, reason: "detail-only" } }] }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0]!, correction: { ...corrected, id: "   " } }] }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0]!, correction: { ...corrected, reversedAt: "not-a-timestamp" } }] }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0]!, status: "DRAFT", correction: corrected }] }), false);
+  assert.equal(isPurchaseListPage({ ...purchaseListPage, items: [{ ...purchaseListPage.items[0]!, correction: { ...corrected, actorUserId: "actor-1", items: [] } }] }), false);
   assert.equal(isPurchaseListPage({ ...purchaseListPage, nextCursor: "" }), false);
   assert.equal(isPurchaseListPage([]), false);
 });

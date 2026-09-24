@@ -299,10 +299,20 @@ const purchaseListSupplierSchema = {
   },
 };
 
+const purchaseListCorrectionSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  required: ["id", "reversedAt"],
+  properties: {
+    id: { type: "string" as const, minLength: 1 },
+    reversedAt: { type: "string" as const, format: "date-time" },
+  },
+};
+
 export const purchaseListItemResponseSchema = {
   type: "object" as const,
   additionalProperties: false,
-  required: ["id", "status", "purchaseDate", "documentNumber", "postedAt", "cancelledAt", "supplier"],
+  required: ["id", "status", "purchaseDate", "documentNumber", "postedAt", "cancelledAt", "supplier", "correction"],
   properties: {
     id: { type: "string" as const, minLength: 1 },
     status: { type: "string" as const, enum: ["DRAFT", "CONFIRMED", "POSTED", "CANCELLED"] },
@@ -311,6 +321,7 @@ export const purchaseListItemResponseSchema = {
     postedAt: nullableDateTimeSchema,
     cancelledAt: nullableDateTimeSchema,
     supplier: purchaseListSupplierSchema,
+    correction: { oneOf: [purchaseListCorrectionSchema, { type: "null" as const }] },
   },
 };
 

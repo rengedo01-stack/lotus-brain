@@ -147,9 +147,10 @@ if (databaseUrl === undefined) {
         assert.deepEqual(Object.keys(first).sort(), ["items", "nextCursor"]);
         assert.deepEqual(first.items.map((item) => item.id), [`${fixture}-purchase-003`, `${fixture}-purchase-002`]);
         assert.equal(typeof first.nextCursor, "string");
-        assert.ok(first.items.every((item) => Object.keys(item).sort().join(",") === "cancelledAt,documentNumber,id,postedAt,purchaseDate,status,supplier"));
+        assert.ok(first.items.every((item) => Object.keys(item).sort().join(",") === "cancelledAt,correction,documentNumber,id,postedAt,purchaseDate,status,supplier"));
         assert.ok(first.items.every((item) => Object.keys(item.supplier).sort().join(",") === "code,name"));
         assert.ok(first.items.every((item) => item.supplier.code === historicalSupplier.code));
+        assert.ok(first.items.every((item) => item.correction === null));
         assert.ok(first.items.every((item) => !JSON.stringify(item).match(/subtotal|tax|total|currency|unitPrice|items|note|cost|source|audit/i)));
 
         const nextResponse = await get(`/purchases?limit=2&supplierCode=${encodeURIComponent(historicalSupplier.code)}&cursor=${encodeURIComponent(first.nextCursor)}`, adminToken);
