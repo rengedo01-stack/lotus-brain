@@ -35,6 +35,10 @@ function previewUrl(purchaseId: string): RegExp {
   return new RegExp(`/api/v1/purchases/${purchaseId}/reversal-preview$`);
 }
 
+function auditUrl(purchaseId: string): RegExp {
+  return new RegExp(`/api/v1/purchases/${purchaseId}/reversal$`);
+}
+
 async function openPurchase(page: Page, purchase: PostedPurchaseFixture): Promise<void> {
   await page.goto(`/purchases/${purchase.purchaseId}`);
   await expect(page.getByRole("heading", { name: "仕入詳細" })).toBeVisible();
@@ -85,6 +89,11 @@ test("C. browser reversal receives 201 and reaches the terminal completed state"
   await openPurchase(page, purchase);
   await openPreview(page, purchase);
   await fillExecutableReversal(page, purchase, "browser success correction");
+  const auditReadback = page.waitForResponse(async (candidate) => {
+    if (candidate.request().method() !== "GET" || !auditUrl(purchase.purchaseId).test(candidate.url()) || candidate.status() !== 200) return false;
+    const body = await candidate.json() as { reversal: { purchaseId: string } | null };
+    return body.reversal?.purchaseId === purchase.purchaseId;
+  });
   const response = page.waitForResponse((candidate) => candidate.request().method() === "POST" && reversalUrl(purchase.purchaseId).test(candidate.url()));
   await executeButton(page).click();
   const result = await response;
@@ -94,6 +103,22 @@ test("C. browser reversal receives 201 and reaches the terminal completed state"
   await expect(page.getByText(body.id, { exact: true })).toBeVisible();
   await expect(page.getByText("記録時刻", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "仕入補正を確認" })).toHaveCount(0);
+  const auditResponse = await auditReadback;
+  expect(auditResponse.status()).toBe(200);
+  const auditBody = await auditResponse.json() as { reversal: { actorUserId: string; reason: string; items: Array<{ productId: string }>; inventoryEffects: Array<{ quantityDelta: string }>; priceEffects: Array<{ appliedUnitPrice: string; appliedCurrency: string }> } };
+  expect(auditBody.reversal.reason).toBe("browser success correction");
+  expect(auditBody.reversal.actorUserId).toBe(fixture.admin.id);
+  const auditPanel = page.getByRole("heading", { name: "仕入補正の監査記録" }).locator("..");
+  await expect(auditPanel).toBeVisible();
+  await expect(auditPanel.getByText("browser success correction", { exact: true })).toBeVisible();
+  await expect(auditPanel.getByText(fixture.admin.id, { exact: true })).toBeVisible();
+  const auditItems = auditPanel.locator('section[aria-labelledby="purchase-reversal-audit-items-title"]');
+  const auditInventory = auditPanel.locator('section[aria-labelledby="purchase-reversal-audit-inventory-title"]');
+  const auditPrice = auditPanel.locator('section[aria-labelledby="purchase-reversal-audit-price-title"]');
+  await expect(auditItems.getByText(auditBody.reversal.items[0]!.productId, { exact: true })).toBeVisible();
+  await expect(auditInventory.getByText(auditBody.reversal.inventoryEffects[0]!.quantityDelta, { exact: true })).toBeVisible();
+  await expect(auditPrice.getByText(auditBody.reversal.priceEffects[0]!.appliedUnitPrice, { exact: true })).toBeVisible();
+  await expect(auditPrice.getByText(auditBody.reversal.priceEffects[0]!.appliedCurrency, { exact: true })).toBeVisible();
   expect(await fixture.reversalCount(purchase.purchaseId)).toBe(1);
 });
 

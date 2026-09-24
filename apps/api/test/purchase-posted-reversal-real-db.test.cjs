@@ -249,6 +249,12 @@ if (databaseUrl === undefined) {
       const productA = await createProduct("a");
       const purchaseA = await createConfirmed(productA, `${fixture}-document-a`);
       await post(purchaseA.id);
+      const missingAudit = await request(`/purchases/${randomUUID()}/reversal`);
+      assert.equal(missingAudit.status, 404);
+      const emptyAudit = await request(`/purchases/${purchaseA.id}/reversal`);
+      assert.equal(emptyAudit.status, 200);
+      assert.equal(emptyAudit.headers.get("cache-control"), "private, no-store");
+      assert.deepEqual(await emptyAudit.json(), { reversal: null });
       const itemA = await prisma.purchaseItem.findFirstOrThrow({ where: { purchaseId: purchaseA.id } });
       const originalReceipt = await prisma.inventoryHistory.findUniqueOrThrow({ where: { sourcePurchaseItemId: itemA.id } });
       const originalHistory = await prisma.priceHistory.findUniqueOrThrow({ where: { sourcePurchaseItemId: itemA.id } });
@@ -294,13 +300,59 @@ if (databaseUrl === undefined) {
       await assert.rejects(() => prisma.purchaseReversalPriceEffect.delete({ where: { id: reversalA.priceEffects[0].id } }), /immutable/i);
       await assert.rejects(() => prisma.priceHistory.delete({ where: { id: originalHistory.id } }), /append-only/i);
 
+      const auditResponse = await request(`/purchases/${purchaseA.id}/reversal`);
+      assert.equal(auditResponse.status, 200);
+      assert.equal(auditResponse.headers.get("cache-control"), "private, no-store");
+      const auditSnapshot = await auditResponse.json();
+      assert.deepEqual(Object.keys(auditSnapshot), ["reversal"]);
+      assert.deepEqual(auditSnapshot.reversal, {
+        id: reversalA.id,
+        purchaseId: purchaseA.id,
+        actorUserId: admin.id,
+        reason: requestA.reason,
+        reversedAt: reversalA.reversedAt.toISOString(),
+        items: [{
+          purchaseItemId: reversalA.items[0].purchaseItemId,
+          productId: reversalA.items[0].productId,
+          inventoryUnitId: reversalA.items[0].inventoryUnitId,
+          quantity: reversalA.items[0].quantity.toString(),
+          unitPrice: reversalA.items[0].unitPrice.toString(),
+          currency: reversalA.items[0].currency,
+        }],
+        inventoryEffects: [{
+          productId: reversalA.inventoryEffects[0].productId,
+          inventoryId: reversalA.inventoryEffects[0].inventoryId,
+          inventoryUnitId: reversalA.inventoryEffects[0].inventoryUnitId,
+          quantityDelta: reversalA.inventoryEffects[0].quantityDelta.toString(),
+          quantityAfter: reversalA.inventoryEffects[0].quantityAfter.toString(),
+          averageUnitCost: reversalA.inventoryEffects[0].averageUnitCost.toString(),
+        }],
+        priceEffects: [{
+          priceMasterId: reversalA.priceEffects[0].priceMasterId,
+          source: reversalA.priceEffects[0].source,
+          previousCurrentPriceHistoryId: reversalA.priceEffects[0].previousCurrentPriceHistoryId,
+          previousVersion: reversalA.priceEffects[0].previousVersion,
+          appliedUnitPrice: reversalA.priceEffects[0].appliedUnitPrice.toString(),
+          appliedCurrency: reversalA.priceEffects[0].appliedCurrency,
+          effectiveAt: reversalA.priceEffects[0].effectiveAt.toISOString(),
+          becomesCurrent: reversalA.priceEffects[0].becomesCurrent,
+          priceHistoryId: correctionHistory.id,
+        }],
+      });
+
       // Retrying is safe; neither a changed payload nor another key can reverse a Purchase twice.
       const replay = await request(`/purchases/${purchaseA.id}/reversals`, { method: "POST", body: requestA });
       assert.equal(replay.status, 200);
       assert.equal((await replay.json()).id, reversalA.id);
       assert.equal((await request(`/purchases/${purchaseA.id}/reversals`, { method: "POST", body: { ...requestA, reason: "different reason" } })).status, 409);
       assert.equal((await request(`/purchases/${purchaseA.id}/reversals`, { method: "POST", body: { ...requestA, idempotencyKey: randomUUID() } })).status, 409);
-      assert.ok((await createConfirmed(productA, `${fixture}-document-a`, "1.000000000", "80.000000")).id);
+      const laterPurchaseA = await createConfirmed(productA, `${fixture}-document-a-readback-isolation`, "1.000000000", "81.000000");
+      await post(laterPurchaseA.id);
+      assert.equal((await prisma.inventory.findUniqueOrThrow({ where: { id: inventoryA.id } })).quantity.toString(), "1");
+      assert.equal((await prisma.priceMaster.findUniqueOrThrow({ where: { id: masterA.id } })).currentUnitPrice.toString(), "81");
+      const auditAfterCurrentStateChange = await request(`/purchases/${purchaseA.id}/reversal`);
+      assert.equal(auditAfterCurrentStateChange.status, 200);
+      assert.deepEqual(await auditAfterCurrentStateChange.json(), auditSnapshot);
 
       // Multiple source lines of the same Product produce two immutable snapshots but one stock effect/history.
       const productMulti = await createProduct("multi");
@@ -553,6 +605,7 @@ if (databaseUrl === undefined) {
 
       // Auth, authorization, and CSRF are enforced before the domain operation.
       assert.equal((await request(`/purchases/${laterB.id}/reversal-preview`, { anonymous: true })).status, 401);
+      assert.equal((await request(`/purchases/${laterB.id}/reversal`, { anonymous: true })).status, 401);
       assert.equal((await request(`/purchases/${laterB.id}/reversals`, { method: "POST", noCsrf: true, body: {
         reason: "no csrf", previewVersion: "0".repeat(64), idempotencyKey: randomUUID(), priceResolutions: [],
       } })).status, 403);
@@ -566,6 +619,9 @@ if (databaseUrl === undefined) {
       } });
       assert.equal((await fetch(`${baseUrl}/api/v1/purchases/${laterB.id}/reversal-preview`, {
         headers: { cookie: `lotus_session=${unprivilegedToken}`, "x-forwarded-for": "127.0.0.250" },
+      })).status, 403);
+      assert.equal((await fetch(`${baseUrl}/api/v1/purchases/${laterB.id}/reversal`, {
+        headers: { cookie: `lotus_session=${unprivilegedToken}`, "x-forwarded-for": "127.0.0.251" },
       })).status, 403);
     } finally {
       await app?.close();

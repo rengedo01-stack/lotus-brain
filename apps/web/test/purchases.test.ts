@@ -16,6 +16,7 @@ import {
   isAmbiguousPurchasePostingError,
   isAmbiguousPurchaseReversalError,
   isPurchaseReversalExecution,
+  isPurchaseReversalAuditResponse,
   isPurchaseReversalPreview,
   isPurchaseReversalRequest,
   isPostedPurchaseResult,
@@ -35,6 +36,7 @@ import {
   requestPurchasePosting,
   requestPurchaseCancellation,
   requestPurchaseReversal,
+  requestPurchaseReversalAudit,
   requestPurchaseReversalPreview,
   settlePurchaseReversalPreview,
   startPurchaseReversalPreview,
@@ -47,6 +49,8 @@ import {
   type PurchasePostingApi,
   type PurchaseReversalApi,
   type PurchaseReversalExecution,
+  type PurchaseReversalAudit,
+  type PurchaseReversalAuditApi,
   type PurchaseReversalPreview,
   type PurchaseReversalWorkflowState,
   type Purchase,
@@ -160,6 +164,41 @@ const reversalExecution: PurchaseReversalExecution = {
   purchaseId: purchase.id,
   reversedAt: "2026-09-22T00:00:00.000Z",
   replayed: false,
+};
+
+const reversalAudit: PurchaseReversalAudit = {
+  id: reversalExecution.id,
+  purchaseId: purchase.id,
+  actorUserId: "actor-1",
+  reason: "duplicate supplier receipt",
+  reversedAt: reversalExecution.reversedAt,
+  items: [{
+    purchaseItemId: "purchase-item-1",
+    productId: "product-1",
+    inventoryUnitId: "unit-1",
+    quantity: "10.000000000",
+    unitPrice: "12.345678",
+    currency: "JPY",
+  }],
+  inventoryEffects: [{
+    productId: "product-1",
+    inventoryId: "inventory-1",
+    inventoryUnitId: "unit-1",
+    quantityDelta: "-10.000000000",
+    quantityAfter: "15.000000000",
+    averageUnitCost: "12.345678",
+  }],
+  priceEffects: [{
+    priceMasterId: "price-master-1",
+    source: "ORIGINAL_PURCHASE_CURRENT",
+    previousCurrentPriceHistoryId: "price-history-1",
+    previousVersion: 4,
+    appliedUnitPrice: "12.345678",
+    appliedCurrency: "JPY",
+    effectiveAt: "2026-09-22T00:00:00.000Z",
+    becomesCurrent: true,
+    priceHistoryId: "price-history-2",
+  }],
 };
 
 test("purchase create/update payload preserves decimal strings and excludes UI/server item identity", () => {
@@ -687,6 +726,63 @@ test("posted purchase reversal pins preview and execute requests to their docume
     { path: `/purchases/${purchase.id}/reversal-preview`, options: { expectedStatus: 200 } },
     { path: `/purchases/${purchase.id}/reversals`, options: { method: "POST", body: request, expectedStatus: [200, 201] } },
   ]);
+});
+
+test("posted purchase reversal audit readback accepts only an exact immutable ledger contract", () => {
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: null }), true);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: reversalAudit }), true);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: reversalAudit, extra: true }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, extra: true } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, reversedAt: "not-a-timestamp" } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, items: [{ ...reversalAudit.items[0]!, quantity: "0" }] } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, priceEffects: [{ ...reversalAudit.priceEffects[0]!, source: "MISSING_PRICE_MASTER" }] } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, priceEffects: [{ ...reversalAudit.priceEffects[0]!, previousVersion: 0 }] } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, items: [reversalAudit.items[0]!, reversalAudit.items[0]!] } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, inventoryEffects: [reversalAudit.inventoryEffects[0]!, reversalAudit.inventoryEffects[0]!] } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, inventoryEffects: [reversalAudit.inventoryEffects[0]!, { ...reversalAudit.inventoryEffects[0]!, inventoryId: "inventory-2" }] } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, priceEffects: [reversalAudit.priceEffects[0]!, reversalAudit.priceEffects[0]!] } }), false);
+
+  const earlierItem = { ...reversalAudit.items[0]!, purchaseItemId: "purchase-item-0" };
+  const laterInventory = { ...reversalAudit.inventoryEffects[0]!, productId: "product-2", inventoryId: "inventory-2" };
+  const laterPrice = { ...reversalAudit.priceEffects[0]!, priceMasterId: "price-master-2", priceHistoryId: "price-history-3" };
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, items: [reversalAudit.items[0]!, earlierItem] } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, inventoryEffects: [laterInventory, reversalAudit.inventoryEffects[0]!] } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, priceEffects: [laterPrice, reversalAudit.priceEffects[0]!] } }), false);
+  assert.equal(isPurchaseReversalAuditResponse({ reversal: { ...reversalAudit, inventoryEffects: [{ ...reversalAudit.inventoryEffects[0]!, quantityAfter: null }] } }), false);
+});
+
+test("posted purchase reversal audit readback is a passive exact-200 GET and fails closed", async (t) => {
+  const calls: Array<{ path: string; options: unknown }> = [];
+  const api: PurchaseReversalAuditApi = {
+    async request<T>(path: string, options?: unknown): Promise<T> {
+      calls.push({ path, options });
+      return { reversal: reversalAudit } as T;
+    },
+  };
+  assert.deepEqual(await requestPurchaseReversalAudit(api, purchase.id), reversalAudit);
+  assert.deepEqual(calls, [{ path: `/purchases/${purchase.id}/reversal`, options: { expectedStatus: 200 } }]);
+
+  const previousBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.example.test/api/v1";
+  t.after(() => { process.env.NEXT_PUBLIC_API_BASE_URL = previousBaseUrl; });
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  for (const status of [201, 202, 204]) {
+    globalThis.fetch = async () => status === 204
+      ? new Response(null, { status })
+      : new Response(JSON.stringify({ reversal: reversalAudit }), { status, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => requestPurchaseReversalAudit(createApiClient(), purchase.id),
+      (error: unknown) => error instanceof ApiError && error.kind === "server" && error.status === status,
+    );
+  }
+
+  globalThis.fetch = async () => new Response("not json", { headers: { "content-type": "application/json" } });
+  await assert.rejects(
+    () => requestPurchaseReversalAudit(createApiClient(), purchase.id),
+    (error: unknown) => error instanceof ApiError && error.kind === "server",
+  );
 });
 
 test("posted purchase reversal rejects unexpected success statuses and malformed responses", async (t) => {

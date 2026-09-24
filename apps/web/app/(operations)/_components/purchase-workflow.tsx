@@ -27,6 +27,7 @@ import {
   requestPurchaseHandoffLineage,
   requestPurchasePosting,
   requestPurchaseReversal,
+  requestPurchaseReversalAudit,
   requestPurchaseReversalPreview,
   settlePurchaseReversalPreview,
   startPurchaseReversalPreview,
@@ -42,6 +43,7 @@ import {
   type PurchaseListFilters,
   type PurchaseListPage,
   type PurchaseReversalPreview,
+  type PurchaseReversalAudit,
   type PurchaseReversalResolutionValues,
   type PurchaseReversalWorkflowState,
   type PurchaseHandoffLineage,
@@ -80,6 +82,12 @@ type PurchaseHandoffLineageState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; purchaseId: string; handoffs: PurchaseHandoffLineage[] }
+  | { status: "error"; purchaseId: string; message: string };
+
+type PurchaseReversalAuditState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; purchaseId: string; reversal: PurchaseReversalAudit | null }
   | { status: "error"; purchaseId: string; message: string };
 
 function protectedPurchaseError(error: unknown, refreshAuthentication: () => void): boolean {
@@ -468,7 +476,9 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
   const { api, permissions, refreshAuthentication } = useOperationalApp();
   const [state, setState] = useState<PurchaseState>({ status: "loading" });
   const [handoffState, setHandoffState] = useState<PurchaseHandoffLineageState>({ status: "idle" });
+  const [reversalAuditState, setReversalAuditState] = useState<PurchaseReversalAuditState>({ status: "idle" });
   const [retryKey, setRetryKey] = useState(0);
+  const [reversalAuditRefreshKey, setReversalAuditRefreshKey] = useState(0);
   const [action, setAction] = useState<"confirm" | "post" | "cancel" | "reversal_preview" | "reversal_execute" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [cancellationReason, setCancellationReason] = useState("");
@@ -480,6 +490,7 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
   const [reversalResolutionValues, setReversalResolutionValues] = useState<PurchaseReversalResolutionValues>({});
   const reversalIdempotencyKey = useRef<string | null>(null);
   const canReadHandoffLineage = ["inventory.read", "purchase.read", "master.read"].every((permission) => permissions.has(permission));
+  const canReadReversalAudit = ["inventory.read", "purchase.read", "master.read"].every((permission) => permissions.has(permission));
   const hasReversePermission = permissions.has("purchase.reversePosted");
 
   useEffect(() => {
@@ -513,12 +524,34 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
     return () => { active = false; };
   }, [api, canReadHandoffLineage, purchaseId, refreshAuthentication]);
 
+  useEffect(() => {
+    if (!canReadReversalAudit) return;
+
+    let active = true;
+    void requestPurchaseReversalAudit(api, purchaseId).then((reversal) => {
+      if (active) setReversalAuditState({ status: "ready", purchaseId, reversal });
+    }).catch((error: unknown) => {
+      if (!active || (error instanceof ApiError && error.kind === "unauthorized")) return;
+      if (error instanceof ApiError && error.kind === "forbidden") { refreshAuthentication(); window.location.assign("/forbidden"); return; }
+      if (active) setReversalAuditState({ status: "error", purchaseId, message: purchaseErrorMessage(error) });
+    });
+    return () => { active = false; };
+  }, [api, canReadReversalAudit, purchaseId, refreshAuthentication, reversalAuditRefreshKey]);
+
   const visibleHandoffState: PurchaseHandoffLineageState = !canReadHandoffLineage
     ? { status: "idle" }
     : handoffState.status === "ready" && handoffState.purchaseId === purchaseId
       ? handoffState
       : handoffState.status === "error" && handoffState.purchaseId === purchaseId
         ? handoffState
+        : { status: "loading" };
+
+  const visibleReversalAuditState: PurchaseReversalAuditState = !canReadReversalAudit
+    ? { status: "idle" }
+    : reversalAuditState.status === "ready" && reversalAuditState.purchaseId === purchaseId
+      ? reversalAuditState
+      : reversalAuditState.status === "error" && reversalAuditState.purchaseId === purchaseId
+        ? reversalAuditState
         : { status: "loading" };
 
   async function confirm() {
@@ -717,6 +750,8 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
       );
       const reversal = await requestPurchaseReversal(api, purchaseId, request);
       setReversalState(completePurchaseReversal(reversal));
+      setReversalAuditState({ status: "loading" });
+      setReversalAuditRefreshKey((current) => current + 1);
       resetReversalDraft();
     } catch (error: unknown) {
       if (protectedPurchaseError(error, refreshAuthentication)) return;
@@ -829,6 +864,7 @@ export function PurchaseDetailPage({ purchaseId }: Readonly<{ purchaseId: string
             <tbody className="divide-y divide-slate-100">{purchase.items.map((item) => <tr key={item.id}><td className="px-4 py-3 text-slate-700">{item.lineNumber}</td><td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{item.productId}</td><td className="break-all px-4 py-3 font-mono text-xs text-slate-950">{item.unitId}</td><td className="px-4 py-3 text-right text-slate-950">{item.quantity}</td><td className="px-4 py-3 text-right text-slate-950">{item.unitPrice}</td><td className="px-4 py-3 text-right text-slate-950">{item.taxRate}</td><td className="px-4 py-3 text-right font-medium text-slate-950">{item.lineAmount}</td></tr>)}</tbody>
           </table>
         </div>
+        <PurchaseReversalAuditPanel canRead={canReadReversalAudit} state={visibleReversalAuditState} />
         <PurchaseHandoffLineagePanel canRead={canReadHandoffLineage} state={visibleHandoffState} />
       </div>
     </section>
@@ -885,6 +921,47 @@ function purchaseReversalPriceSourceLabel(source: PurchaseReversalPreview["price
   if (source === "SUBSEQUENT_PRICE_HISTORY_CURRENT") return "後続PriceHistoryが現在価格";
   if (source === "LEGACY_UNKNOWN_CURRENT") return "既存価格の由来が不明";
   return "PriceMasterなし";
+}
+
+function purchaseReversalAuditPriceSourceLabel(source: PurchaseReversalAudit["priceEffects"][number]["source"]): string {
+  if (source === "ORIGINAL_PURCHASE_CURRENT") return "元仕入が現在価格";
+  if (source === "SUBSEQUENT_PRICE_HISTORY_CURRENT") return "後続PriceHistoryが現在価格";
+  return "既存価格の由来が不明";
+}
+
+function PurchaseReversalAuditPanel({ canRead, state }: Readonly<{ canRead: boolean; state: PurchaseReversalAuditState }>) {
+  if (!canRead || state.status === "idle" || state.status === "loading") return null;
+  if (state.status === "error") {
+    return <section aria-labelledby="purchase-reversal-audit-error-title" className="mt-8 rounded-xl border border-red-200 bg-red-50 p-6"><h2 className="text-lg font-bold text-red-950" id="purchase-reversal-audit-error-title">仕入補正の監査記録を表示できません</h2><p className="mt-2 text-sm text-red-900" role="alert">{state.message}</p><p className="mt-2 text-sm text-red-900">現在の在庫・PriceMaster・previewの値から補完することはありません。</p></section>;
+  }
+  if (state.reversal === null) return null;
+
+  const reversal = state.reversal;
+  return (
+    <section aria-labelledby="purchase-reversal-audit-title" className="mt-8 rounded-xl border border-violet-200 bg-violet-50 p-6">
+      <h2 className="text-lg font-bold text-violet-950" id="purchase-reversal-audit-title">仕入補正の監査記録</h2>
+      <p className="mt-2 text-sm text-violet-900">ここに表示する内容は補正実行時に固定された監査snapshotです。現在の在庫・PriceMaster・マスターデータの状態を示すものではありません。</p>
+      <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2">
+        <DetailItem label="reversal ID" value={reversal.id} />
+        <DetailItem label="補正日時" value={formatPurchaseTimestamp(reversal.reversedAt)} />
+        <DetailItem label="補正理由" value={reversal.reason} />
+        <DetailItem label="actorUserId" value={reversal.actorUserId} />
+      </dl>
+      <section className="mt-6" aria-labelledby="purchase-reversal-audit-items-title">
+        <h3 className="font-semibold text-slate-950" id="purchase-reversal-audit-items-title">元明細</h3>
+        <div className="mt-3 overflow-x-auto rounded-md border border-violet-200 bg-white"><table className="min-w-full divide-y divide-slate-200 text-sm"><thead className="bg-slate-50 text-left text-slate-700"><tr><th className="px-3 py-2">purchaseItemId</th><th className="px-3 py-2">productId</th><th className="px-3 py-2">inventoryUnitId</th><th className="px-3 py-2 text-right">数量</th><th className="px-3 py-2 text-right">単価</th><th className="px-3 py-2">通貨</th></tr></thead><tbody className="divide-y divide-slate-100">{reversal.items.map((item) => <tr key={item.purchaseItemId}><td className="break-all px-3 py-2 font-mono text-xs">{item.purchaseItemId}</td><td className="break-all px-3 py-2 font-mono text-xs">{item.productId}</td><td className="break-all px-3 py-2 font-mono text-xs">{item.inventoryUnitId}</td><td className="px-3 py-2 text-right">{item.quantity}</td><td className="px-3 py-2 text-right">{item.unitPrice}</td><td className="px-3 py-2">{item.currency}</td></tr>)}</tbody></table></div>
+      </section>
+      <section className="mt-6" aria-labelledby="purchase-reversal-audit-inventory-title">
+        <h3 className="font-semibold text-slate-950" id="purchase-reversal-audit-inventory-title">在庫補正</h3>
+        <div className="mt-3 overflow-x-auto rounded-md border border-violet-200 bg-white"><table className="min-w-full divide-y divide-slate-200 text-sm"><thead className="bg-slate-50 text-left text-slate-700"><tr><th className="px-3 py-2">productId</th><th className="px-3 py-2">inventoryId</th><th className="px-3 py-2">inventoryUnitId</th><th className="px-3 py-2 text-right">数量差分</th><th className="px-3 py-2 text-right">補正実行時の補正後数量</th><th className="px-3 py-2 text-right">平均単価</th></tr></thead><tbody className="divide-y divide-slate-100">{reversal.inventoryEffects.map((effect) => <tr key={effect.inventoryId}><td className="break-all px-3 py-2 font-mono text-xs">{effect.productId}</td><td className="break-all px-3 py-2 font-mono text-xs">{effect.inventoryId}</td><td className="break-all px-3 py-2 font-mono text-xs">{effect.inventoryUnitId}</td><td className="px-3 py-2 text-right">{effect.quantityDelta}</td><td className="px-3 py-2 text-right">{effect.quantityAfter}</td><td className="px-3 py-2 text-right">{effect.averageUnitCost ?? "—"}</td></tr>)}</tbody></table></div>
+      </section>
+      <section className="mt-6" aria-labelledby="purchase-reversal-audit-price-title">
+        <h3 className="font-semibold text-slate-950" id="purchase-reversal-audit-price-title">価格補正</h3>
+        <p className="mt-2 text-sm text-slate-700">「補正実行時に現在価格へ設定」は、補正時点の設定結果であり、現在もcurrentであることを示しません。</p>
+        <div className="mt-3 overflow-x-auto rounded-md border border-violet-200 bg-white"><table className="min-w-full divide-y divide-slate-200 text-sm"><thead className="bg-slate-50 text-left text-slate-700"><tr><th className="px-3 py-2">priceMasterId</th><th className="px-3 py-2">source</th><th className="px-3 py-2">previousCurrentPriceHistoryId</th><th className="px-3 py-2 text-right">previousVersion</th><th className="px-3 py-2 text-right">適用単価</th><th className="px-3 py-2">通貨</th><th className="px-3 py-2">effectiveAt</th><th className="px-3 py-2">補正実行時に現在価格へ設定</th><th className="px-3 py-2">priceHistoryId</th></tr></thead><tbody className="divide-y divide-slate-100">{reversal.priceEffects.map((effect) => <tr key={effect.priceMasterId}><td className="break-all px-3 py-2 font-mono text-xs">{effect.priceMasterId}</td><td className="px-3 py-2">{purchaseReversalAuditPriceSourceLabel(effect.source)}</td><td className="break-all px-3 py-2 font-mono text-xs">{effect.previousCurrentPriceHistoryId ?? "—"}</td><td className="px-3 py-2 text-right">{effect.previousVersion}</td><td className="px-3 py-2 text-right">{effect.appliedUnitPrice}</td><td className="px-3 py-2">{effect.appliedCurrency}</td><td className="px-3 py-2">{formatPurchaseTimestamp(effect.effectiveAt)}</td><td className="px-3 py-2">{effect.becomesCurrent ? "はい" : "いいえ"}</td><td className="break-all px-3 py-2 font-mono text-xs">{effect.priceHistoryId}</td></tr>)}</tbody></table></div>
+      </section>
+    </section>
+  );
 }
 
 function PurchaseHandoffLineagePanel({ canRead, state }: Readonly<{ canRead: boolean; state: PurchaseHandoffLineageState }>) {

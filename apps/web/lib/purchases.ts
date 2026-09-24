@@ -121,6 +121,44 @@ export type PurchaseReversalExecution = {
   replayed: boolean;
 };
 
+/** An immutable readback projection; never populate this from current masters. */
+export type PurchaseReversalAudit = {
+  id: string;
+  purchaseId: string;
+  actorUserId: string;
+  reason: string;
+  reversedAt: string;
+  items: Array<{
+    purchaseItemId: string;
+    productId: string;
+    inventoryUnitId: string;
+    quantity: string;
+    unitPrice: string;
+    currency: string;
+  }>;
+  inventoryEffects: Array<{
+    productId: string;
+    inventoryId: string;
+    inventoryUnitId: string;
+    quantityDelta: string;
+    quantityAfter: string;
+    averageUnitCost: string | null;
+  }>;
+  priceEffects: Array<{
+    priceMasterId: string;
+    source: "ORIGINAL_PURCHASE_CURRENT" | "SUBSEQUENT_PRICE_HISTORY_CURRENT" | "LEGACY_UNKNOWN_CURRENT";
+    previousCurrentPriceHistoryId: string | null;
+    previousVersion: number;
+    appliedUnitPrice: string;
+    appliedCurrency: string;
+    effectiveAt: string;
+    becomesCurrent: boolean;
+    priceHistoryId: string;
+  }>;
+};
+
+export type PurchaseReversalAuditResponse = { reversal: PurchaseReversalAudit | null };
+
 export type PurchaseReversalResolutionValues = Readonly<Record<string, Readonly<{
   currentUnitPrice: string;
   currency: string;
@@ -137,6 +175,7 @@ export type PurchaseReversalWorkflowState =
 export type PurchasePostingApi = Pick<ApiClient, "request">;
 export type PurchaseCancellationApi = Pick<ApiClient, "request">;
 export type PurchaseReversalApi = Pick<ApiClient, "request">;
+export type PurchaseReversalAuditApi = Pick<ApiClient, "request">;
 export type PurchaseListApi = Pick<ApiClient, "request">;
 export type PurchaseDraftApi = Pick<ApiClient, "request">;
 export type RecommendationPurchaseHandoffApi = Pick<ApiClient, "request">;
@@ -194,6 +233,11 @@ const PURCHASE_REVERSAL_EXISTING_KEYS = ["id", "reversedAt"] as const;
 const PURCHASE_REVERSAL_INVENTORY_EFFECT_KEYS = ["productId", "inventoryId", "inventoryVersion", "inventoryUnitId", "quantityDelta", "quantityAfter", "averageUnitCost"] as const;
 const PURCHASE_REVERSAL_PRICE_EFFECT_KEYS = ["productId", "priceMasterId", "version", "currentPriceHistoryId", "currentUnitPrice", "currency", "source", "requiresPriceResolution"] as const;
 const PURCHASE_REVERSAL_EXECUTION_KEYS = ["id", "purchaseId", "reversedAt", "replayed"] as const;
+const PURCHASE_REVERSAL_AUDIT_RESPONSE_KEYS = ["reversal"] as const;
+const PURCHASE_REVERSAL_AUDIT_KEYS = ["id", "purchaseId", "actorUserId", "reason", "reversedAt", "items", "inventoryEffects", "priceEffects"] as const;
+const PURCHASE_REVERSAL_AUDIT_ITEM_KEYS = ["purchaseItemId", "productId", "inventoryUnitId", "quantity", "unitPrice", "currency"] as const;
+const PURCHASE_REVERSAL_AUDIT_INVENTORY_EFFECT_KEYS = ["productId", "inventoryId", "inventoryUnitId", "quantityDelta", "quantityAfter", "averageUnitCost"] as const;
+const PURCHASE_REVERSAL_AUDIT_PRICE_EFFECT_KEYS = ["priceMasterId", "source", "previousCurrentPriceHistoryId", "previousVersion", "appliedUnitPrice", "appliedCurrency", "effectiveAt", "becomesCurrent", "priceHistoryId"] as const;
 const PURCHASE_LIST_ITEM_KEYS = ["id", "status", "purchaseDate", "documentNumber", "postedAt", "cancelledAt", "supplier"] as const;
 const PURCHASE_LIST_SUPPLIER_KEYS = ["code", "name"] as const;
 const PURCHASE_LIST_PAGE_KEYS = ["items", "nextCursor"] as const;
@@ -416,6 +460,80 @@ export function isPurchaseReversalExecution(value: unknown, purchaseId: string):
     && value.purchaseId === purchaseId
     && isIsoTimestamp(value.reversedAt)
     && typeof value.replayed === "boolean";
+}
+
+function isStrictlyAscending(values: readonly string[]): boolean {
+  return values.every((value, index) => index === 0 || values[index - 1]! < value);
+}
+
+function isPurchaseReversalAuditItem(value: unknown): value is PurchaseReversalAudit["items"][number] {
+  return isRecord(value)
+    && hasExactlyKeys(value, PURCHASE_REVERSAL_AUDIT_ITEM_KEYS)
+    && isNonBlankString(value.purchaseItemId)
+    && isNonBlankString(value.productId)
+    && isNonBlankString(value.inventoryUnitId)
+    && isPositiveDecimal(value.quantity, 15, 9)
+    && isDecimal(value.unitPrice, 14, 6)
+    && isCurrency(value.currency);
+}
+
+function isPurchaseReversalAuditInventoryEffect(value: unknown): value is PurchaseReversalAudit["inventoryEffects"][number] {
+  return isRecord(value)
+    && hasExactlyKeys(value, PURCHASE_REVERSAL_AUDIT_INVENTORY_EFFECT_KEYS)
+    && isNonBlankString(value.productId)
+    && isNonBlankString(value.inventoryId)
+    && isNonBlankString(value.inventoryUnitId)
+    && isNegativeDecimal(value.quantityDelta, 15, 9)
+    && isDecimal(value.quantityAfter, 15, 9)
+    && (value.averageUnitCost === null || isDecimal(value.averageUnitCost, 14, 6));
+}
+
+function isPurchaseReversalAuditPriceEffect(value: unknown): value is PurchaseReversalAudit["priceEffects"][number] {
+  return isRecord(value)
+    && hasExactlyKeys(value, PURCHASE_REVERSAL_AUDIT_PRICE_EFFECT_KEYS)
+    && isNonBlankString(value.priceMasterId)
+    && (value.source === "ORIGINAL_PURCHASE_CURRENT"
+      || value.source === "SUBSEQUENT_PRICE_HISTORY_CURRENT"
+      || value.source === "LEGACY_UNKNOWN_CURRENT")
+    && (value.previousCurrentPriceHistoryId === null || isNonBlankString(value.previousCurrentPriceHistoryId))
+    && isPositiveInteger(value.previousVersion)
+    && isDecimal(value.appliedUnitPrice, 14, 6)
+    && isCurrency(value.appliedCurrency)
+    && isIsoTimestamp(value.effectiveAt)
+    && typeof value.becomesCurrent === "boolean"
+    && isNonBlankString(value.priceHistoryId);
+}
+
+export function isPurchaseReversalAuditResponse(value: unknown): value is PurchaseReversalAuditResponse {
+  if (!isRecord(value) || !hasExactlyKeys(value, PURCHASE_REVERSAL_AUDIT_RESPONSE_KEYS)) return false;
+  if (value.reversal === null) return true;
+  if (!isRecord(value.reversal) || !hasExactlyKeys(value.reversal, PURCHASE_REVERSAL_AUDIT_KEYS)) return false;
+  const reversal = value.reversal;
+  if (!isNonBlankString(reversal.id)
+    || !isNonBlankString(reversal.purchaseId)
+    || !isNonBlankString(reversal.actorUserId)
+    || !isNormalizedCancellationReason(reversal.reason)
+    || !isIsoTimestamp(reversal.reversedAt)
+    || !Array.isArray(reversal.items)
+    || !reversal.items.every(isPurchaseReversalAuditItem)
+    || !Array.isArray(reversal.inventoryEffects)
+    || !reversal.inventoryEffects.every(isPurchaseReversalAuditInventoryEffect)
+    || !Array.isArray(reversal.priceEffects)
+    || !reversal.priceEffects.every(isPurchaseReversalAuditPriceEffect)) return false;
+
+  const items = reversal.items as PurchaseReversalAudit["items"];
+  const inventoryEffects = reversal.inventoryEffects as PurchaseReversalAudit["inventoryEffects"];
+  const priceEffects = reversal.priceEffects as PurchaseReversalAudit["priceEffects"];
+  if (!isStrictlyAscending(items.map((item) => item.purchaseItemId))) return false;
+  if (!inventoryEffects.every((effect, index) => {
+    if (index === 0) return true;
+    const previous = inventoryEffects[index - 1]!;
+    return previous.productId < effect.productId
+      || (previous.productId === effect.productId && previous.inventoryId < effect.inventoryId);
+  })) return false;
+  if (new Set(inventoryEffects.map((effect) => effect.productId)).size !== inventoryEffects.length
+    || new Set(inventoryEffects.map((effect) => effect.inventoryId)).size !== inventoryEffects.length) return false;
+  return isStrictlyAscending(priceEffects.map((effect) => effect.priceMasterId));
 }
 
 export async function requestPurchaseDetail(api: PurchaseDraftApi, purchaseId: string): Promise<Purchase> {
@@ -712,6 +830,19 @@ export async function requestPurchaseReversalPreview(
   if (!isPurchaseReversalPreview(payload)) throw new ApiError("server");
   if (payload.purchaseId !== purchaseId) throw new ApiError("server");
   return payload;
+}
+
+/** This read is audit-only and must never participate in reversal execution. */
+export async function requestPurchaseReversalAudit(
+  api: PurchaseReversalAuditApi,
+  purchaseId: string,
+): Promise<PurchaseReversalAudit | null> {
+  const payload = await api.request<unknown>(`/purchases/${encodeURIComponent(purchaseId)}/reversal`, {
+    expectedStatus: 200,
+  });
+  if (!isPurchaseReversalAuditResponse(payload)) throw new ApiError("server");
+  if (payload.reversal !== null && payload.reversal.purchaseId !== purchaseId) throw new ApiError("server");
+  return payload.reversal;
 }
 
 /**
