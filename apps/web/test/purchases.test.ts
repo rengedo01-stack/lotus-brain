@@ -478,6 +478,7 @@ test("purchase list accepts only the exact, non-financial page contract", () => 
 test("purchase list paths retain all exact filters and opaque cursors", () => {
   const path = purchaseListPath({
     status: "CONFIRMED",
+    correction: "uncorrected",
     from: "2026-08-01T00:00:00.000Z",
     to: "2026-08-31T23:59:59.999Z",
     supplierCode: " SUP-001 ",
@@ -487,6 +488,7 @@ test("purchase list paths retain all exact filters and opaque cursors", () => {
   assert.equal(url.pathname, "/purchases");
   assert.equal(url.searchParams.get("limit"), "50");
   assert.equal(url.searchParams.get("status"), "CONFIRMED");
+  assert.equal(url.searchParams.get("correction"), "uncorrected");
   assert.equal(url.searchParams.get("from"), "2026-08-01T00:00:00.000Z");
   assert.equal(url.searchParams.get("to"), "2026-08-31T23:59:59.999Z");
   assert.equal(url.searchParams.get("supplierCode"), " SUP-001 ");

@@ -26,6 +26,7 @@ export class PrismaPurchaseListRepository implements PurchaseListRepository {
 
     const where: Prisma.PurchaseWhereInput = {
       ...(query.status === undefined ? {} : { status: query.status }),
+      ...(query.correction === undefined ? {} : { postedReversal: { is: query.correction === "corrected" ? {} : null } }),
       ...(query.supplierCode === undefined ? {} : { supplier: { is: { code: query.supplierCode } } }),
       ...(query.documentNumber === undefined ? {} : { documentNumber: query.documentNumber }),
       ...(Object.keys(purchaseDate).length === 0 ? {} : { purchaseDate }),

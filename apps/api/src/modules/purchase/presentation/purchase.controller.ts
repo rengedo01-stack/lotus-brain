@@ -109,6 +109,7 @@ export class PurchaseController {
   @RequirePermissions(Permissions.PURCHASE_READ)
   @ApiOperation({ summary: "List purchases newest first" })
   @ApiQuery({ name: "status", required: false, enum: PURCHASE_STATUSES })
+  @ApiQuery({ name: "correction", required: false, enum: ["corrected", "uncorrected"], description: "Filter by posted reversal presence." })
   @ApiQuery({ name: "from", required: false, type: String, format: "date-time", description: "Canonical UTC purchaseDate lower bound (inclusive)." })
   @ApiQuery({ name: "to", required: false, type: String, format: "date-time", description: "Canonical UTC purchaseDate upper bound (inclusive)." })
   @ApiQuery({ name: "supplierCode", required: false, type: String, description: "Exact supplier code." })
@@ -127,9 +128,10 @@ export class PurchaseController {
     }
     const cursor = query.cursor === undefined
       ? undefined
-      : this.decodePurchaseCursor(query.cursor, query.status, from, to, query.supplierCode, query.documentNumber);
+      : this.decodePurchaseCursor(query.cursor, query.status, from, to, query.supplierCode, query.documentNumber, query.correction);
     const page = await this.listPurchasesUseCase.execute({
       status: query.status,
+      correction: query.correction,
       from,
       to,
       supplierCode: query.supplierCode,
@@ -141,7 +143,7 @@ export class PurchaseController {
       items: page.items,
       nextCursor: page.nextCursor === null
         ? null
-        : this.encodePurchaseCursor(page.nextCursor, query.status, from, to, query.supplierCode, query.documentNumber),
+        : this.encodePurchaseCursor(page.nextCursor, query.status, from, to, query.supplierCode, query.documentNumber, query.correction),
     };
   }
 
@@ -439,9 +441,10 @@ export class PurchaseController {
     to: Date | undefined,
     supplierCode: string | undefined,
     documentNumber: string | undefined,
+    correction: "corrected" | "uncorrected" | undefined,
   ): string {
     return Buffer.from(JSON.stringify({
-      v: 1,
+      v: correction === undefined ? 1 : 2,
       purchaseDate: cursor.purchaseDate.toISOString(),
       id: cursor.id,
       status: status ?? null,
@@ -449,6 +452,7 @@ export class PurchaseController {
       to: to?.toISOString() ?? null,
       supplierCode: supplierCode ?? null,
       documentNumber: documentNumber ?? null,
+      ...(correction === undefined ? {} : { correction }),
     } satisfies PurchaseCursorPayload)).toString("base64url");
   }
 
@@ -459,11 +463,13 @@ export class PurchaseController {
     to: Date | undefined,
     supplierCode: string | undefined,
     documentNumber: string | undefined,
+    correction: "corrected" | "uncorrected" | undefined,
   ): PurchaseListCursor {
     const parsed = this.decodeOpaqueCursor(value);
     if (
-      !hasExactlyKeys(parsed, ["v", "purchaseDate", "id", "status", "from", "to", "supplierCode", "documentNumber"])
-      || parsed.v !== 1
+      !(parsed.v === 1 && correction === undefined
+        ? hasExactlyKeys(parsed, ["v", "purchaseDate", "id", "status", "from", "to", "supplierCode", "documentNumber"])
+        : parsed.v === 2 && hasExactlyKeys(parsed, ["v", "purchaseDate", "id", "status", "from", "to", "supplierCode", "documentNumber", "correction"]))
       || !isNonEmptyString(parsed.purchaseDate)
       || !isNonEmptyString(parsed.id)
       || !isOptionalPurchaseStatus(parsed.status)
@@ -476,6 +482,7 @@ export class PurchaseController {
       || parsed.to !== (to?.toISOString() ?? null)
       || parsed.supplierCode !== (supplierCode ?? null)
       || parsed.documentNumber !== (documentNumber ?? null)
+      || (parsed.v === 2 && parsed.correction !== correction)
     ) {
       throw new BadRequestException("Invalid purchase cursor.");
     }
@@ -503,7 +510,7 @@ export class PurchaseController {
 }
 
 type PurchaseCursorPayload = {
-  v: 1;
+  v: 1 | 2;
   purchaseDate: string;
   id: string;
   status: PurchaseStatus | null;
@@ -511,6 +518,7 @@ type PurchaseCursorPayload = {
   to: string | null;
   supplierCode: string | null;
   documentNumber: string | null;
+  correction?: "corrected" | "uncorrected";
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
