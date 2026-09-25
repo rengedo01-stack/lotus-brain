@@ -1,5 +1,19 @@
 import { Injectable } from "@nestjs/common";
-import { Prisma, type MasterStatus } from "../../../generated/prisma/client";
+import {
+  Prisma,
+  type Inventory,
+  type MasterStatus,
+  type Product,
+  type ProductSupplierCommercialTerms,
+  type ProductSupplierOrderingTerms,
+  type ProductSupplierPackage,
+  type ProductSupplierPackagePreference,
+  type ProductSupplyPreference,
+  type ProductSupplyRelationship,
+  type ReplenishmentPolicy,
+  type Supplier,
+  type Unit,
+} from "../../../generated/prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { rawTargetGap, solveReplenishmentQuantity } from "../../inventory/domain/replenishment-quantity-solver";
 import { isCurrentReplenishmentCalculationPolicyVersion } from "../../replenishment/domain/replenishment-calculation-policy";
@@ -19,27 +33,21 @@ const purchaseInclude = {
   items: { orderBy: { lineNumber: "asc" } },
 } satisfies Prisma.PurchaseInclude;
 
-const productInclude = {
-  inventoryUnit: true,
-  inventory: true,
-  replenishmentPolicy: true,
-  supplyPreference: {
-    include: {
-      relationship: {
-        include: {
-          supplier: true,
-          orderingTerms: true,
-          commercialTerms: true,
-          packagePreference: { include: { package: true } },
-        },
-      },
-    },
-  },
-} satisfies Prisma.ProductInclude;
-
 type HandoffRow = Prisma.RecommendationPurchaseHandoffGetPayload<Record<string, never>>;
 type PurchaseRow = Prisma.PurchaseGetPayload<{ include: typeof purchaseInclude }>;
-type ProductWithHandoffInputs = Prisma.ProductGetPayload<{ include: typeof productInclude }>;
+type ProductWithHandoffInputs = Product & {
+  inventoryUnit: Unit;
+  inventory: Inventory | null;
+  replenishmentPolicy: ReplenishmentPolicy | null;
+  supplyPreference: (ProductSupplyPreference & {
+    relationship: ProductSupplyRelationship & {
+      supplier: Supplier;
+      orderingTerms: ProductSupplierOrderingTerms | null;
+      commercialTerms: ProductSupplierCommercialTerms | null;
+      packagePreference: (ProductSupplierPackagePreference & { package: ProductSupplierPackage | null }) | null;
+    };
+  }) | null;
+};
 const handoffLineageInclude = {
   purchaseItem: { include: { purchase: true } },
 } satisfies Prisma.RecommendationPurchaseHandoffInclude;
@@ -135,7 +143,7 @@ export class PrismaPurchaseRecommendationHandoffRepository implements PurchaseRe
     if (!(await this.lockRecommendation(tx, recommendation.id))) return "NOT_FOUND";
     await this.lockSelectedSupplyInput(tx, recommendation.productId);
 
-    const product = await tx.product.findUnique({ where: { id: recommendation.productId }, include: productInclude });
+    const product = await this.loadProductWithHandoffInputs(tx, recommendation.productId);
     if (product === null) return "NOT_FOUND";
     if (!this.isEligibleCurrentRecommendation(recommendation, product)) return "CONFLICT";
 
@@ -254,6 +262,46 @@ export class PrismaPurchaseRecommendationHandoffRepository implements PurchaseRe
       packageSize: pack === null || pack === undefined ? null : this.decimal(pack.inventoryQuantityPerPackage),
     });
     return solved.status === "READY" && new Prisma.Decimal(solved.feasibleQuantity).equals(recommendation.feasibleQuantitySnapshot);
+  }
+
+  private async loadProductWithHandoffInputs(tx: Prisma.TransactionClient, productId: string): Promise<ProductWithHandoffInputs | null> {
+    const product = await tx.product.findUnique({ where: { id: productId } });
+    if (product === null) return null;
+    const inventoryUnit = await tx.unit.findUnique({ where: { id: product.inventoryUnitId } });
+    if (inventoryUnit === null) return null;
+    const inventory = await tx.inventory.findUnique({ where: { productId: product.id } });
+    const replenishmentPolicy = await tx.replenishmentPolicy.findUnique({ where: { productId: product.id } });
+    const supplyPreference = await tx.productSupplyPreference.findUnique({ where: { productId: product.id } });
+    if (supplyPreference === null) {
+      return { ...product, inventoryUnit, inventory, replenishmentPolicy, supplyPreference: null };
+    }
+    const relationship = await tx.productSupplyRelationship.findUnique({ where: { id: supplyPreference.relationshipId } });
+    if (relationship === null) return null;
+    const supplier = await tx.supplier.findUnique({ where: { id: relationship.supplierId } });
+    if (supplier === null) return null;
+    const orderingTerms = await tx.productSupplierOrderingTerms.findUnique({ where: { relationshipId: relationship.id } });
+    const commercialTerms = await tx.productSupplierCommercialTerms.findUnique({ where: { relationshipId: relationship.id } });
+    const packagePreference = await tx.productSupplierPackagePreference.findUnique({ where: { relationshipId: relationship.id } });
+    if (packagePreference === null) {
+      return {
+        ...product,
+        inventoryUnit,
+        inventory,
+        replenishmentPolicy,
+        supplyPreference: { ...supplyPreference, relationship: { ...relationship, supplier, orderingTerms, commercialTerms, packagePreference: null } },
+      };
+    }
+    const packageRow = await tx.productSupplierPackage.findUnique({ where: { id: packagePreference.packageId } });
+    return {
+      ...product,
+      inventoryUnit,
+      inventory,
+      replenishmentPolicy,
+      supplyPreference: {
+        ...supplyPreference,
+        relationship: { ...relationship, supplier, orderingTerms, commercialTerms, packagePreference: { ...packagePreference, package: packageRow } },
+      },
+    };
   }
 
   private async replay(sourceRecommendationId: string): Promise<RecommendationPurchaseDraftHandoffResult | null> {
