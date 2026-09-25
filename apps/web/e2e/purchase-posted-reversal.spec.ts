@@ -109,9 +109,10 @@ test("C. browser reversal receives 201 and reaches the terminal completed state"
   const result = await response;
   expect(result.status()).toBe(201);
   const body = await result.json() as { id: string; reversedAt: string };
-  await expect(page.getByRole("heading", { name: "仕入補正済み" })).toBeVisible();
-  await expect(page.getByText(body.id, { exact: true })).toBeVisible();
-  await expect(page.getByText("記録時刻", { exact: true })).toBeVisible();
+  const completedPanel = page.getByRole("heading", { name: "仕入補正済み" }).locator("..");
+  await expect(completedPanel).toBeVisible();
+  await expect(completedPanel.getByText(body.id, { exact: true })).toBeVisible();
+  await expect(completedPanel.getByText("記録時刻", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "仕入補正を確認" })).toHaveCount(0);
   const auditResponse = await auditReadback;
   expect(auditResponse.status()).toBe(200);
