@@ -61,6 +61,7 @@ export type PurchaseListPage = {
 
 export type PurchaseListFilters = {
   status?: PurchaseStatus;
+  correction?: "corrected" | "uncorrected";
   from?: string;
   to?: string;
   supplierCode?: string;
@@ -741,6 +742,7 @@ export function purchaseListPath(filters: PurchaseListFilters, cursor?: string):
   const query = new URLSearchParams();
   query.set("limit", "50");
   if (filters.status !== undefined) query.set("status", filters.status);
+  if (filters.correction !== undefined) query.set("correction", filters.correction);
   if (filters.from !== undefined && filters.from.length > 0) query.set("from", filters.from);
   if (filters.to !== undefined && filters.to.length > 0) query.set("to", filters.to);
   if (filters.supplierCode !== undefined && filters.supplierCode.length > 0) query.set("supplierCode", filters.supplierCode);

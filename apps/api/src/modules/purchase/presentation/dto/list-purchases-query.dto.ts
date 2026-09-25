@@ -12,6 +12,10 @@ export class ListPurchasesQueryDto {
   status?: PurchaseStatus;
 
   @IsOptional()
+  @IsIn(["corrected", "uncorrected"])
+  correction?: "corrected" | "uncorrected";
+
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(40)

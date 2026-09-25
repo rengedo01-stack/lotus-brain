@@ -36,6 +36,7 @@ export type PurchaseListCursor = {
 
 export type ListPurchasesQuery = {
   status?: PurchaseStatus;
+  correction?: "corrected" | "uncorrected";
   from?: Date;
   to?: Date;
   supplierCode?: string;

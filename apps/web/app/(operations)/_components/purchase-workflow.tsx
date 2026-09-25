@@ -150,7 +150,7 @@ export function PurchaseWorkspacePage() {
   const { api, permissions, refreshAuthentication } = useOperationalApp();
   const [purchaseId, setPurchaseId] = useState("");
   const [lookupError, setLookupError] = useState<string | null>(null);
-  const [draftFilters, setDraftFilters] = useState<{ status: "" | Purchase["status"]; from: string; to: string; supplierCode: string; documentNumber: string }>({ status: "", from: "", to: "", supplierCode: "", documentNumber: "" });
+  const [draftFilters, setDraftFilters] = useState<{ status: "" | Purchase["status"]; correction: "" | "corrected" | "uncorrected"; from: string; to: string; supplierCode: string; documentNumber: string }>({ status: "", correction: "", from: "", to: "", supplierCode: "", documentNumber: "" });
   const [filters, setFilters] = useState<PurchaseListFilters>({});
   const [cursor, setCursor] = useState<string | undefined>();
   const [retryKey, setRetryKey] = useState(0);
@@ -188,6 +188,7 @@ export function PurchaseWorkspacePage() {
     setListState({ status: "loading" });
     setFilters({
       status: draftFilters.status || undefined,
+      correction: draftFilters.correction || undefined,
       from: draftFilters.from.trim() || undefined,
       to: draftFilters.to.trim() || undefined,
       supplierCode: draftFilters.supplierCode.trim() || undefined,
@@ -232,6 +233,11 @@ export function PurchaseWorkspacePage() {
               <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="purchase-list-status" onChange={(event) => setDraftFilters((value) => ({ ...value, status: event.target.value as "" | Purchase["status"] }))} value={draftFilters.status}>
                 <option value="">すべて</option>
                 {PURCHASE_STATUSES.map((status) => <option key={status} value={status}>{purchaseStatusLabel(status)}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="purchase-list-correction">補正
+              <select className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950" id="purchase-list-correction" onChange={(event) => setDraftFilters((value) => ({ ...value, correction: event.target.value as "" | "corrected" | "uncorrected" }))} value={draftFilters.correction}>
+                <option value="">すべて</option><option value="corrected">補正済み</option><option value="uncorrected">未補正</option>
               </select>
             </label>
             <label className="grid gap-1 text-sm font-medium text-slate-800" htmlFor="purchase-list-from">開始日時（UTC）

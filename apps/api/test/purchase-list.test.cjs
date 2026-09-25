@@ -93,6 +93,18 @@ test("purchase list reads the immutable relation once and fails closed for an im
   );
 });
 
+test("correction filtering is applied in the database before keyset pagination", async () => {
+  const calls = [];
+  const repository = new PrismaPurchaseListRepository({ purchase: { findMany: async (input) => { calls.push(input); return []; } } });
+  await repository.list({ limit: 1, correction: "corrected", status: "POSTED", cursor: { purchaseDate, id: "purchase-2" } });
+  await repository.list({ limit: 1, correction: "uncorrected" });
+  assert.deepEqual(calls[0].where.postedReversal, { is: {} });
+  assert.equal(calls[0].where.status, "POSTED");
+  assert.ok(calls[0].where.AND);
+  assert.equal(calls[0].take, 2);
+  assert.deepEqual(calls[1].where.postedReversal, { is: null });
+});
+
 test("purchase list cursor is exact, filter-bound, and rejects malformed ranges", async () => {
   const instance = controller({ execute: async () => ({ items: [purchase], nextCursor: { purchaseDate, id: purchase.id } }) });
   const first = await instance.listPurchases({
@@ -128,6 +140,18 @@ test("purchase list cursor is exact, filter-bound, and rejects malformed ranges"
     () => instance.listPurchases({ limit: 1, from: "2026-09-01" }),
     (error) => error?.name === "BadRequestException",
   );
+});
+
+test("correction cursor rejects switching filters while preserving unfiltered v1 cursors", async () => {
+  const instance = controller({ execute: async () => ({ items: [], nextCursor: { purchaseDate, id: purchase.id } }) });
+  const oldPage = await instance.listPurchases({ limit: 1 });
+  assert.equal(JSON.parse(Buffer.from(oldPage.nextCursor, "base64url")).v, 1);
+  await instance.listPurchases({ limit: 1, cursor: oldPage.nextCursor });
+  await assert.rejects(() => instance.listPurchases({ limit: 1, correction: "corrected", cursor: oldPage.nextCursor }), (error) => error?.name === "BadRequestException");
+  const correctedPage = await instance.listPurchases({ limit: 1, correction: "corrected" });
+  assert.equal(JSON.parse(Buffer.from(correctedPage.nextCursor, "base64url")).v, 2);
+  await instance.listPurchases({ limit: 1, correction: "corrected", cursor: correctedPage.nextCursor });
+  await assert.rejects(() => instance.listPurchases({ limit: 1, correction: "uncorrected", cursor: correctedPage.nextCursor }), (error) => error?.name === "BadRequestException");
 });
 
 test("purchase list Swagger schemas are exact and contain no financial/detail fields", () => {
