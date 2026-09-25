@@ -1,4 +1,4 @@
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Page, type Response, type TestInfo } from "@playwright/test";
 import {
   openPurchaseReversalE2EFixture,
   storageStatePath,
@@ -37,6 +37,16 @@ function previewUrl(purchaseId: string): RegExp {
 
 function auditUrl(purchaseId: string): RegExp {
   return new RegExp(`/api/v1/purchases/${purchaseId}/reversal$`);
+}
+
+function purchaseListResponseWithCorrection(value: "corrected" | "uncorrected") {
+  return (candidate: Response) => {
+    const url = new URL(candidate.url());
+    return candidate.request().method() === "GET"
+      && url.pathname.endsWith("/api/v1/purchases")
+      && url.searchParams.get("correction") === value
+      && candidate.status() === 200;
+  };
 }
 
 async function openPurchase(page: Page, purchase: PostedPurchaseFixture): Promise<void> {
@@ -128,6 +138,23 @@ test("C. browser reversal receives 201 and reaches the terminal completed state"
   await expect(row.getByText("計上済み", { exact: true })).toBeVisible();
   await expect(row.getByText("補正済み", { exact: true })).toBeVisible();
   await expect(row.getByText("取消済み", { exact: true })).toHaveCount(0);
+
+  const correctionFilter = page.locator("#purchase-list-correction");
+  const applyButton = page.getByRole("button", { name: "適用", exact: true });
+  const correctedResponse = page.waitForResponse(purchaseListResponseWithCorrection("corrected"));
+  await correctionFilter.selectOption("corrected");
+  await applyButton.click();
+  await correctedResponse;
+  await expect(row).toHaveCount(1);
+  await expect(row.getByText("計上済み", { exact: true })).toBeVisible();
+  await expect(row.getByText("補正済み", { exact: true })).toBeVisible();
+  await expect(row.getByText("取消済み", { exact: true })).toHaveCount(0);
+
+  const uncorrectedResponse = page.waitForResponse(purchaseListResponseWithCorrection("uncorrected"));
+  await correctionFilter.selectOption("uncorrected");
+  await applyButton.click();
+  await uncorrectedResponse;
+  await expect(row).toHaveCount(0);
 });
 
 test("D. an actual stale 409 reconciles through existingReversal without another POST", async ({ page }) => {
