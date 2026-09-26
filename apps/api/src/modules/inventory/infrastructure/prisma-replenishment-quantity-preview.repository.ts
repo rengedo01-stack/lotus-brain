@@ -39,26 +39,35 @@ export class PrismaReplenishmentQuantityPreviewRepository implements Replenishme
       // All values, including informational unposted-Purchase quantities, are
       // read from the same repeatable-read snapshot. This endpoint is fully
       // read-only, so it deliberately takes no row locks.
-      const product = await tx.product.findUnique({
-        where: { id: productId },
-        include: {
-          inventoryUnit: true,
-          inventory: true,
-          replenishmentPolicy: true,
-          supplyPreference: {
-            include: {
-              relationship: {
-                include: {
-                  supplier: true,
-                  orderingTerms: true,
-                  packagePreference: { include: { package: true } },
-                },
-              },
-            },
-          },
-        },
-      });
-      if (product === null) return null;
+      const productValue = await tx.product.findUnique({ where: { id: productId } });
+      if (productValue === null) return null;
+
+      // Prisma relation includes dispatch their child queries concurrently. Keep
+      // this repeatable-read snapshot, but issue each dependent read only after
+      // the preceding query has completed so one pg client is never overlapped.
+      const inventoryUnit = await tx.unit.findUnique({ where: { id: productValue.inventoryUnitId } });
+      if (inventoryUnit === null) return null;
+      const inventory = await tx.inventory.findUnique({ where: { productId } });
+      const replenishmentPolicy = await tx.replenishmentPolicy.findUnique({ where: { productId } });
+      const preferenceValue = await tx.productSupplyPreference.findUnique({ where: { productId } });
+
+      let supplyPreference: PreviewProduct["supplyPreference"] = null;
+      if (preferenceValue !== null) {
+        const relationship = await tx.productSupplyRelationship.findUnique({ where: { id: preferenceValue.relationshipId } });
+        if (relationship === null) return null;
+        const supplier = await tx.supplier.findUnique({ where: { id: relationship.supplierId } });
+        if (supplier === null) return null;
+        const orderingTerms = await tx.productSupplierOrderingTerms.findUnique({ where: { relationshipId: relationship.id } });
+        const packagePreferenceValue = await tx.productSupplierPackagePreference.findUnique({ where: { relationshipId: relationship.id } });
+        let packagePreference: NonNullable<PreviewProduct["supplyPreference"]>["relationship"]["packagePreference"] = null;
+        if (packagePreferenceValue !== null) {
+          const packageValue = await tx.productSupplierPackage.findUnique({ where: { id: packagePreferenceValue.packageId } });
+          if (packageValue === null) return null;
+          packagePreference = { ...packagePreferenceValue, package: packageValue };
+        }
+        supplyPreference = { ...preferenceValue, relationship: { ...relationship, supplier, orderingTerms, packagePreference } };
+      }
+      const product: PreviewProduct = { ...productValue, inventoryUnit, inventory, replenishmentPolicy, supplyPreference };
 
       const [draft, confirmed] = product.inventory === null
         ? [null, null]
