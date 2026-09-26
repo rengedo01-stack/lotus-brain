@@ -118,7 +118,7 @@ if (databaseUrl === undefined) {
           } else if (status === "POSTED") {
             await prisma.purchase.update({ where: { id: purchase.id }, data: { status: "POSTED", postedAt: new Date("2026-09-09T01:00:00.000Z") } });
           } else if (status === "CANCELLED") {
-            await prisma.purchase.update({ where: { id: purchase.id }, data: { status: "CANCELLED", cancelledAt: new Date("2026-09-09T01:00:00.000Z") } });
+            await prisma.purchase.update({ where: { id: purchase.id }, data: { status: "CANCELLED", cancelledAt: new Date("2026-09-09T01:00:00.000Z"), cancellationReason: "fixture cancellation" } });
           }
         };
         await createPurchase("DRAFT-1", product.id, "1.250000000", "DRAFT");
