@@ -10,11 +10,14 @@ const [targetName] = process.argv.slice(2);
 const targets = {
   "purchase-posted-reversal": {
     databaseName: "lotus_brain_pr006c24c2d_browser_e2e_test",
-    specPath: "apps/web/e2e/purchase-posted-reversal.spec.ts",
+    specPaths: ["apps/web/e2e/purchase-posted-reversal.spec.ts"],
   },
   "recommendation-purchase-reorder": {
     databaseName: "lotus_brain_pr006c26_recommendation_purchase_reorder_browser_e2e_test",
-    specPath: "apps/web/e2e/recommendation-purchase-reorder.spec.ts",
+    specPaths: [
+      "apps/web/e2e/recommendation-purchase-reorder.spec.ts",
+      "apps/web/e2e/inventory-replenishment-journey.spec.ts",
+    ],
   },
 };
 const target = targets[targetName];
@@ -258,7 +261,7 @@ async function main() {
   webProcess = startServer("pnpm", ["--dir", "apps/web", "exec", "next", "start", "--hostname", "localhost", "--port", String(webPort)], webEnvironment, "web.log");
   await waitForHttp(`${webBaseUrl}/login`, "Web", webProcess.child, webProcess.logFile);
 
-  run("pnpm", ["exec", "playwright", "test", "--config", "playwright.config.ts", target.specPath], {
+  run("pnpm", ["exec", "playwright", "test", "--config", "playwright.config.ts", ...target.specPaths], {
     env: {
       ...safeEnvironment,
       [TEST_MODE_ENV]: "1",

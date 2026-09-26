@@ -20,6 +20,8 @@ type PrismaClientLike = {
   $disconnect(): Promise<void>;
   inventory: { create(input: { data: object }): Promise<unknown> };
   product: { create(input: { data: object }): Promise<{ id: string }> };
+  productSupplierPackage: { create(input: { data: object }): Promise<{ id: string }> };
+  productSupplierPackagePreference: { create(input: { data: object }): Promise<unknown> };
   productSupplierCommercialTerms: { create(input: { data: object }): Promise<unknown> };
   productSupplierOrderingTerms: { create(input: { data: object }): Promise<unknown> };
   productSupplyPreference: { create(input: { data: object }): Promise<unknown> };
@@ -46,9 +48,42 @@ type ReversalService = {
 export type RecommendationPurchaseReorderFixture = {
   close(): Promise<void>;
   activeRecommendationId(productId: string): Promise<string>;
+  createReadyReplenishmentProduct(label: string): Promise<ReadyReplenishmentProduct>;
   createReversedRecommendation(label: string): Promise<{ productId: string; recommendationAId: string; purchaseAId: string; audit: unknown }>;
   handoffPurchaseId(recommendationId: string): Promise<string>;
   readAudit(purchaseId: string): Promise<unknown>;
+};
+
+export type ReadyReplenishmentProduct = {
+  productId: string;
+  productCode: string;
+  productName: string;
+  supplierCode: string;
+  supplierName: string;
+  packageCode: string;
+  packageName: string;
+  unitSymbol: string;
+  listCurrentQuantity: string;
+  listReorderPointQuantity: string;
+  currentQuantity: string;
+  reorderPointQuantity: string;
+  targetStockQuantity: string;
+  rawTargetGap: string;
+  feasibleQuantity: string;
+  packageCount: string;
+  overOrderQuantity: string;
+  recommendationFeasibleQuantity: string;
+  inventoryRevision: string;
+};
+
+type SeededReplenishmentProduct = {
+  productId: string;
+  productCode: string;
+  productName: string;
+  supplierCode: string;
+  supplierName: string;
+  packageCode: string | null;
+  packageName: string | null;
 };
 
 function databaseUrl(): string {
@@ -68,6 +103,44 @@ function created<T>(value: T | "NOT_FOUND" | "NOT_READY" | "CONFLICT"): T {
   return value as T;
 }
 
+async function seedReplenishmentProduct(
+  prisma: PrismaClientLike,
+  input: {
+    label: string;
+    prefix: "c26" | "c37";
+    unitName: string;
+    supplierName: string;
+    productName: string;
+    currentQuantity: string;
+    reorderPointQuantity: string;
+    targetStockQuantity: string;
+    minimumOrderQuantity: string;
+    orderMultipleQuantity: string;
+    packageSize: string | null;
+    withCommercialTerms: boolean;
+  },
+): Promise<SeededReplenishmentProduct> {
+  const nonce = randomUUID().replace(/-/g, "");
+  const prefix = `${input.prefix}-${input.label}-${nonce}`;
+  const unit = await prisma.unit.create({ data: { code: `${prefix}-unit`, name: input.unitName, symbol: "ea", dimension: "COUNT", status: "ACTIVE" } });
+  const supplier = await prisma.supplier.create({ data: { code: `${prefix}-supplier`, name: input.supplierName, status: "ACTIVE" } });
+  const product = await prisma.product.create({ data: { code: `${prefix}-product`, name: input.productName, baseUnitId: unit.id, inventoryUnitId: unit.id, status: "ACTIVE" } });
+  await prisma.inventory.create({ data: { productId: product.id, quantity: input.currentQuantity, averageUnitCost: null } });
+  await prisma.replenishmentPolicy.create({ data: { productId: product.id, reorderPointQuantity: input.reorderPointQuantity, targetStockQuantity: input.targetStockQuantity } });
+  const relationship = await prisma.productSupplyRelationship.create({ data: { productId: product.id, supplierId: supplier.id, status: "ACTIVE" } });
+  await prisma.productSupplyPreference.create({ data: { productId: product.id, relationshipId: relationship.id } });
+  await prisma.productSupplierOrderingTerms.create({ data: { relationshipId: relationship.id, minimumOrderQuantity: input.minimumOrderQuantity, orderMultipleQuantity: input.orderMultipleQuantity } });
+  if (input.withCommercialTerms) {
+    await prisma.productSupplierCommercialTerms.create({ data: { relationshipId: relationship.id, unitPrice: "100.000000", currencyCode: "JPY", taxRate: "0.0000" } });
+  }
+  if (input.packageSize === null) {
+    return { productId: product.id, productCode: `${prefix}-product`, productName: input.productName, supplierCode: `${prefix}-supplier`, supplierName: input.supplierName, packageCode: null, packageName: null };
+  }
+  const packageRow = await prisma.productSupplierPackage.create({ data: { relationshipId: relationship.id, code: `${prefix}-package`, name: `${input.prefix.toUpperCase()} package`, inventoryQuantityPerPackage: input.packageSize, isOrderable: true, status: "ACTIVE" } });
+  await prisma.productSupplierPackagePreference.create({ data: { relationshipId: relationship.id, packageId: packageRow.id } });
+  return { productId: product.id, productCode: `${prefix}-product`, productName: input.productName, supplierCode: `${prefix}-supplier`, supplierName: input.supplierName, packageCode: `${prefix}-package`, packageName: `${input.prefix.toUpperCase()} package` };
+}
+
 export async function openRecommendationPurchaseReorderFixture(): Promise<RecommendationPurchaseReorderFixture> {
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl() }) });
   try {
@@ -85,19 +158,56 @@ export async function openRecommendationPurchaseReorderFixture(): Promise<Recomm
         if (recommendation === null) throw new Error("Expected one active C26 Recommendation.");
         return recommendation.id;
       },
+      async createReadyReplenishmentProduct(label) {
+        const product = await seedReplenishmentProduct(prisma, {
+          label,
+          prefix: "c37",
+          unitName: "C37 unit",
+          supplierName: "C37 supplier",
+          productName: "C37 replenishment product",
+          currentQuantity: "5.000000000",
+          reorderPointQuantity: "5.000000000",
+          targetStockQuantity: "12.000000000",
+          minimumOrderQuantity: "12.000000000",
+          orderMultipleQuantity: "5.000000000",
+          packageSize: "6.000000000",
+          withCommercialTerms: false,
+        });
+        if (product.packageCode === null || product.packageName === null) throw new Error("Expected a C37 preferred package.");
+        return {
+          ...product,
+          packageCode: product.packageCode,
+          packageName: product.packageName,
+          unitSymbol: "ea",
+          listCurrentQuantity: "5",
+          listReorderPointQuantity: "5",
+          currentQuantity: "5.000000000",
+          reorderPointQuantity: "5.000000000",
+          targetStockQuantity: "12.000000000",
+          rawTargetGap: "7",
+          feasibleQuantity: "30",
+          packageCount: "5",
+          overOrderQuantity: "23",
+          recommendationFeasibleQuantity: "30.000000000",
+          inventoryRevision: "1",
+        };
+      },
       async createReversedRecommendation(label) {
-        const nonce = randomUUID().replace(/-/g, "");
-        const prefix = `c26-${label}-${nonce}`;
-        const unit = await prisma.unit.create({ data: { code: `${prefix}-unit`, name: "C26 unit", symbol: "ea", dimension: "COUNT", status: "ACTIVE" } });
-        const supplier = await prisma.supplier.create({ data: { code: `${prefix}-supplier`, name: "C26 supplier", status: "ACTIVE" } });
-        const product = await prisma.product.create({ data: { code: `${prefix}-product`, name: "C26 reorder product", baseUnitId: unit.id, inventoryUnitId: unit.id, status: "ACTIVE" } });
-        await prisma.inventory.create({ data: { productId: product.id, quantity: "0.000000000", averageUnitCost: null } });
-        await prisma.replenishmentPolicy.create({ data: { productId: product.id, reorderPointQuantity: "0.000000000", targetStockQuantity: "10.000000000" } });
-        const relationship = await prisma.productSupplyRelationship.create({ data: { productId: product.id, supplierId: supplier.id, status: "ACTIVE" } });
-        await prisma.productSupplyPreference.create({ data: { productId: product.id, relationshipId: relationship.id } });
-        await prisma.productSupplierOrderingTerms.create({ data: { relationshipId: relationship.id, minimumOrderQuantity: "10.000000000", orderMultipleQuantity: "10.000000000" } });
-        await prisma.productSupplierCommercialTerms.create({ data: { relationshipId: relationship.id, unitPrice: "100.000000", currencyCode: "JPY", taxRate: "0.0000" } });
-        const recommendationA = created(await recommendations.recalculate(product.id, admin.id));
+        const product = await seedReplenishmentProduct(prisma, {
+          label,
+          prefix: "c26",
+          unitName: "C26 unit",
+          supplierName: "C26 supplier",
+          productName: "C26 reorder product",
+          currentQuantity: "0.000000000",
+          reorderPointQuantity: "0.000000000",
+          targetStockQuantity: "10.000000000",
+          minimumOrderQuantity: "10.000000000",
+          orderMultipleQuantity: "10.000000000",
+          packageSize: null,
+          withCommercialTerms: true,
+        });
+        const recommendationA = created(await recommendations.recalculate(product.productId, admin.id));
         const purchaseA = created(await handoffs.createPurchaseDraft({ sourceRecommendationId: recommendationA.id, purchaseDate: new Date("2026-09-24T00:00:00.000Z") }));
         assert.equal(purchaseA.replayed, false);
         assert.equal((await postPurchase.execute(purchaseA.purchase.id)).status, "POSTED");
@@ -117,7 +227,7 @@ export async function openRecommendationPurchaseReorderFixture(): Promise<Recomm
         assert.equal(result.replayed, false);
         const audit = await reversals.readAudit(purchaseA.purchase.id);
         if (audit === null) throw new Error("Expected an immutable C26 reversal audit.");
-        return { productId: product.id, recommendationAId: recommendationA.id, purchaseAId: purchaseA.purchase.id, audit };
+        return { productId: product.productId, recommendationAId: recommendationA.id, purchaseAId: purchaseA.purchase.id, audit };
       },
       async handoffPurchaseId(recommendationId) {
         const lineage = await handoffs.getLineageBySourceRecommendationId(recommendationId);
