@@ -1,5 +1,19 @@
 import { Injectable } from "@nestjs/common";
-import { Prisma, type MasterStatus, type ReplenishmentRecommendation } from "../../../generated/prisma/client";
+import {
+  Prisma,
+  type Inventory,
+  type MasterStatus,
+  type Product,
+  type ProductSupplierOrderingTerms,
+  type ProductSupplierPackage,
+  type ProductSupplierPackagePreference,
+  type ProductSupplyPreference,
+  type ProductSupplyRelationship,
+  type ReplenishmentPolicy,
+  type ReplenishmentRecommendation,
+  type Supplier,
+  type Unit,
+} from "../../../generated/prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { rawTargetGap, solveReplenishmentQuantity } from "../../inventory/domain/replenishment-quantity-solver";
 import { isCurrentReplenishmentCalculationPolicyVersion, REPLENISHMENT_CALCULATION_POLICY_VERSION } from "../domain/replenishment-calculation-policy";
@@ -9,24 +23,18 @@ import type {
   ReplenishmentRecommendationView,
 } from "../application/replenishment-recommendation.repository";
 
-type ProductWithCalculationInputs = Prisma.ProductGetPayload<{
-  include: {
-    inventoryUnit: true;
-    inventory: true;
-    replenishmentPolicy: true;
-    supplyPreference: {
-      include: {
-        relationship: {
-          include: {
-            supplier: true;
-            orderingTerms: true;
-            packagePreference: { include: { package: true } };
-          };
-        };
-      };
+type ProductWithCalculationInputs = Product & {
+  inventoryUnit: Unit;
+  inventory: Inventory | null;
+  replenishmentPolicy: ReplenishmentPolicy | null;
+  supplyPreference: (ProductSupplyPreference & {
+    relationship: ProductSupplyRelationship & {
+      supplier: Supplier;
+      orderingTerms: ProductSupplierOrderingTerms | null;
+      packagePreference: (ProductSupplierPackagePreference & { package: ProductSupplierPackage | null }) | null;
     };
-  };
-}>;
+  }) | null;
+};
 
 type ReadySnapshot = {
   product: { id: string; code: string; name: string };
@@ -147,25 +155,42 @@ export class PrismaReplenishmentRecommendationRepository implements Replenishmen
   }
 
   private async loadProduct(client: PrismaService | Prisma.TransactionClient, productId: string): Promise<ProductWithCalculationInputs | null> {
-    return client.product.findUnique({
-      where: { id: productId },
-      include: {
-        inventoryUnit: true,
-        inventory: true,
-        replenishmentPolicy: true,
-        supplyPreference: {
-          include: {
-            relationship: {
-              include: {
-                supplier: true,
-                orderingTerms: true,
-                packagePreference: { include: { package: true } },
-              },
-            },
-          },
-        },
+    const product = await client.product.findUnique({ where: { id: productId } });
+    if (product === null) return null;
+    const inventoryUnit = await client.unit.findUnique({ where: { id: product.inventoryUnitId } });
+    if (inventoryUnit === null) return null;
+    const inventory = await client.inventory.findUnique({ where: { productId: product.id } });
+    const replenishmentPolicy = await client.replenishmentPolicy.findUnique({ where: { productId: product.id } });
+    const supplyPreference = await client.productSupplyPreference.findUnique({ where: { productId: product.id } });
+    if (supplyPreference === null) {
+      return { ...product, inventoryUnit, inventory, replenishmentPolicy, supplyPreference: null };
+    }
+    const relationship = await client.productSupplyRelationship.findUnique({ where: { id: supplyPreference.relationshipId } });
+    if (relationship === null) return null;
+    const supplier = await client.supplier.findUnique({ where: { id: relationship.supplierId } });
+    if (supplier === null) return null;
+    const orderingTerms = await client.productSupplierOrderingTerms.findUnique({ where: { relationshipId: relationship.id } });
+    const packagePreference = await client.productSupplierPackagePreference.findUnique({ where: { relationshipId: relationship.id } });
+    if (packagePreference === null) {
+      return {
+        ...product,
+        inventoryUnit,
+        inventory,
+        replenishmentPolicy,
+        supplyPreference: { ...supplyPreference, relationship: { ...relationship, supplier, orderingTerms, packagePreference: null } },
+      };
+    }
+    const packageRow = await client.productSupplierPackage.findUnique({ where: { id: packagePreference.packageId } });
+    return {
+      ...product,
+      inventoryUnit,
+      inventory,
+      replenishmentPolicy,
+      supplyPreference: {
+        ...supplyPreference,
+        relationship: { ...relationship, supplier, orderingTerms, packagePreference: { ...packagePreference, package: packageRow } },
       },
-    });
+    };
   }
 
   private async purchaseFacts(tx: Prisma.TransactionClient, productId: string | null): Promise<{ draftPurchaseQuantity: string; confirmedPurchaseQuantity: string }> {
