@@ -109,7 +109,7 @@ if (databaseUrl === undefined) {
           });
           if (status === "CONFIRMED") await prisma.purchase.update({ where: { id: purchase.id }, data: { status: "CONFIRMED" } });
           if (status === "POSTED") await prisma.purchase.update({ where: { id: purchase.id }, data: { status: "POSTED", postedAt: new Date("2026-09-09T01:00:00.000Z") } });
-          if (status === "CANCELLED") await prisma.purchase.update({ where: { id: purchase.id }, data: { status: "CANCELLED", cancelledAt: new Date("2026-09-09T01:00:00.000Z") } });
+          if (status === "CANCELLED") await prisma.purchase.update({ where: { id: purchase.id }, data: { status: "CANCELLED", cancelledAt: new Date("2026-09-09T01:00:00.000Z"), cancellationReason: "fixture cancellation" } });
         };
         await createPurchase("DRAFT-1", exact.id, "1.250000000", "DRAFT");
         await createPurchase("DRAFT-2", exact.id, "2.750000000", "DRAFT");
