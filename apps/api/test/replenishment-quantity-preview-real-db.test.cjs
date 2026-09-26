@@ -104,7 +104,7 @@ if (databaseUrl === undefined) {
             supplierId: supplier.id, purchaseDate: new Date("2026-09-11T00:00:00.000Z"), documentNumber: `${fixture}-${suffix}`,
             items: { create: { productId, unitId: unit.id, lineNumber: 1, quantity, unitPrice: "1", lineAmount: quantity, taxRate: "0" } },
           } });
-          if (status !== "DRAFT") await prisma.purchase.update({ where: { id: purchase.id }, data: status === "CONFIRMED" ? { status: "CONFIRMED" } : status === "POSTED" ? { status: "POSTED", postedAt: new Date() } : { status: "CANCELLED", cancelledAt: new Date() } });
+          if (status !== "DRAFT") await prisma.purchase.update({ where: { id: purchase.id }, data: status === "CONFIRMED" ? { status: "CONFIRMED" } : status === "POSTED" ? { status: "POSTED", postedAt: new Date() } : { status: "CANCELLED", cancelledAt: new Date(), cancellationReason: "fixture cancellation" } });
         };
         await createPurchase("DRAFT-1", constrained.product.id, "100", "DRAFT");
         await createPurchase("DRAFT-2", constrained.product.id, "25", "DRAFT");
