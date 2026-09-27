@@ -18,6 +18,7 @@ const targets = {
       "apps/web/e2e/recommendation-purchase-reorder.spec.ts",
       "apps/web/e2e/inventory-replenishment-journey.spec.ts",
       "apps/web/e2e/stocktake-lifecycle-journey.spec.ts",
+      "apps/web/e2e/production-lifecycle-journey.spec.ts",
     ],
   },
 };
