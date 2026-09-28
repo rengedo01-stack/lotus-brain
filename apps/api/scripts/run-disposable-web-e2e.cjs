@@ -21,6 +21,7 @@ const targets = {
       "apps/web/e2e/production-lifecycle-journey.spec.ts",
       "apps/web/e2e/recipe-lifecycle-journey.spec.ts",
       "apps/web/e2e/recipe-revision-journey.spec.ts",
+      "apps/web/e2e/recipe-archive-journey.spec.ts",
     ],
   },
 };
