@@ -1,0 +1,8 @@
+# Copy to a local *.tfvars file. Numeric GitHub IDs are deliberately placeholders.
+project_id                  = "replace-with-owner-managed-project-id"
+state_bucket_name           = "lotus-brain-tfstate-prod-<unique-suffix>"
+github_repository_id        = "replace-with-numeric-repository-id"
+github_repository_owner_id  = "replace-with-numeric-owner-id"
+region                      = "asia-northeast1"
+environment                 = "production"
+system_name                 = "lotus-brain"
