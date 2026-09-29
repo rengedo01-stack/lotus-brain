@@ -3,7 +3,11 @@ FROM node:24.18.0-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=${PNPM_HOME}:${PATH}
 
-RUN corepack enable && corepack prepare pnpm@11.15.1 --activate
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack prepare pnpm@11.15.1 --activate
 
 WORKDIR /workspace
 
@@ -20,12 +24,16 @@ FROM dependencies AS build
 COPY . .
 
 RUN pnpm --filter @lotus-brain/api build \
-  && pnpm --filter @lotus-brain/api deploy --prod /opt/lotus-api
+  && pnpm --filter @lotus-brain/api deploy --prod --legacy /opt/lotus-api
 
 FROM node:24.18.0-bookworm-slim AS runner
 
 ENV NODE_ENV=production
 ENV PORT=8080
+
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

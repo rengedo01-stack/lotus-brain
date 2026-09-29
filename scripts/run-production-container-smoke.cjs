@@ -46,6 +46,10 @@ function dockerQuietly(arguments) {
   return runQuietly("docker", arguments);
 }
 
+function resultIndicatesMissingResource(result) {
+  return /(?:no such|not found)/i.test(`${result.stdout}\n${result.stderr}`);
+}
+
 function poll(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -139,16 +143,26 @@ function applicationEnvironment() {
 
 function removeContainer(name) {
   const result = dockerQuietly(["rm", "--force", name]);
-  if (result.status !== 0 && !/No such container/.test(result.stderr)) {
+  if (result.status !== 0 && !resultIndicatesMissingResource(result)) {
     throw new Error(`Unable to remove disposable container ${name}.`);
   }
 }
 
 function removeImage(name) {
   const result = dockerQuietly(["image", "rm", "--force", name]);
-  if (result.status !== 0 && !/No such image/.test(result.stderr)) {
+  if (result.status !== 0 && !resultIndicatesMissingResource(result)) {
     throw new Error(`Unable to remove disposable image ${name}.`);
   }
+}
+
+function removeNamedDockerResource(kind, name, arguments) {
+  const inspected = dockerQuietly([kind, "inspect", name]);
+  if (inspected.status !== 0) {
+    if (resultIndicatesMissingResource(inspected)) return;
+    throw new Error(`Unable to inspect disposable Docker ${kind} ${name}.`);
+  }
+  const removed = dockerQuietly(arguments);
+  if (removed.status !== 0) throw new Error(`Unable to remove disposable Docker ${kind} ${name}.`);
 }
 
 function assertNoDockerResources() {
@@ -163,10 +177,8 @@ async function cleanup() {
   cleaning = true;
   try {
     for (const resource of resources) removeContainer(resource);
-    const network = dockerQuietly(["network", "rm", networkName]);
-    if (network.status !== 0 && !/No such network/.test(network.stderr)) throw new Error("Unable to remove disposable Docker network.");
-    const volume = dockerQuietly(["volume", "rm", "--force", volumeName]);
-    if (volume.status !== 0 && !/No such volume/.test(volume.stderr)) throw new Error("Unable to remove disposable Docker volume.");
+    removeNamedDockerResource("network", networkName, ["network", "rm", networkName]);
+    removeNamedDockerResource("volume", volumeName, ["volume", "rm", "--force", volumeName]);
     assertNoDockerResources();
   } finally {
     removeImage(webImage);
