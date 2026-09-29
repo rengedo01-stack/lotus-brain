@@ -19,10 +19,68 @@ Docker Artifact Registry repository, and Secret Manager containers plus
 least-privilege per-secret access bindings. The GitHub WIF release identity is
 created by the bootstrap root and is granted only Artifact Registry upload access.
 
-## Deferred to C51 and later
+## C52 Cloud SQL foundation
 
-Cloud SQL, Cloud Run Web/API, migration Job, worker, Cloud NAT, load balancer,
-certificates, DNS, monitoring, backups, and application deployment are explicitly
+C52 adds one `POSTGRES_17` Enterprise Cloud SQL instance named from the system and
+environment (`lotus-brain-production-postgres`) and the `lotus_brain` application
+database. It reuses the C50 custom VPC and its existing Private Services Access
+range; it does not create a new VPC, subnet, or PSA range.
+
+The instance is Regional HA in `asia-northeast1`, uses the fixed
+`db-custom-2-7680` tier, has 20 GiB PD SSD storage that can grow up to 100 GiB,
+and has no public IPv4 address or authorized networks. Cloud SQL selects the
+primary and standby zones. The server accepts encrypted connections only
+(`ENCRYPTED_ONLY`).
+
+Automated backups retain 14 backups, while point-in-time recovery keeps seven days
+of transaction logs. These are separate protections: PITR is not a replacement for
+the daily automated backup. Backup location and the weekly maintenance window are
+operator-owned decisions, so `cloud_sql_backup_location`,
+`cloud_sql_maintenance_day`, and `cloud_sql_maintenance_hour` must be supplied in
+the real production tfvars. The maintenance day and hour are UTC; the committed
+example is only a shape, not a production decision.
+
+The database is protected three ways: Terraform `deletion_protection`, Cloud SQL
+API `deletion_protection_enabled`, and Terraform `prevent_destroy`. Backups are
+retained on deletion, and a 14-day final backup is required. `lotus_brain` uses the
+`ABANDON` deletion policy so removing its Terraform binding does not drop the
+database. A destructive operation requires an explicit owner decision, confirmation
+of backup and PITR health, confirmation of the final backup, a reviewed PR that
+removes all three protections, and a separate reviewed apply.
+
+Regional HA protects zonal and instance failures; it is not cross-region disaster
+recovery. C52 intentionally adds no replica, cross-region DR, Query Insights,
+database flags, CMEK, Cloud SQL IAM database authentication, or Cloud SQL Client
+IAM role. Direct private TCP from the VPC does not need `roles/cloudsql.client`;
+re-evaluate that role if a Cloud SQL Auth Proxy or connector is introduced.
+
+### Database user and secret handoff
+
+Terraform manages neither database users or passwords nor Secret Manager secret
+versions. After a reviewed Cloud SQL apply, an operator must use an approved
+private operator path (for example, an IAP-mediated temporary admin VM inside the
+VPC or a Cloud SQL Auth Proxy). Permanent public SQL access is not permitted.
+
+1. Confirm Cloud SQL is ready and record its private IP.
+2. Create `lotus_brain_app` with `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+   NOREPLICATION`, and make it the owner of `lotus_brain`.
+3. Generate a strong password outside Terraform, URL-encode it, and form
+   `postgresql://<user>:<encoded-password>@<private-ip>:5432/lotus_brain?schema=public&sslmode=require`.
+4. Add that value as a version of the existing `lotus-brain-production-database-url`
+   Secret Manager container only after the private connection and migration path are
+   validated.
+
+The initial runtime and migration identity is the same `lotus_brain_app` database
+user; reassess separate migration credentials with the Cloud Run migration Job.
+`sslmode=require` enforces transport encryption but does not complete CA or server
+identity verification. Private DNS, CA distribution, and `verify-full` are deferred
+to the Cloud Run connection design.
+
+## Deferred to C53 and later
+
+Cloud Run Web/API, migration Job, worker, Cloud NAT, load balancer, certificates,
+DNS, monitoring, application deployment, and all real Cloud SQL operations remain
 out of scope. No secret version or secret value is managed here.
 
-No C50 command may run a real-project plan, apply, or destroy.
+No C52 command may run a real-project plan, apply, destroy, or resource-creation
+command.

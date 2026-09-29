@@ -38,3 +38,33 @@ variable "private_services_access_cidr" {
   type        = string
   default     = "10.70.16.0/20"
 }
+
+variable "cloud_sql_backup_location" {
+  description = "Owner-approved Cloud SQL backup location, supplied explicitly for production."
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.cloud_sql_backup_location)) > 0
+    error_message = "cloud_sql_backup_location must be an explicit, non-empty Cloud SQL backup location."
+  }
+}
+
+variable "cloud_sql_maintenance_day" {
+  description = "Cloud SQL weekly maintenance day in UTC (1 is Monday and 7 is Sunday)."
+  type        = number
+
+  validation {
+    condition     = var.cloud_sql_maintenance_day >= 1 && var.cloud_sql_maintenance_day <= 7
+    error_message = "cloud_sql_maintenance_day must be between 1 (Monday) and 7 (Sunday)."
+  }
+}
+
+variable "cloud_sql_maintenance_hour" {
+  description = "Cloud SQL maintenance hour in UTC."
+  type        = number
+
+  validation {
+    condition     = var.cloud_sql_maintenance_hour >= 0 && var.cloud_sql_maintenance_hour <= 23
+    error_message = "cloud_sql_maintenance_hour must be between 0 and 23 UTC."
+  }
+}
