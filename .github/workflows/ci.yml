@@ -33,6 +33,24 @@ jobs:
         run: git diff --check "${{ github.event.before }}...${{ github.sha }}"
       - name: Validate Prisma schema
         run: pnpm --filter @lotus-brain/api prisma:validate
+      - name: Install verified Terraform 1.16.4
+        run: |
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/terraform.zip" \
+            "https://releases.hashicorp.com/terraform/1.16.4/terraform_1.16.4_linux_amd64.zip"
+          echo "dc94af0eef1147718ad7c8daea792ed199e3e0492eec180d0adafa2a65a879df  $RUNNER_TEMP/terraform.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/terraform.zip" -d "$RUNNER_TEMP/terraform-bin"
+          echo "$RUNNER_TEMP/terraform-bin" >> "$GITHUB_PATH"
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive infra
+      - name: Validate bootstrap Terraform without a backend
+        run: |
+          terraform -chdir=infra/bootstrap init -backend=false -input=false
+          terraform -chdir=infra/bootstrap validate -no-color
+      - name: Validate production Terraform without a backend
+        run: |
+          terraform -chdir=infra/environments/prod init -backend=false -input=false
+          terraform -chdir=infra/environments/prod validate -no-color
       - name: Lint
         run: pnpm lint
       - name: Build

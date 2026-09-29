@@ -1,0 +1,8 @@
+# Copy to a local *.tfvars file. Do not put credentials or secret values in it.
+project_id                   = "replace-with-owner-managed-project-id"
+region                       = "asia-northeast1"
+environment                  = "production"
+system_name                  = "lotus-brain"
+app_subnet_cidr              = "10.70.0.0/24"
+worker_subnet_cidr           = "10.70.1.0/24"
+private_services_access_cidr = "10.70.16.0/20"
