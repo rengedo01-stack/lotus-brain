@@ -23,6 +23,26 @@ output "private_services_access_range" {
   value       = module.network.private_services_access_range
 }
 
+output "cloud_sql_instance_name" {
+  description = "Cloud SQL instance name."
+  value       = module.cloud_sql.instance_name
+}
+
+output "cloud_sql_connection_name" {
+  description = "Cloud SQL connection name."
+  value       = module.cloud_sql.connection_name
+}
+
+output "cloud_sql_private_ip_address" {
+  description = "Cloud SQL private IP address."
+  value       = module.cloud_sql.private_ip_address
+}
+
+output "cloud_sql_database_name" {
+  description = "Cloud SQL application database name."
+  value       = module.cloud_sql.database_name
+}
+
 output "artifact_registry_repository" {
   description = "Docker Artifact Registry repository name."
   value       = google_artifact_registry_repository.containers.name

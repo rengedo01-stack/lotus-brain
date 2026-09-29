@@ -6,3 +6,12 @@ system_name                  = "lotus-brain"
 app_subnet_cidr              = "10.70.0.0/24"
 worker_subnet_cidr           = "10.70.1.0/24"
 private_services_access_cidr = "10.70.16.0/20"
+
+# Required for a real apply. Select an owner-approved backup location, such as
+# "asia" or a Japan-only location, according to the production data-residency policy.
+cloud_sql_backup_location = "replace-with-approved-backup-location"
+
+# Required for a real apply. Cloud SQL maintenance windows use UTC: 1 is Monday
+# through 7 Sunday, and hours are 0 through 23.
+cloud_sql_maintenance_day  = 7
+cloud_sql_maintenance_hour = 18
