@@ -41,6 +41,8 @@ jobs:
         run: pnpm --filter @lotus-brain/api test:unit
       - name: Web tests
         run: pnpm --filter @lotus-brain/web test
+      - name: Build and smoke-test production container artifacts
+        run: node scripts/run-production-container-smoke.cjs
 
   database-integration:
     name: Database integration (${{ matrix.target }})

@@ -1,0 +1,52 @@
+FROM node:24.18.0-bookworm-slim AS base
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=${PNPM_HOME}:${PATH}
+
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack install --global pnpm@11.15.1
+
+WORKDIR /workspace
+
+FROM base AS dependencies
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+
+RUN pnpm install --frozen-lockfile
+
+FROM dependencies AS build
+
+COPY . .
+
+RUN pnpm --filter @lotus-brain/api build \
+  && pnpm --filter @lotus-brain/api deploy --prod --legacy /opt/lotus-api
+
+FROM base AS runner
+
+ENV NODE_ENV=production
+ENV PORT=8080
+
+WORKDIR /app
+
+COPY --from=build --chown=node:node /opt/lotus-api/node_modules ./node_modules
+COPY --from=build --chown=node:node /workspace/apps/api/package.json ./package.json
+COPY --from=build --chown=node:node /workspace/apps/api/dist ./dist
+COPY --from=build --chown=node:node /workspace/apps/api/prisma ./prisma
+COPY --from=build --chown=node:node /workspace/apps/api/prisma.config.ts ./prisma.config.ts
+
+RUN mkdir --parents /home/node/.config/pnpm \
+  && printf 'verifyDepsBeforeRun: never\n' > /home/node/.config/pnpm/config.yaml \
+  && chown --recursive node:node /home/node/.config
+
+USER node
+
+RUN corepack install --global pnpm@11.15.1
+
+EXPOSE 8080
+
+CMD ["node", "dist/main.js"]
