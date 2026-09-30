@@ -52,3 +52,18 @@ output "secret_resource_ids" {
   description = "Secret Manager resource IDs only; no secret values are output."
   value       = { for key, secret in google_secret_manager_secret.application : key => secret.id }
 }
+
+output "cloud_run_web_service_name" {
+  description = "Production Web Cloud Run service name."
+  value       = google_cloud_run_v2_service.web.name
+}
+
+output "cloud_run_api_service_name" {
+  description = "Production API Cloud Run service name."
+  value       = google_cloud_run_v2_service.api.name
+}
+
+output "cloud_run_migration_job_name" {
+  description = "Production migration Cloud Run Job name."
+  value       = google_cloud_run_v2_job.migration.name
+}

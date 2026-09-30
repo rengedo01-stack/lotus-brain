@@ -8,6 +8,85 @@ the same bucket with the `prod` prefix:
 terraform init -backend-config=backend.gcs.hcl
 ```
 
+## Cloud Run runtime foundation
+
+C54 defines, but does not deploy, the production runtime resources in
+`asia-northeast1`:
+
+- a Web `google_cloud_run_v2_service`;
+- an API `google_cloud_run_v2_service`; and
+- a one-task `google_cloud_run_v2_job` for Prisma migrations.
+
+The API and migration Job use Direct VPC egress through the existing app
+subnet with `PRIVATE_RANGES_ONLY`. Web has no VPC attachment. All services use
+`INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER`, so a future external Application Load
+Balancer is the public entry point. C54 does not create that load balancer,
+serverless NEGs, certificates, DNS, a worker, or Cloud NAT.
+
+### Initial image and release ownership
+
+The first real apply must happen only after the release owner has built and
+pushed both production images and supplied immutable `@sha256:` digests:
+
+```text
+build/push Web and API-family images
+→ obtain immutable digests
+→ Terraform apply
+```
+
+Terraform owns the service/job configuration, identities, scaling, network,
+secret references, and ingress. It ignores only each container image field
+after creation; the release process owns later digest rollouts. Placeholder
+images and mutable tags are not accepted.
+
+### Runtime inputs and secret versions
+
+The approved Web origin, WebAuthn RP name/ID, and non-secret SMTP settings are
+required Terraform inputs. The same Web origin is used for `CORS_ORIGIN` and
+`WEBAUTHN_ORIGIN`. The final Web image must be built with
+`NEXT_PUBLIC_API_BASE_URL="https://brain.<domain>/api/v1"`; it is a build-time,
+not Cloud Run runtime, setting.
+
+`DATABASE_URL`, `SMTP_USER`, and `SMTP_PASSWORD` remain operator-managed
+Secret Manager values. Terraform creates no secret values. Instead, it accepts
+numeric, existing secret-version references for Cloud Run environment-variable
+injection. Rotating a secret is:
+
+```text
+operator creates a new Secret Manager version
+→ reviewed production tfvars version update
+→ Terraform apply creates a revision using that pinned version
+```
+
+### Migration gate
+
+Terraform defines the migration Job only; it never executes it. A release must
+use this order:
+
+```text
+API-family image rollout to migration Job
+→ execute migration Job
+→ confirm success
+→ API image rollout
+→ Web image rollout
+```
+
+The Job uses one task, one parallel worker, zero automatic retries, a 900-second
+timeout, the migration service account, Direct VPC, and
+`pnpm exec prisma migrate deploy --config ./prisma.config.ts`. On failure, stop
+the new API/Web rollout; do not run an automatic down migration.
+
+### Apply blockers and boundaries
+
+The production domain and SMTP provider do not block this code or its review.
+They do block actual production API/Web deployment: no fake origins, SMTP
+configuration, image digests, or secret versions may be used. Cloud Run default
+URLs remain enabled for now; C56 will add the external load balancer, certificate
+and external-DNS handoff. C55 will add the notification worker and Cloud NAT.
+
+C54 performs no real GCP plan/apply, image push, secret version creation, or
+deployment workflow configuration.
+
 `prod.auto.tfvars.example` is a committed shape-only example. Real production
 tfvars are local and never contain application secret values.
 
