@@ -77,3 +77,38 @@ output "worker_nat_external_ip" {
   description = "Static external IP used only for notification worker egress through Cloud NAT."
   value       = google_compute_address.worker_nat.address
 }
+
+output "load_balancer_ipv4" {
+  description = "Global IPv4 address for the production external Application Load Balancer and external DNS A record."
+  value       = google_compute_global_address.production.address
+}
+
+output "certificate_dns_authorization_cname_name" {
+  description = "External-DNS CNAME owner name required for Certificate Manager authorization."
+  value       = google_certificate_manager_dns_authorization.production.dns_resource_record[0].name
+}
+
+output "certificate_dns_authorization_cname_type" {
+  description = "External-DNS record type required for Certificate Manager authorization."
+  value       = google_certificate_manager_dns_authorization.production.dns_resource_record[0].type
+}
+
+output "certificate_dns_authorization_cname_target" {
+  description = "External-DNS CNAME target required for Certificate Manager authorization."
+  value       = google_certificate_manager_dns_authorization.production.dns_resource_record[0].data
+}
+
+output "production_certificate_id" {
+  description = "Certificate Manager certificate identifier; verify ACTIVE status outside Terraform before DNS cutover."
+  value       = google_certificate_manager_certificate.production.id
+}
+
+output "production_certificate_map_id" {
+  description = "Certificate Manager certificate map identifier attached to the HTTPS proxy."
+  value       = google_certificate_manager_certificate_map.production.id
+}
+
+output "production_https_proxy_name" {
+  description = "Target HTTPS proxy name for the production external Application Load Balancer."
+  value       = google_compute_target_https_proxy.production.name
+}

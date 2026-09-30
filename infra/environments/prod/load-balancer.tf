@@ -1,0 +1,128 @@
+locals {
+  production_hostname = trimprefix(local.production_web_origin, "https://")
+}
+
+resource "google_compute_global_address" "production" {
+  project      = var.project_id
+  name         = "${var.system_name}-${var.environment}-lb-ip"
+  address_type = "EXTERNAL"
+  ip_version   = "IPV4"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [google_project_service.required["compute.googleapis.com"]]
+}
+
+resource "google_compute_region_network_endpoint_group" "web" {
+  project               = var.project_id
+  region                = var.region
+  name                  = "${var.system_name}-${var.environment}-web-neg"
+  network_endpoint_type = "SERVERLESS"
+
+  cloud_run {
+    service = google_cloud_run_v2_service.web.name
+  }
+}
+
+resource "google_compute_region_network_endpoint_group" "api" {
+  project               = var.project_id
+  region                = var.region
+  name                  = "${var.system_name}-${var.environment}-api-neg"
+  network_endpoint_type = "SERVERLESS"
+
+  cloud_run {
+    service = google_cloud_run_v2_service.api.name
+  }
+}
+
+resource "google_compute_backend_service" "web" {
+  project               = var.project_id
+  name                  = "${var.system_name}-${var.environment}-web-backend"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  protocol              = "HTTP"
+
+  backend {
+    group = google_compute_region_network_endpoint_group.web.id
+  }
+}
+
+resource "google_compute_backend_service" "api" {
+  project               = var.project_id
+  name                  = "${var.system_name}-${var.environment}-api-backend"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  protocol              = "HTTP"
+
+  backend {
+    group = google_compute_region_network_endpoint_group.api.id
+  }
+}
+
+resource "google_compute_url_map" "production" {
+  project         = var.project_id
+  name            = "${var.system_name}-${var.environment}-https"
+  default_service = google_compute_backend_service.web.id
+
+  host_rule {
+    hosts        = [local.production_hostname]
+    path_matcher = "production"
+  }
+
+  path_matcher {
+    name            = "production"
+    default_service = google_compute_backend_service.web.id
+
+    path_rule {
+      paths   = ["/api/v1", "/api/v1/*"]
+      service = google_compute_backend_service.api.id
+    }
+  }
+}
+
+resource "google_compute_target_https_proxy" "production" {
+  project = var.project_id
+  name    = "${var.system_name}-${var.environment}-https"
+  url_map = google_compute_url_map.production.id
+
+  certificate_map = "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.production.id}"
+}
+
+resource "google_compute_global_forwarding_rule" "https" {
+  project               = var.project_id
+  name                  = "${var.system_name}-${var.environment}-https"
+  ip_address            = google_compute_global_address.production.id
+  ip_protocol           = "TCP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  network_tier          = "PREMIUM"
+  port_range            = "443"
+  target                = google_compute_target_https_proxy.production.id
+}
+
+resource "google_compute_url_map" "http_redirect" {
+  project = var.project_id
+  name    = "${var.system_name}-${var.environment}-http-redirect"
+
+  default_url_redirect {
+    https_redirect         = true
+    redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"
+    strip_query            = false
+  }
+}
+
+resource "google_compute_target_http_proxy" "http_redirect" {
+  project = var.project_id
+  name    = "${var.system_name}-${var.environment}-http-redirect"
+  url_map = google_compute_url_map.http_redirect.id
+}
+
+resource "google_compute_global_forwarding_rule" "http_redirect" {
+  project               = var.project_id
+  name                  = "${var.system_name}-${var.environment}-http-redirect"
+  ip_address            = google_compute_global_address.production.id
+  ip_protocol           = "TCP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  network_tier          = "PREMIUM"
+  port_range            = "80"
+  target                = google_compute_target_http_proxy.http_redirect.id
+}
