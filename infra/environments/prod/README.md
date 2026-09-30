@@ -112,6 +112,106 @@ C55 performs no real GCP plan/apply, image push, secret version creation, SMTP c
 `prod.auto.tfvars.example` is a committed shape-only example. Real production
 tfvars are local and never contain application secret values.
 
+## C57 external HTTPS load balancer and DNS handoff
+
+C57 defines, but does not deploy, one Global External Application Load Balancer
+for the existing Web and API Cloud Run services. It reserves one protected
+Premium IPv4 address, creates separate `asia-northeast1` serverless NEGs and
+global backend services for Web and API, and routes the production hostname as
+follows:
+
+| Request path | Backend |
+| --- | --- |
+| `/`, `/login`, `/inventory` | Web |
+| `/api/v1`, `/api/v1/health`, `/api/v1/...` | API |
+
+The load balancer preserves the `/api/v1` prefix; it performs no path rewrite.
+The HTTP frontend only returns a permanent HTTPS redirect, preserving host, path,
+and query. It never forwards HTTP traffic to an application backend.
+
+The hostname is derived from the existing `production_web_base_url` input. For
+example, `https://brain.example.com` derives `brain.example.com`; no second
+hostname variable or placeholder domain is introduced. Web/API retain
+`INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER`, `invoker_iam_disabled = true`, and
+their existing application authentication. C57 neither adds an `allUsers`
+binding nor uses the Preview default-`run.app` URL disable setting.
+
+### TLS and external DNS handoff
+
+Certificate Manager uses a global Google-managed certificate for exactly the
+derived production hostname, with `PER_PROJECT_RECORD` DNS authorization and a
+certificate map hostname entry. Terraform does not manage the external DNS
+provider and never creates an A, AAAA, CNAME, or Cloud DNS resource.
+
+After a reviewed real apply, the DNS owner uses these non-secret outputs:
+
+- `certificate_dns_authorization_cname_name`
+- `certificate_dns_authorization_cname_type`
+- `certificate_dns_authorization_cname_target`
+- `load_balancer_ipv4`
+
+The required cutover sequence is:
+
+```text
+Terraform apply
+→ read the authorization CNAME outputs
+→ create the exact CNAME with the external DNS provider
+→ verify public DNS propagation
+→ verify the Certificate Manager certificate is ACTIVE
+→ pre-cutover test against the LB IP with the production Host/SNI
+→ point the production hostname A record at load_balancer_ipv4
+→ run HTTPS, API, login, and WebAuthn smoke checks
+```
+
+Do not create the production A record before the certificate is `ACTIVE`. The
+authorization CNAME must remain in DNS for certificate renewal, and must be the
+only record at its exact owner name: conflicting CNAME or TXT records can prevent
+issuance or renewal. C57 does not create IPv6; the DNS owner must check for an
+existing AAAA record before cutover and remove or update it under the approved
+DNS change procedure. The DNS owner may reduce TTL before cutover, but Terraform
+does not prescribe or manage TTL.
+
+Before changing the A record, test the active certificate and routing without
+changing public production DNS:
+
+```sh
+curl --resolve brain.example.com:443:LB_IPV4 https://brain.example.com/
+curl --resolve brain.example.com:443:LB_IPV4 https://brain.example.com/api/v1/health
+curl --resolve brain.example.com:80:LB_IPV4 -I 'http://brain.example.com/login?next=%2Finventory'
+```
+
+Replace the example hostname and `LB_IPV4` with approved operator values. Verify
+that the last command redirects to the same host, path, and query over HTTPS.
+
+For an initial go-live there is no previous A-record destination to restore.
+If cutover must stop, first roll back the reviewed load-balancer configuration or
+the Cloud Run revision, then remove or change the new A record only under the
+approved DNS procedure. For a future migration with an existing endpoint,
+restoring the previous A record is the DNS rollback.
+
+### Security and apply boundaries
+
+Serverless NEG backends intentionally have no Compute health check or
+health-check firewall rule. C57 also omits Cloud CDN, Cloud Armor, custom SSL
+policy, explicit HTTP/3/QUIC policy, and expanded load-balancer request logging;
+those operational controls belong to C58.
+
+No runtime or release service account receives load-balancer, NEG, or Certificate
+Manager permissions. A real Terraform apply needs an owner-approved infrastructure
+apply identity with narrowly scoped Compute Load Balancing/NEG and Certificate
+Manager permissions. Do not use Owner or Editor, and do not add a human identity
+to Terraform. The existing image rollout identity remains separate from this
+prerequisite.
+
+The global load-balancer IPv4 has Terraform `prevent_destroy` because production
+DNS will reference it. Certificate and map resources do not receive blanket
+deletion protection, so normal certificate maintenance remains possible.
+
+C57 performs no GCP plan/apply/destroy, certificate issuance, DNS registration,
+secret operation, image rollout, or deployment workflow change. The only new
+required API is `certificatemanager.googleapis.com`, retained with
+`disable_on_destroy = false`.
+
 ## C50 resources
 
 This root enables the approved APIs, creates dedicated runtime identities, a custom
