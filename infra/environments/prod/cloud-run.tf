@@ -219,3 +219,96 @@ resource "google_cloud_run_v2_job" "migration" {
     module.network,
   ]
 }
+
+resource "google_cloud_run_v2_worker_pool" "notification" {
+  project             = var.project_id
+  name                = "${var.system_name}-${var.environment}-notification-worker"
+  location            = var.region
+  deletion_protection = true
+
+  template {
+    service_account = google_service_account.runtime["worker"].email
+
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+
+      network_interfaces {
+        network    = module.network.network_id
+        subnetwork = module.network.worker_subnet_id
+      }
+    }
+
+    containers {
+      image   = var.cloud_run_api_image
+      command = ["node"]
+      args    = ["dist/notification.worker.js"]
+
+      dynamic "env" {
+        for_each = local.api_runtime_environment
+
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
+      env {
+        name = "DATABASE_URL"
+
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.application["database_url"].id
+            version = var.database_url_secret_version
+          }
+        }
+      }
+
+      env {
+        name = "SMTP_USER"
+
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.application["smtp_user"].id
+            version = var.smtp_user_secret_version
+          }
+        }
+      }
+
+      env {
+        name = "SMTP_PASSWORD"
+
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.application["smtp_password"].id
+            version = var.smtp_password_secret_version
+          }
+        }
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+      }
+    }
+  }
+
+  scaling {
+    scaling_mode          = "MANUAL"
+    manual_instance_count = 1
+  }
+
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = [template[0].containers[0].image]
+  }
+
+  depends_on = [
+    google_project_service.required["run.googleapis.com"],
+    google_secret_manager_secret_iam_member.runtime_accessor,
+    google_compute_subnetwork_iam_member.cloud_run_worker_direct_vpc,
+    google_compute_router_nat.worker_egress,
+    module.network,
+  ]
+}

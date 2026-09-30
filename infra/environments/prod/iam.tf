@@ -29,6 +29,14 @@ resource "google_compute_subnetwork_iam_member" "cloud_run_direct_vpc" {
   member     = "service-${data.google_project.production.number}@serverless-robot-prod.iam.gserviceaccount.com"
 }
 
+resource "google_compute_subnetwork_iam_member" "cloud_run_worker_direct_vpc" {
+  project    = var.project_id
+  region     = var.region
+  subnetwork = module.network.worker_subnet_id
+  role       = "roles/compute.networkUser"
+  member     = "service-${data.google_project.production.number}@serverless-robot-prod.iam.gserviceaccount.com"
+}
+
 resource "google_cloud_run_v2_service_iam_member" "release_developer" {
   for_each = {
     web = google_cloud_run_v2_service.web
@@ -50,6 +58,14 @@ resource "google_cloud_run_v2_job_iam_member" "release_developer" {
   member   = local.release_service_account_member
 }
 
+resource "google_cloud_run_v2_worker_pool_iam_member" "release_developer" {
+  project  = google_cloud_run_v2_worker_pool.notification.project
+  location = google_cloud_run_v2_worker_pool.notification.location
+  name     = google_cloud_run_v2_worker_pool.notification.name
+  role     = "roles/run.developer"
+  member   = local.release_service_account_member
+}
+
 resource "google_cloud_run_v2_job_iam_member" "release_executor" {
   project  = google_cloud_run_v2_job.migration.project
   location = google_cloud_run_v2_job.migration.location
@@ -59,7 +75,7 @@ resource "google_cloud_run_v2_job_iam_member" "release_executor" {
 }
 
 resource "google_service_account_iam_member" "release_runtime_user" {
-  for_each = toset(["web", "api", "migration"])
+  for_each = toset(["web", "api", "worker", "migration"])
 
   service_account_id = google_service_account.runtime[each.value].name
   role               = "roles/iam.serviceAccountUser"

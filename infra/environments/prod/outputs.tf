@@ -67,3 +67,13 @@ output "cloud_run_migration_job_name" {
   description = "Production migration Cloud Run Job name."
   value       = google_cloud_run_v2_job.migration.name
 }
+
+output "cloud_run_notification_worker_pool_name" {
+  description = "Production notification Cloud Run Worker Pool name."
+  value       = google_cloud_run_v2_worker_pool.notification.name
+}
+
+output "worker_nat_external_ip" {
+  description = "Static external IP used only for notification worker egress through Cloud NAT."
+  value       = google_compute_address.worker_nat.address
+}
