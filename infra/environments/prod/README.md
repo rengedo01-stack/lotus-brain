@@ -87,6 +87,28 @@ and external-DNS handoff. C55 will add the notification worker and Cloud NAT.
 C54 performs no real GCP plan/apply, image push, secret version creation, or
 deployment workflow configuration.
 
+## C55 notification worker and Cloud NAT
+
+C55 adds one Cloud Run Worker Pool for the existing notification outbox puller. It runs the existing immutable API-family image with
+`node dist/notification.worker.js`, uses the existing dedicated worker service
+account and numeric Secret Manager versions, and keeps exactly one manually
+scaled instance. The worker has no HTTP endpoint, public URL, invoker binding,
+VM, Scheduler, or VPC connector.
+
+The worker uses Direct VPC egress on the existing worker subnet. Its egress is `ALL_TRAFFIC` because SMTP delivery needs Public NAT. A dedicated regional Cloud
+Router and Public Cloud NAT gateway accept traffic from that worker subnet only;
+the application subnet is not a NAT source. The gateway uses one Terraform-managed
+Premium static external IP, making the SMTP allowlist value stable without
+exposing an inbound endpoint. NAT error logging is enabled, while flow logging is
+not collected by default.
+
+The worker retains the repository's graceful SIGTERM handling. C55 does not add an HTTP or gRPC health probe because the existing pull worker has no probe
+endpoint; adding one would require an application change. Cloud Run gives an
+instance a finite SIGTERM grace period, so an operator must verify SMTP provider
+delivery and shutdown behavior before any real deployment.
+
+C55 performs no real GCP plan/apply, image push, secret version creation, SMTP configuration, or deployment workflow configuration.
+
 `prod.auto.tfvars.example` is a committed shape-only example. Real production
 tfvars are local and never contain application secret values.
 
