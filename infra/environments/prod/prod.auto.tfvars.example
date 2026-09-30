@@ -27,6 +27,16 @@ production_web_base_url = "https://brain.example.com"
 webauthn_rp_name        = "Lotus BRAIN"
 webauthn_rp_id          = "example.com"
 
+# Channels are created and owned outside this Terraform root. Use only resource
+# IDs here; do not commit an email address, chat webhook, or other recipient.
+monitoring_notification_channel_ids = [
+  "projects/replace-with-project-id/notificationChannels/1234567890123456",
+]
+
+# Keep false until the Certificate Manager certificate is ACTIVE, the production
+# A record has been cut over, and Web/API/WebAuthn smoke checks have passed.
+enable_external_uptime_monitoring = false
+
 # SMTP credentials remain in Secret Manager. Do not put secrets in this file.
 smtp_host   = "smtp.example.com"
 smtp_port   = 587

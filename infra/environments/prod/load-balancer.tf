@@ -42,9 +42,15 @@ resource "google_compute_backend_service" "web" {
   name                  = "${var.system_name}-${var.environment}-web-backend"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   protocol              = "HTTP"
+  security_policy       = google_compute_security_policy.edge.id
 
   backend {
     group = google_compute_region_network_endpoint_group.web.id
+  }
+
+  log_config {
+    enable      = true
+    sample_rate = 1.0
   }
 }
 
@@ -53,9 +59,15 @@ resource "google_compute_backend_service" "api" {
   name                  = "${var.system_name}-${var.environment}-api-backend"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   protocol              = "HTTP"
+  security_policy       = google_compute_security_policy.edge.id
 
   backend {
     group = google_compute_region_network_endpoint_group.api.id
+  }
+
+  log_config {
+    enable      = true
+    sample_rate = 1.0
   }
 }
 

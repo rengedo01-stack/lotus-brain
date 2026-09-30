@@ -99,6 +99,24 @@ variable "production_web_base_url" {
   }
 }
 
+variable "monitoring_notification_channel_ids" {
+  description = "Operator-owned Cloud Monitoring notification channel resource IDs for production alerts."
+  type        = list(string)
+
+  validation {
+    condition = length(var.monitoring_notification_channel_ids) > 0 && alltrue([
+      for channel_id in var.monitoring_notification_channel_ids : can(regex("^projects/[^/]+/notificationChannels/[0-9]+$", channel_id))
+    ])
+    error_message = "monitoring_notification_channel_ids must be a non-empty list of projects/<project>/notificationChannels/<numeric-id> resource IDs."
+  }
+}
+
+variable "enable_external_uptime_monitoring" {
+  description = "Creates public Web and API uptime checks only after DNS cutover, certificate activation, and smoke checks are complete."
+  type        = bool
+  default     = false
+}
+
 variable "webauthn_rp_name" {
   description = "Approved WebAuthn relying-party display name."
   type        = string
