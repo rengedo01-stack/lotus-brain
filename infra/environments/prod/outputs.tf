@@ -112,3 +112,31 @@ output "production_https_proxy_name" {
   description = "Target HTTPS proxy name for the production external Application Load Balancer."
   value       = google_compute_target_https_proxy.production.name
 }
+
+output "edge_security_policy_id" {
+  description = "Cloud Armor policy ID attached to both production external Application Load Balancer backends."
+  value       = google_compute_security_policy.edge.id
+}
+
+output "production_alert_policy_names" {
+  description = "Names of Terraform-managed production alert policies; notification channel IDs are never output."
+  value = {
+    worker_availability         = google_monitoring_alert_policy.worker_availability.display_name
+    cloud_sql_disk              = google_monitoring_alert_policy.metric["cloud_sql_disk"].display_name
+    cloud_sql_memory            = google_monitoring_alert_policy.metric["cloud_sql_memory"].display_name
+    cloud_sql_oom               = google_monitoring_alert_policy.log["cloud_sql_oom"].display_name
+    cloud_sql_backup_failure    = google_monitoring_alert_policy.log["cloud_sql_backup_failure"].display_name
+    cloud_nat_allocation        = google_monitoring_alert_policy.metric["cloud_nat_allocation"].display_name
+    cloud_nat_packet_drop       = google_monitoring_alert_policy.metric["cloud_nat_packet_drop"].display_name
+    certificate_expired         = google_monitoring_alert_policy.log["certificate_expired"].display_name
+    certificate_close_to_expiry = google_monitoring_alert_policy.log["certificate_close_to_expiry"].display_name
+  }
+}
+
+output "external_uptime_check_names" {
+  description = "Names of cutover-gated external uptime checks; empty until enable_external_uptime_monitoring is true."
+  value = var.enable_external_uptime_monitoring ? {
+    web = google_monitoring_uptime_check_config.web[0].display_name
+    api = google_monitoring_uptime_check_config.api[0].display_name
+  } : {}
+}

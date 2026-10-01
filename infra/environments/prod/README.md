@@ -212,6 +212,128 @@ secret operation, image rollout, or deployment workflow change. The only new
 required API is `certificatemanager.googleapis.com`, retained with
 `disable_on_destroy = false`.
 
+## C59 monitoring and edge-security foundation
+
+C59 defines production monitoring and Cloud Armor configuration only. It does
+not create notification channels, run a real GCP plan/apply, change DNS or
+certificate state, or alter application code, Cloud Run ingress, runtime IAM,
+or release IAM.
+
+### Notification ownership and alert activation
+
+`monitoring_notification_channel_ids` is a required list of pre-existing,
+operator-owned Cloud Monitoring channel resource IDs. Keep recipient email
+addresses, chat webhooks, and on-call ownership outside this repository.
+Terraform creates no `google_monitoring_notification_channel` resource.
+
+`enable_external_uptime_monitoring` defaults to `false`. It gates creation of
+both public uptime checks and their alert policies, preventing false incidents
+before external DNS and TLS are live. Turn it on only in a reviewed production
+tfvars change after this sequence:
+
+```text
+infrastructure apply
+→ DNS authorization CNAME and Certificate Manager certificate ACTIVE
+→ production A-record cutover
+→ HTTPS, API, and WebAuthn smoke checks
+→ set enable_external_uptime_monitoring=true
+→ reviewed Terraform apply
+→ verify Web/API checks and operator-owned notification delivery
+```
+
+The Web check is `GET /` over HTTPS. The separate API check is
+`GET /api/v1/health` over HTTPS and validates the JSON value
+`$.status == "ok"`. It is an API liveness signal, not a database dependency
+check. Both run every five minutes and use the normal multi-location uptime
+condition, so a single transient checker failure does not page an operator.
+
+### Initial alert runbook
+
+| Alert | Severity | Signal | First response |
+| --- | --- | --- | --- |
+| Web uptime | P1 / CRITICAL | Two public checkers cannot reach `/` | Check HTTPS, certificate, LB logs, then Web revision. |
+| API uptime | P1 / CRITICAL | Two public checkers cannot validate `/api/v1/health` | Check endpoint, LB logs, then API revision. |
+| Worker unavailable | P1 / CRITICAL | Worker Pool instances `< 1` for 5m | Check worker revision, startup logs, image, and secret references. |
+| Cloud SQL disk | P1 / CRITICAL | Utilization `> 80%` for 10m | Inspect growth and storage headroom; preserve backup/PITR safety. |
+| Cloud SQL memory | P2 / WARNING | Utilization `> 90%` for 6h | Review connections, query activity, and capacity. |
+| Cloud SQL OOM | P1 / CRITICAL | PostgreSQL OOM-killer log | Assess availability and preserve log evidence before remediation. |
+| Cloud SQL backup | P1 / CRITICAL | Automated backup failed, attempt-failed, or skipped | Confirm last successful backup and PITR, then inspect the system event. |
+| Worker NAT allocation | P1 / CRITICAL | NAT allocation failure | Inspect NAT capacity and worker egress configuration. |
+| Worker NAT drops | P2 / WARNING | Capacity or endpoint-independence packet drops | Inspect NAT error logs and SMTP delivery behavior. |
+| Certificate expired | P1 / CRITICAL | Certificate Manager `EXPIRED` log | Inspect renewal and keep the authorization CNAME intact. |
+| Certificate close to expiry | P2 / WARNING | Certificate Manager `CLOSE_TO_EXPIRY` log | Verify certificate status and exact public CNAME authorization. |
+
+Certificate Manager emits these expiry logs at the project monitored resource.
+This root currently creates one production certificate; tighten the filters if a
+future change adds more certificates to the project.
+
+Metric alerts use `EVALUATION_MISSING_DATA_NO_OP`: Web can scale to zero and
+low-traffic metrics must not create synthetic incidents. Log-match policies
+use notification rate limits and explicit auto-close intervals to avoid repeat
+pages for one event. The migration Job remains a release-time synchronous gate,
+not an always-on alert.
+
+Cloud SQL CPU and connection counts, Cloud Run CPU/memory and instance
+saturation, load-balancer request volume/5xx/backend latency/total latency are
+visible in their built-in dashboards. They intentionally have no initial alert
+threshold until real production traffic establishes a baseline. SLOs, burn-rate
+alerts, tracing, custom dashboards, Worker backlog metrics, and billing budgets
+are also deferred.
+
+### Cloud Armor and load-balancer logging
+
+One common Cloud Armor policy is attached to the Web and API backend services.
+It keeps the default allow rule enforced, but the following rules are strictly
+preview-only:
+
+- CRS 4.22 stable SQL injection and XSS detection at sensitivity 1;
+- a 60 requests per 60 seconds, per-client-IP throttle for only these POST
+  routes: `/api/v1/auth/login`, `/api/v1/auth/login/passkey/verify`, and
+  `/api/v1/auth/password/recovery/request`.
+
+The rate limit is evaluated per associated backend. These paths route only to
+the API backend. No WAF or rate-limit denial is enforced in C59, no `allUsers`
+binding is added, and `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` is unchanged.
+
+Web and API backend request logging is enabled at a 100% sample rate while
+preview rules are tuned. No optional request-header logging, request-body
+logging, or Cloud Armor verbose logging is configured. Existing application
+redaction remains unchanged. After a reviewed false-positive and traffic
+baseline review, reduce the request-log sample rate (for example to 10%) and
+move any selected preview rule to enforcement in a separate PR.
+
+### Operational boundaries and prerequisites
+
+Use Cloud Run, External Application Load Balancer, Cloud SQL, and Monitoring
+built-in dashboards during an incident. Also consult Personalized Service
+Health and the Google Cloud Service Health dashboard to distinguish provider
+incidents from application faults; C59 adds no Service Health resource. Error
+Reporting remains an investigation aid through existing Cloud Run logs.
+
+Monitoring and logging, public uptime checks, 100% initial load-balancer
+logging, and Cloud Armor preview evaluation can incur costs. C59 does not
+hard-code prices or add a billing budget.
+
+A real Terraform apply requires an owner-approved infrastructure apply identity
+with least-privilege permissions to manage Monitoring alert policies and uptime
+checks, Logging log-based alert notification rules, and Compute security
+policies. Compute Security Admin-equivalent permissions are required for Cloud
+Armor. Do not use Owner or Editor, hard-code a human identity, or grant these
+permissions to runtime or release identities.
+
+Post-apply tests are operator-owned: verify channel delivery and both uptime
+checks after activation, and review preview WAF/rate-limit findings without
+intentionally breaking a production resource. Do not simulate an alert by
+damaging Cloud SQL, Cloud NAT, Cloud Run, DNS, or the certificate.
+
+### Deferred Worker Functional Observability
+
+The existing Worker Pool has no meaningful HTTP/gRPC probe endpoint and emits
+no structured pending-count, oldest-pending-age, or retry-exhaustion metric.
+C59 intentionally adds no dummy probe or broad SMTP string-match alert. A later
+`Worker Functional Observability` change should add a reviewed application-level
+signal before automated backlog alerts are considered.
+
 ## C50 resources
 
 This root enables the approved APIs, creates dedicated runtime identities, a custom
