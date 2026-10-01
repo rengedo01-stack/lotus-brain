@@ -407,3 +407,151 @@ out of scope. No secret version or secret value is managed here.
 
 No C52 command may run a real-project plan, apply, destroy, or resource-creation
 command.
+
+## C61 staged production apply
+
+This staged sequence supersedes the earlier C54 initial-apply chronology in this
+document. It is the only approved first-production-apply path.
+
+The production root has four explicit stages. `deployment_stage` has no default:
+the operator must set it in the local, untracked production tfvars file. Advance
+only in this order:
+
+```text
+foundation → migration → runtime → edge
+```
+
+This order is monotonic. Never lower the stage after an apply. If a lower-stage
+plan shows any destroy action, STOP; do not use `terraform destroy` as rollback
+and do not use `-target` for the normal go-live path. `prevent_destroy` remains
+the protection for resources whose removal would be destructive.
+
+| Stage | Required inputs | Resources enabled | STOP gate before advancing |
+| --- | --- | --- | --- |
+| `foundation` | project/network/Cloud SQL backup and maintenance inputs | APIs, VPC/subnets/PSA, Artifact Registry, runtime SAs, Secret containers/IAM, Cloud SQL | State is remote and protected; Cloud SQL is READY; repository, Secret containers, and runtime SAs exist. |
+| `migration` | Foundation inputs plus real API-family digest and existing numeric `DATABASE_URL` version | Foundation plus migration Job and its release IAM | DB ownership, private connectivity, and the application role's migration permissions are proven. |
+| `runtime` | Migration inputs plus real Web digest, SMTP settings/versions, approved origin/WebAuthn values, and real notification channel IDs | Migration plus Web/API, Worker Pool, worker NAT, runtime monitoring | Migration execution succeeded; internal API/login/WebAuthn/worker/SMTP smoke passes. |
+| `edge` | Runtime inputs | Runtime plus ALB, NEGs, certificate, Cloud Armor preview policy, LB logging, edge monitoring | Runtime smoke is recorded. DNS A/AAAA records remain untouched until the certificate is ACTIVE. |
+
+External uptime monitoring is a separate edge-only gate. Keep
+`enable_external_uptime_monitoring=false` for the initial edge apply; set it to
+`true` only in a reviewed later edge apply after DNS cutover and public smoke
+checks succeed.
+
+The formal go-live order is:
+
+```text
+bootstrap → foundation → DB/secret/image preparation → migration
+→ migration execution → runtime → internal smoke → edge → certificate CNAME
+→ certificate ACTIVE → pre-cutover smoke → DNS A cutover → public smoke
+→ uptime monitoring activation
+```
+
+Each real phase uses `terraform plan -out`, human review, then the exact saved
+plan. Do not change code or inputs between the reviewed plan and apply. Record
+only non-secret evidence: Git SHA, stage, reviewed plan identity, apply timestamp,
+image digests, migration execution result, certificate state, LB IP, DNS timestamp,
+and smoke result.
+
+### Inputs and real values
+
+Fake image digests, fake secret versions, placeholder notification channels, and
+fake domains are prohibited. The root allows nullable later-stage inputs only so
+that foundation and migration do not require invented runtime values. A real
+production tfvars file is local and untracked; it contains no secret payload.
+
+After foundation succeeds, the release owner builds linux/amd64 Web and API-family
+images from the reviewed main commit, pushes them with `lotus-brain-release`, reads
+their immutable digests, and records the Git SHA-to-digest mapping. The Web build
+uses the approved `NEXT_PUBLIC_API_BASE_URL` before its digest is produced.
+
+Secret containers are foundation resources. An approved operator adds secret
+versions after the database and SMTP credentials are real. Terraform receives only
+their numeric versions. The secret-version operator should receive a per-secret
+`roles/secretmanager.secretVersionAdder`-equivalent grant, not project-wide Secret
+Manager Admin. Terraform never receives a secret payload.
+
+### Apply identity and IAM ownership
+
+`lotus-brain-release` remains the GitHub WIF identity for Artifact Registry image
+push, Cloud Run image rollout, and migration Job execution. It never performs
+Terraform infrastructure applies. `lotus-brain-terraform` is a separate,
+non-federated apply identity. An owner-approved human impersonates it; no
+service-account key is created or configured in Terraform.
+
+The owner grants the apply identity externally, after reviewing the exact resource
+graph. Do not use Owner, Editor, or broad Project IAM Admin. The minimum role
+families to scope to concrete resources are:
+
+| Resource family | Required capability boundary |
+| --- | --- |
+| State bucket | GCS state object read/write/lock-equivalent access only for the state bucket |
+| Service Usage | Enable the approved APIs only |
+| Compute | VPC, subnet, PSA, NAT, reserved IP, serverless NEG, ALB, backend, forwarding, and Cloud Armor resources |
+| Service Networking | Private Services Access connection only |
+| Artifact Registry | Repository metadata and the release-writer binding; release pushes remain separate |
+| Secret Manager | Secret metadata and per-secret runtime accessor bindings, never secret payload access |
+| Cloud SQL | Instance/database lifecycle only; application users/passwords remain operator-managed |
+| Cloud Run | Service/Job/Worker Pool configuration and resource-specific release bindings |
+| Runtime SAs | Create runtime SAs and grant only the specific `actAs`/resource IAM bindings needed by Cloud Run |
+| Certificate Manager | DNS authorization, certificate, map, and map-entry management |
+| Monitoring/Logging | Alert policies, uptime checks, and log-policy configuration |
+
+Some Terraform-managed resource IAM bindings require resource-level
+`setIamPolicy`. They are distinct from project-level role assignment. The apply
+identity must never be able to grant or expand its own project-level privileges.
+
+### DB and secret bootstrap runbook
+
+Use no public SQL address. The preferred temporary admin path is an ephemeral VM
+with no external IP, in the production VPC, reachable only through IAP. If using
+Cloud SQL Auth Proxy, bind it only to localhost, use its private-IP path, and give
+the temporary VM identity only the short-lived Cloud SQL Client permission it
+needs. After bootstrap, remove the VM, disk, temporary firewall rule, and temporary
+IAM grants; do not retain an admin host.
+
+From that private path, use the Cloud SQL administrative `postgres` account only
+for bootstrap. Do not put its password in a SQL file, shell history, repository,
+tfvars, PR, or CI log. Create the application role and ownership exactly as follows;
+enter the generated application password through an interactive password prompt:
+
+```sql
+CREATE ROLE lotus_brain_app
+  LOGIN
+  NOSUPERUSER
+  NOCREATEDB
+  NOCREATEROLE
+  NOREPLICATION
+  NOBYPASSRLS;
+
+ALTER DATABASE lotus_brain OWNER TO lotus_brain_app;
+REVOKE ALL ON DATABASE lotus_brain FROM PUBLIC;
+GRANT CONNECT, TEMPORARY ON DATABASE lotus_brain TO lotus_brain_app;
+
+-- after connecting to lotus_brain
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+ALTER SCHEMA public OWNER TO lotus_brain_app;
+GRANT USAGE, CREATE ON SCHEMA public TO lotus_brain_app;
+```
+
+Generate a strong password outside Terraform, URL-encode it, and create the real
+`DATABASE_URL` value with the Cloud SQL private IP and `sslmode=require`. Add it as
+a new version of the existing Secret Manager container and set only its numeric
+version in the migration/runtime input. The initial migration and runtime use this
+same app role; automatic down migrations are prohibited.
+
+### Phase STOP and rollback rules
+
+| Phase | STOP condition | Safe response |
+| --- | --- | --- |
+| Bootstrap | State migration, bucket protection, or identity boundary is unverified | Do not initialize prod; retain the encrypted local-state recovery copy. |
+| Foundation | Reviewed plan has unexpected IAM/public exposure, or an apply is partial | Stop and correct the staged configuration; do not destroy state, secrets, or Cloud SQL. |
+| DB/secret/image prep | Private admin path, role ownership, secret version, image digest, or SMTP input is not real | Do not create the migration Job. Disable/rotate a newly created unused secret version if necessary. |
+| Migration | Job fails or migration state is not exact | Do not activate runtime. Investigate; never run automatic down migration. |
+| Runtime | Internal smoke fails | Do not create edge/DNS. Roll back only to a previously proven compatible revision. |
+| Edge/certificate | DNS authorization fails or certificate is not ACTIVE | Leave the A record unchanged and repair only the authorization/configuration. |
+| DNS/public smoke | HTTPS, API, login, or WebAuthn smoke fails | Stop traffic at the runtime/LB layer; restore an earlier A record only when one exists. For first launch, remove the new A record through the approved DNS procedure. |
+
+C61 adds no GitHub Terraform auto-apply workflow and performs no real GCP plan,
+apply, IAM operation, image push, Secret Manager version creation, database-user
+creation, certificate operation, or DNS change.

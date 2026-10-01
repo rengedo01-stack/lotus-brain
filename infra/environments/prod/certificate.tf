@@ -1,4 +1,6 @@
 resource "google_certificate_manager_dns_authorization" "production" {
+  count = local.edge_enabled ? 1 : 0
+
   project  = var.project_id
   location = "global"
   name     = "${var.system_name}-${var.environment}-dns-auth"
@@ -9,6 +11,8 @@ resource "google_certificate_manager_dns_authorization" "production" {
 }
 
 resource "google_certificate_manager_certificate" "production" {
+  count = local.edge_enabled ? 1 : 0
+
   project  = var.project_id
   location = "global"
   name     = "${var.system_name}-${var.environment}-certificate"
@@ -16,21 +20,25 @@ resource "google_certificate_manager_certificate" "production" {
   managed {
     domains = [local.production_hostname]
     dns_authorizations = [
-      google_certificate_manager_dns_authorization.production.id,
+      google_certificate_manager_dns_authorization.production[0].id,
     ]
   }
 }
 
 resource "google_certificate_manager_certificate_map" "production" {
+  count = local.edge_enabled ? 1 : 0
+
   project = var.project_id
   name    = "${var.system_name}-${var.environment}-certificate-map"
 }
 
 resource "google_certificate_manager_certificate_map_entry" "production" {
+  count = local.edge_enabled ? 1 : 0
+
   project = var.project_id
   name    = "${var.system_name}-${var.environment}-certificate-entry"
-  map     = google_certificate_manager_certificate_map.production.name
+  map     = google_certificate_manager_certificate_map.production[0].name
 
-  certificates = [google_certificate_manager_certificate.production.id]
+  certificates = [google_certificate_manager_certificate.production[0].id]
   hostname     = local.production_hostname
 }

@@ -95,8 +95,17 @@ resource "google_iam_workload_identity_pool_provider" "github" {
 resource "google_service_account" "terraform_release" {
   project      = var.project_id
   account_id   = "lotus-brain-release"
-  display_name = "Lotus BRAIN Terraform and release identity"
-  description  = "Federated GitHub Actions identity; project roles are added only with a reviewed resource need."
+  display_name = "Lotus BRAIN production release"
+  description  = "Federated GitHub Actions release identity; it never performs Terraform infrastructure applies."
+
+  depends_on = [google_project_service.bootstrap["iam.googleapis.com"]]
+}
+
+resource "google_service_account" "terraform_apply" {
+  project      = var.project_id
+  account_id   = "lotus-brain-terraform"
+  display_name = "Lotus BRAIN production Terraform apply"
+  description  = "Infrastructure apply identity impersonated only by owner-approved human operators; it has no WIF binding or service-account key."
 
   depends_on = [google_project_service.bootstrap["iam.googleapis.com"]]
 }

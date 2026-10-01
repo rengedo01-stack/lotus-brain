@@ -1,8 +1,8 @@
 locals {
   release_service_account_member = "serviceAccount:lotus-brain-release@${var.project_id}.iam.gserviceaccount.com"
-  production_web_origin          = trimsuffix(var.production_web_base_url, "/")
+  production_web_origin          = var.production_web_base_url == null ? null : trimsuffix(var.production_web_base_url, "/")
 
-  api_runtime_environment = {
+  api_runtime_environment = local.runtime_enabled ? {
     CORS_ORIGIN         = local.production_web_origin
     PUBLIC_WEB_BASE_URL = var.production_web_base_url
     SMTP_FROM           = var.smtp_from
@@ -12,10 +12,12 @@ locals {
     WEBAUTHN_ORIGIN     = local.production_web_origin
     WEBAUTHN_RP_ID      = var.webauthn_rp_id
     WEBAUTHN_RP_NAME    = var.webauthn_rp_name
-  }
+  } : {}
 }
 
 resource "google_cloud_run_v2_service" "web" {
+  count = local.runtime_enabled ? 1 : 0
+
   project              = var.project_id
   name                 = "${var.system_name}-${var.environment}-web"
   location             = var.region
@@ -59,6 +61,8 @@ resource "google_cloud_run_v2_service" "web" {
 }
 
 resource "google_cloud_run_v2_service" "api" {
+  count = local.runtime_enabled ? 1 : 0
+
   project              = var.project_id
   name                 = "${var.system_name}-${var.environment}-api"
   location             = var.region
@@ -152,12 +156,14 @@ resource "google_cloud_run_v2_service" "api" {
   depends_on = [
     google_project_service.required["run.googleapis.com"],
     google_secret_manager_secret_iam_member.runtime_accessor,
-    google_compute_subnetwork_iam_member.cloud_run_direct_vpc,
+    google_compute_subnetwork_iam_member.cloud_run_direct_vpc[0],
     module.network,
   ]
 }
 
 resource "google_cloud_run_v2_job" "migration" {
+  count = local.migration_enabled ? 1 : 0
+
   project             = var.project_id
   name                = "${var.system_name}-${var.environment}-migrate"
   location            = var.region
@@ -215,12 +221,14 @@ resource "google_cloud_run_v2_job" "migration" {
   depends_on = [
     google_project_service.required["run.googleapis.com"],
     google_secret_manager_secret_iam_member.runtime_accessor,
-    google_compute_subnetwork_iam_member.cloud_run_direct_vpc,
+    google_compute_subnetwork_iam_member.cloud_run_direct_vpc[0],
     module.network,
   ]
 }
 
 resource "google_cloud_run_v2_worker_pool" "notification" {
+  count = local.runtime_enabled ? 1 : 0
+
   project             = var.project_id
   name                = "${var.system_name}-${var.environment}-notification-worker"
   location            = var.region
@@ -307,8 +315,8 @@ resource "google_cloud_run_v2_worker_pool" "notification" {
   depends_on = [
     google_project_service.required["run.googleapis.com"],
     google_secret_manager_secret_iam_member.runtime_accessor,
-    google_compute_subnetwork_iam_member.cloud_run_worker_direct_vpc,
-    google_compute_router_nat.worker_egress,
+    google_compute_subnetwork_iam_member.cloud_run_worker_direct_vpc[0],
+    google_compute_router_nat.worker_egress[0],
     module.network,
   ]
 }

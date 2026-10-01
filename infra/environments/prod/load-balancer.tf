@@ -1,8 +1,10 @@
 locals {
-  production_hostname = trimprefix(local.production_web_origin, "https://")
+  production_hostname = local.production_web_origin == null ? null : trimprefix(local.production_web_origin, "https://")
 }
 
 resource "google_compute_global_address" "production" {
+  count = local.edge_enabled ? 1 : 0
+
   project      = var.project_id
   name         = "${var.system_name}-${var.environment}-lb-ip"
   address_type = "EXTERNAL"
@@ -16,36 +18,42 @@ resource "google_compute_global_address" "production" {
 }
 
 resource "google_compute_region_network_endpoint_group" "web" {
+  count = local.edge_enabled ? 1 : 0
+
   project               = var.project_id
   region                = var.region
   name                  = "${var.system_name}-${var.environment}-web-neg"
   network_endpoint_type = "SERVERLESS"
 
   cloud_run {
-    service = google_cloud_run_v2_service.web.name
+    service = google_cloud_run_v2_service.web[0].name
   }
 }
 
 resource "google_compute_region_network_endpoint_group" "api" {
+  count = local.edge_enabled ? 1 : 0
+
   project               = var.project_id
   region                = var.region
   name                  = "${var.system_name}-${var.environment}-api-neg"
   network_endpoint_type = "SERVERLESS"
 
   cloud_run {
-    service = google_cloud_run_v2_service.api.name
+    service = google_cloud_run_v2_service.api[0].name
   }
 }
 
 resource "google_compute_backend_service" "web" {
+  count = local.edge_enabled ? 1 : 0
+
   project               = var.project_id
   name                  = "${var.system_name}-${var.environment}-web-backend"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   protocol              = "HTTP"
-  security_policy       = google_compute_security_policy.edge.id
+  security_policy       = google_compute_security_policy.edge[0].id
 
   backend {
-    group = google_compute_region_network_endpoint_group.web.id
+    group = google_compute_region_network_endpoint_group.web[0].id
   }
 
   log_config {
@@ -55,14 +63,16 @@ resource "google_compute_backend_service" "web" {
 }
 
 resource "google_compute_backend_service" "api" {
+  count = local.edge_enabled ? 1 : 0
+
   project               = var.project_id
   name                  = "${var.system_name}-${var.environment}-api-backend"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   protocol              = "HTTP"
-  security_policy       = google_compute_security_policy.edge.id
+  security_policy       = google_compute_security_policy.edge[0].id
 
   backend {
-    group = google_compute_region_network_endpoint_group.api.id
+    group = google_compute_region_network_endpoint_group.api[0].id
   }
 
   log_config {
@@ -72,9 +82,11 @@ resource "google_compute_backend_service" "api" {
 }
 
 resource "google_compute_url_map" "production" {
+  count = local.edge_enabled ? 1 : 0
+
   project         = var.project_id
   name            = "${var.system_name}-${var.environment}-https"
-  default_service = google_compute_backend_service.web.id
+  default_service = google_compute_backend_service.web[0].id
 
   host_rule {
     hosts        = [local.production_hostname]
@@ -83,35 +95,41 @@ resource "google_compute_url_map" "production" {
 
   path_matcher {
     name            = "production"
-    default_service = google_compute_backend_service.web.id
+    default_service = google_compute_backend_service.web[0].id
 
     path_rule {
       paths   = ["/api/v1", "/api/v1/*"]
-      service = google_compute_backend_service.api.id
+      service = google_compute_backend_service.api[0].id
     }
   }
 }
 
 resource "google_compute_target_https_proxy" "production" {
+  count = local.edge_enabled ? 1 : 0
+
   project = var.project_id
   name    = "${var.system_name}-${var.environment}-https"
-  url_map = google_compute_url_map.production.id
+  url_map = google_compute_url_map.production[0].id
 
-  certificate_map = "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.production.id}"
+  certificate_map = "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.production[0].id}"
 }
 
 resource "google_compute_global_forwarding_rule" "https" {
+  count = local.edge_enabled ? 1 : 0
+
   project               = var.project_id
   name                  = "${var.system_name}-${var.environment}-https"
-  ip_address            = google_compute_global_address.production.id
+  ip_address            = google_compute_global_address.production[0].id
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   network_tier          = "PREMIUM"
   port_range            = "443"
-  target                = google_compute_target_https_proxy.production.id
+  target                = google_compute_target_https_proxy.production[0].id
 }
 
 resource "google_compute_url_map" "http_redirect" {
+  count = local.edge_enabled ? 1 : 0
+
   project = var.project_id
   name    = "${var.system_name}-${var.environment}-http-redirect"
 
@@ -123,18 +141,22 @@ resource "google_compute_url_map" "http_redirect" {
 }
 
 resource "google_compute_target_http_proxy" "http_redirect" {
+  count = local.edge_enabled ? 1 : 0
+
   project = var.project_id
   name    = "${var.system_name}-${var.environment}-http-redirect"
-  url_map = google_compute_url_map.http_redirect.id
+  url_map = google_compute_url_map.http_redirect[0].id
 }
 
 resource "google_compute_global_forwarding_rule" "http_redirect" {
+  count = local.edge_enabled ? 1 : 0
+
   project               = var.project_id
   name                  = "${var.system_name}-${var.environment}-http-redirect"
-  ip_address            = google_compute_global_address.production.id
+  ip_address            = google_compute_global_address.production[0].id
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   network_tier          = "PREMIUM"
   port_range            = "80"
-  target                = google_compute_target_http_proxy.http_redirect.id
+  target                = google_compute_target_http_proxy.http_redirect[0].id
 }

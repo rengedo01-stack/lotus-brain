@@ -22,6 +22,8 @@ data "google_project" "production" {
 }
 
 resource "google_compute_subnetwork_iam_member" "cloud_run_direct_vpc" {
+  count = local.migration_enabled ? 1 : 0
+
   project    = var.project_id
   region     = var.region
   subnetwork = module.network.app_subnet_id
@@ -30,6 +32,8 @@ resource "google_compute_subnetwork_iam_member" "cloud_run_direct_vpc" {
 }
 
 resource "google_compute_subnetwork_iam_member" "cloud_run_worker_direct_vpc" {
+  count = local.runtime_enabled ? 1 : 0
+
   project    = var.project_id
   region     = var.region
   subnetwork = module.network.worker_subnet_id
@@ -38,10 +42,10 @@ resource "google_compute_subnetwork_iam_member" "cloud_run_worker_direct_vpc" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "release_developer" {
-  for_each = {
-    web = google_cloud_run_v2_service.web
-    api = google_cloud_run_v2_service.api
-  }
+  for_each = local.runtime_enabled ? {
+    web = google_cloud_run_v2_service.web[0]
+    api = google_cloud_run_v2_service.api[0]
+  } : {}
 
   project  = each.value.project
   location = each.value.location
@@ -51,31 +55,37 @@ resource "google_cloud_run_v2_service_iam_member" "release_developer" {
 }
 
 resource "google_cloud_run_v2_job_iam_member" "release_developer" {
-  project  = google_cloud_run_v2_job.migration.project
-  location = google_cloud_run_v2_job.migration.location
-  name     = google_cloud_run_v2_job.migration.name
+  count = local.migration_enabled ? 1 : 0
+
+  project  = google_cloud_run_v2_job.migration[0].project
+  location = google_cloud_run_v2_job.migration[0].location
+  name     = google_cloud_run_v2_job.migration[0].name
   role     = "roles/run.developer"
   member   = local.release_service_account_member
 }
 
 resource "google_cloud_run_v2_worker_pool_iam_member" "release_developer" {
-  project  = google_cloud_run_v2_worker_pool.notification.project
-  location = google_cloud_run_v2_worker_pool.notification.location
-  name     = google_cloud_run_v2_worker_pool.notification.name
+  count = local.runtime_enabled ? 1 : 0
+
+  project  = google_cloud_run_v2_worker_pool.notification[0].project
+  location = google_cloud_run_v2_worker_pool.notification[0].location
+  name     = google_cloud_run_v2_worker_pool.notification[0].name
   role     = "roles/run.developer"
   member   = local.release_service_account_member
 }
 
 resource "google_cloud_run_v2_job_iam_member" "release_executor" {
-  project  = google_cloud_run_v2_job.migration.project
-  location = google_cloud_run_v2_job.migration.location
-  name     = google_cloud_run_v2_job.migration.name
+  count = local.migration_enabled ? 1 : 0
+
+  project  = google_cloud_run_v2_job.migration[0].project
+  location = google_cloud_run_v2_job.migration[0].location
+  name     = google_cloud_run_v2_job.migration[0].name
   role     = "roles/run.jobsExecutor"
   member   = local.release_service_account_member
 }
 
 resource "google_service_account_iam_member" "release_runtime_user" {
-  for_each = toset(["web", "api", "worker", "migration"])
+  for_each = local.runtime_enabled ? toset(["web", "api", "worker", "migration"]) : (local.migration_enabled ? toset(["migration"]) : toset([]))
 
   service_account_id = google_service_account.runtime[each.value].name
   role               = "roles/iam.serviceAccountUser"

@@ -3,6 +3,7 @@ project_id                   = "replace-with-owner-managed-project-id"
 region                       = "asia-northeast1"
 environment                  = "production"
 system_name                  = "lotus-brain"
+deployment_stage             = "foundation"
 app_subnet_cidr              = "10.70.0.0/24"
 worker_subnet_cidr           = "10.70.1.0/24"
 private_services_access_cidr = "10.70.16.0/20"
@@ -16,35 +17,16 @@ cloud_sql_backup_location = "replace-with-approved-backup-location"
 cloud_sql_maintenance_day  = 7
 cloud_sql_maintenance_hour = 18
 
-# First apply requires actual immutable image digests pushed by the release owner.
-# Do not use tags such as :latest or :main.
-cloud_run_web_image = "asia-northeast1-docker.pkg.dev/replace-with-project-id/lotus-brain-prod/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-cloud_run_api_image = "asia-northeast1-docker.pkg.dev/replace-with-project-id/lotus-brain-prod/api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-
-# Supply the owner-approved production domain. The Web image must be built with
-# NEXT_PUBLIC_API_BASE_URL="${production_web_base_url}/api/v1" after this is known.
-production_web_base_url = "https://brain.example.com"
-webauthn_rp_name        = "Lotus BRAIN"
-webauthn_rp_id          = "example.com"
-
-# Channels are created and owned outside this Terraform root. Use only resource
-# IDs here; do not commit an email address, chat webhook, or other recipient.
-monitoring_notification_channel_ids = [
-  "projects/replace-with-project-id/notificationChannels/1234567890123456",
-]
-
-# Keep false until the Certificate Manager certificate is ACTIVE, the production
-# A record has been cut over, and Web/API/WebAuthn smoke checks have passed.
-enable_external_uptime_monitoring = false
-
-# SMTP credentials remain in Secret Manager. Do not put secrets in this file.
-smtp_host   = "smtp.example.com"
-smtp_port   = 587
-smtp_secure = false
-smtp_from   = "Lotus BRAIN <no-reply@example.com>"
-
-# Numeric versions identify pre-existing operator-created secret versions.
-# Keep real production values only in an ignored production tfvars file.
-database_url_secret_version  = "1"
-smtp_user_secret_version     = "1"
-smtp_password_secret_version = "1"
+# This is a foundation-only shape. Do not add fake values for later stages.
+#
+# migration: add only a real API-family @sha256 digest and an existing numeric
+# DATABASE_URL secret version after DB ownership/connectivity proof succeeds.
+# runtime: additionally add real Web/API digests, SMTP configuration and numeric
+# SMTP secret versions, the approved HTTPS origin, WebAuthn values, and real
+# Monitoring notification channel resource IDs.
+# edge: keep the runtime inputs and leave enable_external_uptime_monitoring=false
+# until DNS cutover and public smoke checks succeed.
+#
+# No committed example is an apply-ready production file. Production tfvars stay
+# local/untracked and never contain secret payloads, placeholders, fake digests,
+# fake secret versions, or fake notification-channel resource IDs.

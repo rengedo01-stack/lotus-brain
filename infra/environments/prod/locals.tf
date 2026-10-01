@@ -1,4 +1,8 @@
 locals {
+  migration_enabled = contains(["migration", "runtime", "edge"], var.deployment_stage)
+  runtime_enabled   = contains(["runtime", "edge"], var.deployment_stage)
+  edge_enabled      = var.deployment_stage == "edge"
+
   labels = {
     system      = var.system_name
     environment = var.environment
