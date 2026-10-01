@@ -1,4 +1,6 @@
 resource "google_compute_security_policy" "edge" {
+  count = local.edge_enabled ? 1 : 0
+
   project     = var.project_id
   name        = "${var.system_name}-${var.environment}-edge-security"
   description = "Preview-first edge protections for the Lotus BRAIN production external Application Load Balancer."

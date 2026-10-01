@@ -1,5 +1,5 @@
 resource "google_monitoring_uptime_check_config" "web" {
-  count = var.enable_external_uptime_monitoring ? 1 : 0
+  count = local.edge_enabled && var.enable_external_uptime_monitoring ? 1 : 0
 
   project            = var.project_id
   display_name       = "${var.system_name}-${var.environment}-web-uptime"
@@ -29,7 +29,7 @@ resource "google_monitoring_uptime_check_config" "web" {
 }
 
 resource "google_monitoring_uptime_check_config" "api" {
-  count = var.enable_external_uptime_monitoring ? 1 : 0
+  count = local.edge_enabled && var.enable_external_uptime_monitoring ? 1 : 0
 
   project            = var.project_id
   display_name       = "${var.system_name}-${var.environment}-api-uptime"
@@ -69,7 +69,7 @@ resource "google_monitoring_uptime_check_config" "api" {
 }
 
 resource "google_monitoring_alert_policy" "web_uptime" {
-  count = var.enable_external_uptime_monitoring ? 1 : 0
+  count = local.edge_enabled && var.enable_external_uptime_monitoring ? 1 : 0
 
   project               = var.project_id
   display_name          = "${var.system_name}-${var.environment}-web-uptime-failure"
@@ -118,7 +118,7 @@ resource "google_monitoring_alert_policy" "web_uptime" {
 }
 
 resource "google_monitoring_alert_policy" "api_uptime" {
-  count = var.enable_external_uptime_monitoring ? 1 : 0
+  count = local.edge_enabled && var.enable_external_uptime_monitoring ? 1 : 0
 
   project               = var.project_id
   display_name          = "${var.system_name}-${var.environment}-api-uptime-failure"
@@ -167,6 +167,8 @@ resource "google_monitoring_alert_policy" "api_uptime" {
 }
 
 resource "google_monitoring_alert_policy" "worker_availability" {
+  count = local.runtime_enabled ? 1 : 0
+
   project               = var.project_id
   display_name          = "${var.system_name}-${var.environment}-worker-unavailable"
   combiner              = "OR"
@@ -177,7 +179,7 @@ resource "google_monitoring_alert_policy" "worker_availability" {
     display_name = "Notification Worker Pool has fewer than one instance for five minutes"
 
     condition_threshold {
-      filter                  = "metric.type = \"run.googleapis.com/container/instance_count\" AND resource.type = \"cloud_run_worker_pool\" AND resource.labels.project_id = \"${var.project_id}\" AND resource.labels.location = \"${var.region}\" AND resource.labels.worker_pool_name = \"${google_cloud_run_v2_worker_pool.notification.name}\""
+      filter                  = "metric.type = \"run.googleapis.com/container/instance_count\" AND resource.type = \"cloud_run_worker_pool\" AND resource.labels.project_id = \"${var.project_id}\" AND resource.labels.location = \"${var.region}\" AND resource.labels.worker_pool_name = \"${google_cloud_run_v2_worker_pool.notification[0].name}\""
       comparison              = "COMPARISON_LT"
       threshold_value         = 1
       duration                = "300s"
@@ -206,7 +208,7 @@ resource "google_monitoring_alert_policy" "worker_availability" {
 
       **First response:** inspect the Worker Pool revision and logs, verify the pinned API-family image and Secret Manager references, then restore the reviewed Worker Pool configuration.
 
-      **Resource:** ${google_cloud_run_v2_worker_pool.notification.name}
+      **Resource:** ${google_cloud_run_v2_worker_pool.notification[0].name}
 
       **Severity:** P1 / CRITICAL.
     EOT
@@ -261,7 +263,7 @@ locals {
       display_name = "${var.system_name}-${var.environment}-worker-nat-allocation-failure"
       severity     = "CRITICAL"
       condition    = "Worker Cloud NAT reports a port allocation failure"
-      filter       = "metric.type = \"router.googleapis.com/nat/nat_allocation_failed\" AND resource.type = \"nat_gateway\" AND resource.labels.project_id = \"${var.project_id}\" AND resource.labels.region = \"${var.region}\" AND resource.labels.gateway_name = \"${google_compute_router_nat.worker_egress.name}\""
+      filter       = "metric.type = \"router.googleapis.com/nat/nat_allocation_failed\" AND resource.type = \"nat_gateway\" AND resource.labels.project_id = \"${var.project_id}\" AND resource.labels.region = \"${var.region}\" AND resource.labels.gateway_name = \"${google_compute_router_nat.worker_egress[0].name}\""
       threshold    = 0
       duration     = "0s"
       rate_limit   = "300s"
@@ -277,7 +279,7 @@ locals {
 
         **First response:** inspect the dedicated Worker NAT metric and error logs; confirm the worker subnet is its only source and evaluate approved NAT capacity changes.
 
-        **Resource:** ${google_compute_router_nat.worker_egress.name}
+        **Resource:** ${google_compute_router_nat.worker_egress[0].name}
 
         **Severity:** P1 / CRITICAL.
       EOT
@@ -286,7 +288,7 @@ locals {
       display_name = "${var.system_name}-${var.environment}-worker-nat-packet-drops"
       severity     = "WARNING"
       condition    = "Worker Cloud NAT drops packets for capacity or endpoint-independence reasons"
-      filter       = "metric.type = \"router.googleapis.com/nat/dropped_sent_packets_count\" AND resource.type = \"nat_gateway\" AND resource.labels.project_id = \"${var.project_id}\" AND resource.labels.region = \"${var.region}\" AND resource.labels.gateway_name = \"${google_compute_router_nat.worker_egress.name}\" AND (metric.labels.reason = \"OUT_OF_RESOURCES\" OR metric.labels.reason = \"ENDPOINT_INDEPENDENCE_CONFLICT\")"
+      filter       = "metric.type = \"router.googleapis.com/nat/dropped_sent_packets_count\" AND resource.type = \"nat_gateway\" AND resource.labels.project_id = \"${var.project_id}\" AND resource.labels.region = \"${var.region}\" AND resource.labels.gateway_name = \"${google_compute_router_nat.worker_egress[0].name}\" AND (metric.labels.reason = \"OUT_OF_RESOURCES\" OR metric.labels.reason = \"ENDPOINT_INDEPENDENCE_CONFLICT\")"
       threshold    = 0
       duration     = "0s"
       rate_limit   = "900s"
@@ -302,7 +304,7 @@ locals {
 
         **First response:** inspect NAT error logs and Worker SMTP delivery behavior; do not alter NAT scope beyond the worker subnet without a reviewed change.
 
-        **Resource:** ${google_compute_router_nat.worker_egress.name}
+        **Resource:** ${google_compute_router_nat.worker_egress[0].name}
 
         **Severity:** P2 / WARNING.
       EOT
@@ -311,7 +313,7 @@ locals {
 }
 
 resource "google_monitoring_alert_policy" "metric" {
-  for_each = local.production_metric_alerts
+  for_each = local.runtime_enabled ? local.production_metric_alerts : {}
 
   project               = var.project_id
   display_name          = each.value.display_name
@@ -357,7 +359,7 @@ locals {
   # Certificate Manager exposes expiry logs at the project monitored resource.
   # This root currently manages one production certificate; revisit these filters
   # if multiple certificates are added to the project.
-  production_log_alerts = {
+  runtime_log_alerts = {
     cloud_sql_oom = {
       display_name  = "${var.system_name}-${var.environment}-cloud-sql-postgres-oom"
       severity      = "CRITICAL"
@@ -396,6 +398,9 @@ locals {
         **Severity:** P1 / CRITICAL.
       EOT
     }
+  }
+
+  edge_log_alerts = {
     certificate_expired = {
       display_name  = "${var.system_name}-${var.environment}-certificate-expired"
       severity      = "CRITICAL"
@@ -410,7 +415,7 @@ locals {
 
         **First response:** inspect Certificate Manager and the permanent DNS authorization CNAME. Do not remove or replace the CNAME during investigation.
 
-        **Resource:** ${google_certificate_manager_certificate.production.name}
+        **Resource:** ${google_certificate_manager_certificate.production[0].name}
 
         **Severity:** P1 / CRITICAL.
       EOT
@@ -429,7 +434,7 @@ locals {
 
         **First response:** inspect Certificate Manager and verify the permanent DNS authorization CNAME remains exact and publicly resolvable.
 
-        **Resource:** ${google_certificate_manager_certificate.production.name}
+        **Resource:** ${google_certificate_manager_certificate.production[0].name}
 
         **Severity:** P2 / WARNING.
       EOT
@@ -438,7 +443,10 @@ locals {
 }
 
 resource "google_monitoring_alert_policy" "log" {
-  for_each = local.production_log_alerts
+  for_each = merge(
+    local.runtime_enabled ? local.runtime_log_alerts : {},
+    local.edge_enabled ? local.edge_log_alerts : {},
+  )
 
   project               = var.project_id
   display_name          = each.value.display_name

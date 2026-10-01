@@ -14,6 +14,11 @@ output "workload_identity_provider_name" {
 }
 
 output "terraform_release_service_account_email" {
-  description = "Federated Terraform and release service-account email."
+  description = "Federated release service-account email."
   value       = google_service_account.terraform_release.email
+}
+
+output "terraform_apply_service_account_email" {
+  description = "Production Terraform apply service-account email. This identity receives no GitHub WIF binding."
+  value       = google_service_account.terraform_apply.email
 }
